@@ -166,6 +166,11 @@ void _hasSeq(Map<String, Object?> frame, String because) => expect(
 /// A valid install id (16 to 64 characters of [A-Za-z0-9_-]).
 String _inst(String tag) => 'install_${tag}_0123456789';
 
+/// True when [body] shows [code] as the whole text of an element. With codes
+/// of 1 to 6 symbols (section 32) a substring test would match any digit.
+bool _showsCode(String body, String code) =>
+    body.toUpperCase().contains('>$code<');
+
 class _Seat {
   _Seat(this.c, this.seat, this.token, this.room);
 
@@ -210,12 +215,20 @@ Future<_Raw> _joinRaw(
   String name, {
   String? install,
   Object? rawInstall,
+  bool noInstall = false,
 }) async {
   final WireTestClient c = await r.open();
+  // Section 32 item 6: a code join requires `install`. A join that does not
+  // say otherwise gets one of its own, distinct per joiner name, so two
+  // players on the one test IP stay two devices.
+  final String? effectiveInstall = install ??
+      (key.containsKey('code') && rawInstall == null && !noInstall
+          ? _inst('auto_${name.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}')
+          : null);
   c.send('join_room', <String, Object?>{
     ...key,
     'name': name,
-    if (install != null) 'install': install,
+    if (effectiveInstall != null) 'install': effectiveInstall,
     if (rawInstall != null) 'install': rawInstall,
   });
   return _Raw(c, await c.next());
@@ -398,9 +411,13 @@ void main() {
           expect(int.parse(timePart, radix: 36), nowSeconds,
               reason: 'creation $i: link_id "$id" time part must be the '
                   'creation time in whole seconds ($nowSeconds) in base 36');
-          expect(id.contains(s.code.toLowerCase()), isFalse,
-              reason: 'creation $i: link id "$id" must not contain the room '
-                  'code ${s.code}');
+          // Codes are 1 to 6 symbols now (section 32), so a substring test
+          // would match inside any id. Not derived from the code: the random
+          // part is never the code, and the id is never the code.
+          expect(id.split('-').last == s.code.toLowerCase() || id == s.code,
+              isFalse,
+              reason: 'creation $i: link id "$id" must not be built from the '
+                  'room code ${s.code}');
           expect(ids.add(id), isTrue,
               reason: 'creation $i: link_id "$id" was issued twice');
           randomParts.add(id.split('-').last);
@@ -769,21 +786,25 @@ void main() {
       final _Seat host = await _create(r);
       await _approval(host, true);
       await r.flushAll();
-      final _Knock k = await _knock(r, host, 'K');
+      final _Knock k = await _knock(r, host, 'K', install: _inst('k5'));
       _answer(host, k, false);
       await receiveType(k.c, 'knock_failed');
       await receiveType(host.c, 'knock_closed');
 
-      k.c.send('join_room', <String, Object?>{'code': host.code, 'name': 'K'});
+      k.c.send('join_room', <String, Object?>{
+        'install': _inst('k5'),
+        'code': host.code,
+        'name': 'K'
+      });
       _err(await k.c.next(), 'KNOCK_REFUSED',
-          'item 4: an IP-only knocker, rejected, knocking again by code');
-      final _Raw again =
-          await _joinRaw(r, <String, Object?>{'code': host.code}, 'K2');
-      _err(
-          again.frame,
-          'KNOCK_REFUSED',
-          'item 4: with no install the bar is by IP, so a second no-install '
-              'socket on the same IP is barred too');
+          'item 4: a rejected knocker knocking again by code');
+      // Section 32 item 6: a code join with no install is BAD_FIELD, so the
+      // IP-only identity of section 31 item 4 can no longer reach a knock.
+      final _Raw again = await _joinRaw(
+          r, <String, Object?>{'code': host.code}, 'K2',
+          noInstall: true);
+      _err(again.frame, 'BAD_FIELD',
+          'section 32 item 6: a code join with no install');
       k.c.send(
           'join_room', <String, Object?>{'link': host.linkId, 'name': 'K'});
       expect((await k.c.next())['t'], 'seat_assigned',
@@ -1212,8 +1233,8 @@ void main() {
     });
 
     _scenario(
-        'Q3 a kicked socket with no install is barred by IP, by link '
-        'and by code', (_Rig r) async {
+        'Q3 a kicked socket with no install is barred by IP by link, and a '
+        'code join without install is BAD_FIELD', (_Rig r) async {
       final _Seat host = await _create(r);
       final _Seat a =
           await _join(r, <String, Object?>{'link': host.linkId}, 'A');
@@ -1226,8 +1247,12 @@ void main() {
               .frame,
           'KICKED',
           'item 7: no install, rejoin by link, same IP');
-      _err((await _joinRaw(r, <String, Object?>{'code': host.code}, 'A')).frame,
-          'KICKED', 'item 7: no install, rejoin by code, same IP');
+      _err(
+          (await _joinRaw(r, <String, Object?>{'code': host.code}, 'A',
+                  noInstall: true))
+              .frame,
+          'BAD_FIELD',
+          'section 32 item 6: no install, rejoin by code');
     });
 
     _scenario(
@@ -1374,7 +1399,7 @@ void main() {
               '${livePage.desc}');
       expect(livePage.body.contains(live.linkId), isTrue,
           reason: 'item 9: the page carries the link id; ${livePage.desc}');
-      expect(livePage.body.toUpperCase().contains(live.code), isFalse,
+      expect(_showsCode(livePage.body, live.code), isFalse,
           reason: 'item 9: the page carries the link id, not the code '
               '${live.code}; ${livePage.desc}');
 
@@ -1424,7 +1449,7 @@ void main() {
                 '${e.key} differs; ${e.value.desc}');
         expect(e.value.body.contains(live.linkId), isFalse,
             reason: 'a non-shaped id must never serve a live room');
-        expect(e.value.body.toUpperCase().contains(live.code), isFalse,
+        expect(_showsCode(e.value.body, live.code), isFalse,
             reason: 'the former code ${live.code} must never serve a room; '
                 '${e.value.desc}');
       }

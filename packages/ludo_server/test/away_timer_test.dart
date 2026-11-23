@@ -261,7 +261,11 @@ class _Table {
 
     final WireTestClient mid = await WireTestClient.connect(harness.wsUri);
     clients.add(mid);
-    mid.send('join_room', <String, Object?>{'code': code, 'name': 'Mid'});
+    mid.send('join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
+      'code': code,
+      'name': 'Mid'
+    });
     final _Frame midAssigned = await mid.next();
     await mid.next();
     await host.next();
@@ -273,7 +277,11 @@ class _Table {
 
     final WireTestClient far = await WireTestClient.connect(harness.wsUri);
     clients.add(far);
-    far.send('join_room', <String, Object?>{'code': code, 'name': 'Far'});
+    far.send('join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
+      'code': code,
+      'name': 'Far'
+    });
     final _Frame farAssigned = await far.next();
     await far.next();
     await host.next();

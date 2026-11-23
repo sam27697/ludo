@@ -380,6 +380,12 @@ class WireServer {
   /// stop the timer.
   void _runKnockExpiry() {
     try {
+      registry.sweepStrikes();
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('strike sweep failed error=$error\n$stack');
+    }
+    try {
       failReapedKnocks(registry.drainReapedKnocks());
     } catch (error, stack) {
       // ignore: avoid_print

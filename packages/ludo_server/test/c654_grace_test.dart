@@ -319,7 +319,11 @@ Future<_Table> _openTable(
   final String code = _d(room)['code']! as String;
   for (int i = 1; i < players; i++) {
     final WireTestClient g = await fx.connect();
-    fx.send(g, 'join_room', <String, Object?>{'code': code, 'name': 'G$i'});
+    fx.send(g, 'join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
+      'code': code,
+      'name': 'G$i'
+    });
     final Frame gsa = await g.next();
     final Frame groom = await g.next();
     fx.eq(<Object?>[gsa['t'], groom['t']], <String>['seat_assigned', 'room'],

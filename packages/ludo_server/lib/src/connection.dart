@@ -57,8 +57,10 @@ import 'envelope.dart';
 import 'rate_limit.dart';
 import 'registry.dart';
 import 'room.dart';
+import 'room_code.dart';
 import 'ruleset.dart';
 import 'snapshot.dart';
+import 'strike_store.dart' show BanInfo;
 
 /// `docs/PROTOCOL.md` section 7.1: the four close codes, and the only four
 /// this file ever passes to a socket close. The `web_socket` package
@@ -300,6 +302,7 @@ void publishKnockEvents(
               data: <String, Object?>{
                 'knock_id': event.knock.id,
                 'outcome': event.outcome,
+                if (event.ban != null) 'ban': event.ban!.toJson(),
               },
               re: identical(owner, knockerRequester) ? knockerRe : null,
             );
@@ -555,8 +558,23 @@ class Connection {
     }
     _withdrawOwnKnock();
 
-    const Set<String> allowedKeys = <String>{'name', 'players', 'rules'};
+    const Set<String> allowedKeys = <String>{
+      'name',
+      'players',
+      'rules',
+      'install',
+    };
     if (!envelope.data.keys.every(allowedKeys.contains)) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+
+    // Section 32 item 6: `install` is optional on `create_room`, with
+    // section 31 item 2's shape.
+    final Object? rawCreateInstall = envelope.data['install'];
+    if (envelope.data.containsKey('install') &&
+        (rawCreateInstall is! String ||
+            !_installPattern.hasMatch(rawCreateInstall))) {
       _reject(envelope, ProtocolError.badField);
       return;
     }
@@ -583,6 +601,8 @@ class Connection {
       name: rawName,
       players: rawPlayers,
       rules: rules ?? const RulesConfig(),
+      install: rawCreateInstall is String ? rawCreateInstall : null,
+      ip: ip,
     );
 
     if (result is CreateFailure) {
@@ -647,6 +667,39 @@ class Connection {
       _reject(envelope, ProtocolError.badField);
       return;
     }
+    // Section 32 item 6: a join by `code` requires `install`; a `link` join
+    // keeps it optional.
+    if (hasCode && !envelope.data.containsKey('install')) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+
+    // The typed code as the log and the lookup see it: folded, and only when
+    // it is well-formed, so a probe string never reaches a log line.
+    final String? foldedCode = hasCode ? foldRoomCode(rawCode as String) : null;
+    final String logRoom =
+        foldedCode != null && isWellFormedRoomCode(foldedCode)
+            ? foldedCode
+            : '-';
+
+    if (hasCode) {
+      // Section 32 item 5: the typed-code window, after payload validation and
+      // before the ban check.
+      if (!rateLimiter.recordTypedCode(ip)) {
+        _reject(envelope, ProtocolError.rateLimited, room: '-');
+        return;
+      }
+      // Section 32 item 9: a ban answers before the lookup, whether the room
+      // exists or not.
+      final BanInfo? ban = registry.codeBan(
+        install: rawInstall as String,
+        ip: ip,
+      );
+      if (ban != null) {
+        _reject(envelope, ProtocolError.codeBanned, room: '-', ban: ban);
+        return;
+      }
+    }
 
     // Section 31 item 3: one open knock per socket. A knock whose room is
     // gone (reaped before its minute ran out) no longer counts.
@@ -672,7 +725,7 @@ class Connection {
     );
     if (result is JoinFailure) {
       // A link is never logged, and never stands in for the room code.
-      _reject(envelope, result.error, room: hasCode ? rawCode as String : '-');
+      _reject(envelope, result.error, room: logRoom);
       return;
     }
     if (result is JoinKnocked) {
@@ -1533,7 +1586,9 @@ class Connection {
       kickedConn.seatToken = null;
       kickedConn._send(
         type: 'kicked',
-        data: const <String, Object?>{},
+        data: <String, Object?>{
+          if (ok.ban != null) 'ban': ok.ban!.toJson(),
+        },
         re: null,
       );
     }
@@ -2210,8 +2265,13 @@ class Connection {
     );
   }
 
-  void _reject(ParsedEnvelope envelope, ProtocolError error, {String? room}) {
-    _sendError(error, re: envelope.id);
+  void _reject(
+    ParsedEnvelope envelope,
+    ProtocolError error, {
+    String? room,
+    BanInfo? ban,
+  }) {
+    _sendError(error, re: envelope.id, ban: ban);
     final String? effectiveRoom = room ?? roomCode;
     // docs/PROTOCOL.md section 7: INTERNAL is logged with the room code and
     // the sequence number, in addition to the fields every outcome gets.
@@ -2233,10 +2293,10 @@ class Connection {
     _send(type: type, data: data, re: null);
   }
 
-  void _sendError(ProtocolError error, {required String? re}) {
+  void _sendError(ProtocolError error, {required String? re, BanInfo? ban}) {
     _send(
       type: 'error',
-      data: errorPayload(error, defaultErrorMessage(error)),
+      data: errorPayload(error, defaultErrorMessage(error), ban: ban?.toJson()),
       re: re,
     );
   }

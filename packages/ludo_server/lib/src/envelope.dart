@@ -83,6 +83,8 @@ String wireErrorCode(ProtocolError error) {
       return 'KNOCK_REFUSED';
     case ProtocolError.kicked:
       return 'KICKED';
+    case ProtocolError.codeBanned:
+      return 'CODE_BANNED';
   }
 }
 
@@ -236,10 +238,17 @@ String encodeEnvelope({
 }
 
 /// Builds the `d` payload of an `error` message, section 7.
-Map<String, Object?> errorPayload(ProtocolError error, String message) {
+///
+/// [ban] is section 32 item 12's `ban` object, carried only by `CODE_BANNED`.
+Map<String, Object?> errorPayload(
+  ProtocolError error,
+  String message, {
+  Map<String, Object?>? ban,
+}) {
   return <String, Object?>{
     'code': wireErrorCode(error),
     'message': message,
+    if (ban != null) 'ban': ban,
   };
 }
 
@@ -294,6 +303,8 @@ String defaultErrorMessage(ProtocolError error) {
       return 'the host did not accept your request to join';
     case ProtocolError.kicked:
       return 'you were removed from this room';
+    case ProtocolError.codeBanned:
+      return 'joining by code is paused for this device or network';
   }
 }
 

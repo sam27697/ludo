@@ -49,10 +49,12 @@ import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/board.dart' show kTokenStepDuration;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
+import 'package:ludo_client/src/install_id.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart' show RoomState;
 import 'package:ludo_client/src/server_config.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
 
@@ -219,6 +221,21 @@ Future<void> _pumpPastEndCardHold(WidgetTester tester) async {
 }
 
 void main() {
+  // Section 32 item 6: a typed-code join waits for the install id. A launched
+  // app has read or made it already, so the fixtures do the same once, and
+  // every test starts from a store that holds only that id (a record one test
+  // saves must not turn the next test's join into a resume).
+  late String install;
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    install = await installId();
+  });
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      kInstallIdKey: install,
+    });
+  });
+
   // ==========================================================================
   // C1: create, share, start, play, win.
   // ==========================================================================
@@ -273,7 +290,10 @@ void main() {
               '${transport.sentRaw.map(_typeOf).toList()}',
         );
         expect(
-          _dataOf(createMessages.single),
+          // Section 32 item 6: create_room also carries `install`; the rest
+          // of the frame is unchanged.
+          Map<String, Object?>.of(_dataOf(createMessages.single))
+            ..remove('install'),
           <String, Object?>{
             'name': 'Priya',
             'players': 4,
@@ -720,8 +740,18 @@ void main() {
               '(home_screen.dart:182), to have sent exactly one join_room '
               'request; sent ${transport.sentRaw.map(_typeOf).toList()}',
         );
-        expect(
+        final Map<String, Object?> joinBody = Map<String, Object?>.of(
           _dataOf(joinMessages.single),
+        );
+        expect(
+          joinBody.remove('install'),
+          isA<String>(),
+          reason:
+              'section 32 item 6: a code join always carries install; sent '
+              '$joinBody',
+        );
+        expect(
+          joinBody,
           <String, Object?>{'code': 'K7M2QP', 'name': 'Riri'},
           reason:
               'the code and name typed on the home screen must both reach '

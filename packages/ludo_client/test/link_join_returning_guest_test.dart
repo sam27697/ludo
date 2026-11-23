@@ -60,7 +60,7 @@ Uri _validLink(String linkId) =>
 Map<String, Object?> _noInstall(Map<String, Object?> data) =>
     <String, Object?>{...data}..remove('install');
 
-Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB0234');
+Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB_234');
 
 List<String> _storedSeat(
   String code, {

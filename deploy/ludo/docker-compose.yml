@@ -56,6 +56,13 @@ services:
     environment:
       LUDO_VERSION: "${LUDO_VERSION:-dev}"
       LUDO_VERIFY_DIR: /data/verify
+      # docs/PROTOCOL.md section 32 item 11: the strike ladder's file,
+      # strikes.json, always this container path for the same reason as
+      # LUDO_VERIFY_DIR. LUDO_STRIKE_SALT is the one secret it needs; it
+      # comes in through env_file above, from .env, like every other value
+      # that is not a path. A set LUDO_STRIKE_DIR with no salt of at least 32
+      # characters in .env stops the server at start.
+      LUDO_STRIKE_DIR: /data/strikes
 
     # One record per finished game (docs/VERIFY.md), kept 90 days and purged
     # by the server itself, nothing else. A named volume rather than a bind
@@ -70,6 +77,11 @@ services:
     # never shared.
     volumes:
       - verify-data:/data/verify
+      # The strike ladder (section 32): one small JSON file, keyed hashes
+      # only, rewritten whole after every change. A named volume for the same
+      # reason as verify-data: it has to outlive a redeploy, or every ban
+      # would be forgotten with the container.
+      - strike-data:/data/strikes
 
     # A structured-log-per-event server can fill a 4 GB disk if nothing
     # caps it. 10 MB per file, 5 files kept: 50 MB ceiling for this
@@ -104,3 +116,4 @@ services:
 # two, never one shared).
 volumes:
   verify-data:
+  strike-data:

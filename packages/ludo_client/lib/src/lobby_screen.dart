@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'code_ban_notice.dart' show RefusalNoticeMark;
 import 'die_mark.dart';
 import 'feedback.dart';
 import 'game_screen.dart' show GameScreenResult, showKickSheet;
@@ -60,6 +61,7 @@ const Set<String> _unretryableLobbyErrorCodes = <String>{
   'BAD_FIELD',
   'KNOCK_REFUSED',
   'KICKED',
+  'CODE_BANNED',
 };
 
 /// C-536 D1: the label each seat in [seats] is drawn and spoken with,
@@ -79,8 +81,36 @@ Map<int, String> seatLabelsFor(
   );
 }
 
+/// The face style for a room code of [length] symbols on the lobby die. A
+/// code of one or two symbols is drawn larger, so it fills the die and reads
+/// as a chosen room code, never as a stray character; six symbols are drawn
+/// at the base size as before. The FittedBox around it only ever shrinks.
+TextStyle? _roomCodeStyle(TextTheme textTheme, int length) {
+  final TextStyle? base = textTheme.headlineMedium;
+  final double? size = base?.fontSize;
+  if (base == null || size == null) {
+    return base;
+  }
+  final double scale = switch (length) {
+    <= 2 => 1.9,
+    3 => 1.5,
+    4 => 1.25,
+    _ => 1.0,
+  };
+  return base.copyWith(fontSize: size * scale);
+}
+
 /// C-599 D5(b): how long the "Karim joined" line stays under the seat grid.
 const Duration kFriendJoinedLineHold = Duration(milliseconds: 2500);
+
+/// Codes where the host or the strike ladder said no to this player: the
+/// error card carries the refusal mark, not the neutral info icon.
+const Set<String> _refusalCodes = {
+  'KICKED',
+  'KNOCK_REFUSED',
+  'CODE_BANNED',
+  'TOO_MANY_KNOCKS',
+};
 
 /// Maps a RoomController error code to a localised message. Pure and
 /// top-level so it can be tested without pumping a widget.
@@ -98,6 +128,8 @@ String lobbyErrorMessage(AppLocalizations loc, String? code) {
       return loc.lobbyErrorKnockRefused;
     case 'KICKED':
       return loc.knockWasKicked;
+    case 'CODE_BANNED':
+      return loc.lobbyErrorCodeBanned;
     case 'TOO_MANY_KNOCKS':
       return loc.lobbyErrorTooManyKnocks;
     case 'transport':
@@ -243,7 +275,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     if (_resumeRefusalHandled || widget.controller.updateRequired) {
       return;
     }
-    if (_knockEndedWithoutSeat || widget.controller.wasKicked) {
+    if (_knockEndedWithoutSeat ||
+        widget.controller.wasKicked ||
+        _codeBannedWithNotice) {
       // C-682: a knock that ended without a seat, or the host removing this
       // phone, goes home at once; Home reads the controller for the one line
       // that says why before it retires it.
@@ -315,6 +349,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
     } else {
       navigator.removeRoute(route, result);
     }
+  }
+
+  /// Section 32 item 12: a typed code answered CODE_BANNED with a ban Home can
+  /// word. Asking again returns the same answer, so the route goes home at once
+  /// and Home shows the notice; a ban that could not be read stays here as the
+  /// plain error card.
+  bool get _codeBannedWithNotice {
+    final RoomController controller = widget.controller;
+    return widget.action == LobbyAction.join &&
+        controller.phase == RoomPhase.failed &&
+        controller.errorCode == 'CODE_BANNED' &&
+        controller.ban != null;
   }
 
   /// C-682: this phone's own knock was answered, or ran out, and it holds no
@@ -799,6 +845,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       child: _lobbyCard(
         cardKey: const Key('lobby-error-card'),
         icon: icon,
+        mark: _refusalCodes.contains(controller.errorCode)
+            ? const RefusalNoticeMark(size: 32)
+            : null,
         title: linkRoomGone
             ? loc.lobbyErrorLinkRoomGone
             : lobbyErrorMessage(loc, controller.errorCode),
@@ -908,6 +957,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     required IconData icon,
     required String title,
     required List<Widget> children,
+    Widget? mark,
   }) {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 320),
@@ -922,7 +972,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Icon(icon, size: 32, color: LudoColors.inkMuted),
+              mark ?? Icon(icon, size: 32, color: LudoColors.inkMuted),
               const SizedBox(height: kSpace2),
               Text(
                 title,
@@ -1023,6 +1073,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
         media.size.height - media.padding.top - media.padding.bottom;
     final bool compact = safeHeight < 640;
     final double dieSize = dieMarkSize(compact);
+    // C-688: with knock cards open the host decides on strangers, so the room
+    // code die, the share rows and the door switch fold into one 48 dp code
+    // row and the cards and the seats take the height (doctrine P3). The
+    // layout with no knock is the one it always was.
+    final bool knocksOpen = controller.isHost && room.knocks.isNotEmpty;
     final List<Widget> action = _lobbyAction(
       loc,
       controller,
@@ -1048,114 +1103,139 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 // did not, so every optional compact gap below is trimmed to the
                 // smallest spacing unit. The start and waiting block is docked
                 // below the scroll (C-398), not kept in by these gaps.
-                compact ? kSpace1 : kSpace6,
+                compact || knocksOpen ? kSpace1 : kSpace6,
                 kSpace6,
-                compact ? kSpace4 : kSpace6,
+                compact || knocksOpen ? kSpace4 : kSpace6,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    loc.lobbyRoomCodeLabel,
-                    textAlign: TextAlign.center,
-                    style: textTheme.labelLarge?.copyWith(
-                      color: LudoColors.inkMuted,
+                  if (knocksOpen)
+                    _knockCodeRow(loc, room, textTheme)
+                  else ...[
+                    Text(
+                      loc.lobbyRoomCodeLabel,
+                      textAlign: TextAlign.center,
+                      style: textTheme.labelLarge?.copyWith(
+                        color: LudoColors.inkMuted,
+                      ),
                     ),
-                  ),
-                  SizedBox(height: compact ? kSpace1 : kSpace3),
-                  Center(
-                    child: DieMark(
-                      size: dieSize,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          room.code,
-                          key: const Key('lobby-room-code'),
-                          textAlign: TextAlign.center,
-                          style: textTheme.headlineMedium?.copyWith(
-                            color: LudoColors.ink,
-                            fontWeight: FontWeight.w700,
-                            height: 1.0,
+                    SizedBox(height: compact ? kSpace1 : kSpace3),
+                    Center(
+                      child: DieMark(
+                        size: dieSize,
+                        // The code may only use the pip-free band through the
+                        // die's centre (P8): the box is as high as that band,
+                        // so the FittedBox shrinks a tall short code to it.
+                        // One symbol uses the centred pip-free square so a single
+                        // letter fills it; two use the widest centred 2:1 box
+                        // that clears the pips.
+                        child: SizedBox(
+                          width: switch (room.code.length) {
+                            1 => dieSize * kDieMarkPipFreeSquare,
+                            2 => dieSize * kDieMarkPipFreeWideWidth,
+                            _ => dieSize * 0.56,
+                          },
+                          height: switch (room.code.length) {
+                            1 => dieSize * kDieMarkPipFreeSquare,
+                            2 => dieSize * kDieMarkPipFreeWideHeight,
+                            _ => dieSize * kDieMarkPipFreeHalfBand * 2,
+                          },
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              room.code,
+                              key: const Key('lobby-room-code'),
+                              textAlign: TextAlign.center,
+                              style: _roomCodeStyle(textTheme, room.code.length)
+                                  ?.copyWith(
+                                    color: LudoColors.ink,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.0,
+                                  ),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  SizedBox(height: compact ? kSpace1 : kSpace4),
-                  ElevatedButton.icon(
-                    key: const Key('lobby-share-button'),
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48),
-                    ),
-                    onPressed: () => _shareInvite(room, loc),
-                    icon: const Icon(Icons.share),
-                    label: Text(loc.lobbyShareButton),
-                  ),
-                  SizedBox(height: compact ? kSpace1 : kSpace3),
-                  Row(
-                    children: [
-                      Expanded(
-                        // C-340 rule 1-2: an outlined pill, quieter than the filled
-                        // Invite friends button above it -- a visible border and a
-                        // leading icon so the label reads as tappable (doctrine P3,
-                        // P8), never a bare caption. Rule 6: two of these side by
-                        // side at 360dp leaves little room for icon plus label, so
-                        // the pill's own padding is trimmed (never the label's
-                        // text) and the label sits in a FittedBox that shrinks
-                        // before it would ever wrap or ellipsize.
-                        child: OutlinedButton.icon(
-                          key: const Key('lobby-copy-link-button'),
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            padding: const EdgeInsetsDirectional.symmetric(
-                              horizontal: kSpace2,
-                              vertical: kSpace3,
-                            ),
-                          ),
-                          onPressed: () => _copyToClipboard(
-                            kRoomLinkBase +
-                                (room.linkId.isEmpty ? room.code : room.linkId),
-                            loc,
-                          ),
-                          icon: const Icon(Icons.link, size: 18),
-                          label: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(loc.lobbyCopyLinkButton, maxLines: 1),
-                          ),
-                        ),
+                    SizedBox(height: compact ? kSpace1 : kSpace4),
+                    ElevatedButton.icon(
+                      key: const Key('lobby-share-button'),
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
                       ),
-                      const SizedBox(width: kSpace3),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          key: const Key('lobby-copy-code-button'),
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            padding: const EdgeInsetsDirectional.symmetric(
-                              horizontal: kSpace2,
-                              vertical: kSpace3,
+                      onPressed: () => _shareInvite(room, loc),
+                      icon: const Icon(Icons.share),
+                      label: Text(loc.lobbyShareButton),
+                    ),
+                    SizedBox(height: compact ? kSpace1 : kSpace3),
+                    Row(
+                      children: [
+                        Expanded(
+                          // C-340 rule 1-2: an outlined pill, quieter than the filled
+                          // Invite friends button above it -- a visible border and a
+                          // leading icon so the label reads as tappable (doctrine P3,
+                          // P8), never a bare caption. Rule 6: two of these side by
+                          // side at 360dp leaves little room for icon plus label, so
+                          // the pill's own padding is trimmed (never the label's
+                          // text) and the label sits in a FittedBox that shrinks
+                          // before it would ever wrap or ellipsize.
+                          child: OutlinedButton.icon(
+                            key: const Key('lobby-copy-link-button'),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(48, 48),
+                              padding: const EdgeInsetsDirectional.symmetric(
+                                horizontal: kSpace2,
+                                vertical: kSpace3,
+                              ),
+                            ),
+                            onPressed: () => _copyToClipboard(
+                              kRoomLinkBase +
+                                  (room.linkId.isEmpty
+                                      ? room.code
+                                      : room.linkId),
+                              loc,
+                            ),
+                            icon: const Icon(Icons.link, size: 18),
+                            label: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(loc.lobbyCopyLinkButton, maxLines: 1),
                             ),
                           ),
-                          onPressed: () => _copyToClipboard(room.code, loc),
-                          icon: const Icon(Icons.content_copy, size: 18),
-                          label: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(loc.lobbyCopyCodeButton, maxLines: 1),
+                        ),
+                        const SizedBox(width: kSpace3),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            key: const Key('lobby-copy-code-button'),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(48, 48),
+                              padding: const EdgeInsetsDirectional.symmetric(
+                                horizontal: kSpace2,
+                                vertical: kSpace3,
+                              ),
+                            ),
+                            onPressed: () => _copyToClipboard(room.code, loc),
+                            icon: const Icon(Icons.content_copy, size: 18),
+                            label: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(loc.lobbyCopyCodeButton, maxLines: 1),
+                            ),
                           ),
                         ),
+                      ],
+                    ),
+                    // C-682: the host's door control, one switch under the code
+                    // actions; nobody else is shown it.
+                    if (controller.isHost) ...[
+                      SizedBox(height: compact ? kSpace1 : kSpace3),
+                      ApprovalSwitch(
+                        value: room.guestApproval,
+                        onChanged: (bool on) =>
+                            unawaited(controller.setGuestApproval(on)),
                       ),
                     ],
-                  ),
-                  // C-682: the host's door control, one switch under the code
-                  // actions; nobody else is shown it.
-                  if (controller.isHost) ...[
-                    SizedBox(height: compact ? kSpace1 : kSpace3),
-                    ApprovalSwitch(
-                      value: room.guestApproval,
-                      onChanged: (bool on) =>
-                          unawaited(controller.setGuestApproval(on)),
-                    ),
+                    SizedBox(height: compact ? kSpace1 : kSpace6),
                   ],
-                  SizedBox(height: compact ? kSpace1 : kSpace6),
                   // C-682: one card per person waiting at the door, above the
                   // seat cards. The server lists knocks to the host only.
                   if (controller.isHost && room.knocks.isNotEmpty)
@@ -1217,6 +1297,54 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ),
       ],
+    );
+  }
+
+  /// C-688: the room code while knock cards are open: the code itself, a
+  /// copy target and a share target in one row, each target 48 dp. The row
+  /// follows the ambient direction, so Arabic starts it on the right.
+  Widget _knockCodeRow(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    TextTheme textTheme,
+  ) {
+    return SizedBox(
+      height: 48,
+      child: Row(
+        children: [
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                room.code,
+                key: const Key('lobby-room-code'),
+                maxLines: 1,
+                style: textTheme.titleLarge?.copyWith(
+                  color: LudoColors.ink,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2,
+                ),
+              ),
+            ),
+          ),
+          const Spacer(),
+          IconButton(
+            key: const Key('lobby-copy-code-button'),
+            style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+            tooltip: loc.lobbyCopyCodeButton,
+            onPressed: () => _copyToClipboard(room.code, loc),
+            icon: const Icon(Icons.content_copy),
+          ),
+          IconButton(
+            key: const Key('lobby-share-button'),
+            style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+            tooltip: loc.lobbyShareButton,
+            onPressed: () => _shareInvite(room, loc),
+            icon: const Icon(Icons.share),
+          ),
+        ],
+      ),
     );
   }
 

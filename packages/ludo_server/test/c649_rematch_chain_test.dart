@@ -797,6 +797,7 @@ void main() {
         await WireTestClient.connect(rig.harness.wsUri);
     clients.add(joinerClient);
     joinerClient.send('join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
       'code': rig.code,
       'name': 'Newcomer',
     });

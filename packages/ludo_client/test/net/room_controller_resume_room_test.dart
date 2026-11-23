@@ -29,9 +29,11 @@ import 'dart:convert';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludo_client/src/install_id.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart' show RoomSnapshot;
 import 'package:ludo_client/src/net/transport.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fake_transport.dart';
 
@@ -206,6 +208,21 @@ Future<void> _joinRoom(
 }
 
 void main() {
+  // A code join waits for the install id (PROTOCOL 32 item 6). Make it once,
+  // and give every test a store holding only that id, so a record saved by an
+  // earlier test cannot turn the next join into a resume and the join never
+  // depends on how the platform-channel failure path resolves under fake async.
+  late String install;
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    install = await installId();
+  });
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      kInstallIdKey: install,
+    });
+  });
+
   // --- R-1 success. --------------------------------------------------------
   test('R-1 success: resumeRoom sends exactly one resume frame with the given '
       'code and seat token, no join_room, and a valid PLAYING snapshot lands '

@@ -71,9 +71,11 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/install_id.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
 
@@ -363,6 +365,21 @@ Future<RoomController> _mountConnectedLobby(
 }
 
 void main() {
+  // Section 32 item 6: a typed-code join waits for the install id. A launched
+  // app has read or made it already, so the fixtures do the same once, and
+  // every test starts from a store that holds only that id (a record one test
+  // saves must not turn the next test's join into a resume).
+  late String install;
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    install = await installId();
+  });
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      kInstallIdKey: install,
+    });
+  });
+
   // --- button presence, label, size, for host and guest, en and ar. ------
   group('lobby-share-button exists for host and guest, in en and ar', () {
     for (final asHost in <bool>[true, false]) {

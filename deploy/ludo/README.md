@@ -429,6 +429,18 @@ cannot see past the container's own loopback port, though: if it passes but
 the reverse proxy, the same as any other hostname-level failure described
 above, not this volume or this container.
 
+## Strike records
+
+The strike ladder for typed room codes (docs/PROTOCOL.md section 32) keeps
+one file, `strikes.json`, at `/data/strikes` on the named volume
+`strike-data` (`ludo-staging_strike-data` and `ludo-production_strike-data`).
+It holds keyed hashes only. `LUDO_STRIKE_SALT` must be set in `.env`, at
+least 32 characters (`env.example` says how); without it the container exits
+at start and the log names the variable. A file that does not parse is
+renamed `strikes.json.bad-<epoch ms>` and the server starts empty. The image
+must create `/data/strikes` owned by `10001:10001`, as it does `/data/verify`,
+or the server cannot write there.
+
 ## Out of scope here
 
 TLS, the reverse proxy configuration, and the Android release build are

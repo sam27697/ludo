@@ -295,7 +295,11 @@ Future<_ThreeSeatLobby> _finishedThreeSeatRoom(
       String name, List<WireTestClient> alreadySeated) async {
     final WireTestClient client = await WireTestClient.connect(harness.wsUri);
     clients.add(client);
-    client.send('join_room', <String, Object?>{'code': code, 'name': name});
+    client.send('join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
+      'code': code,
+      'name': name
+    });
     final Map<String, Object?> assigned = await client.next();
     await client.next(); // room
     for (final WireTestClient seated in alreadySeated) {
@@ -773,7 +777,11 @@ void main() {
 
       final WireTestClient d = await WireTestClient.connect(uri);
       clients.add(d);
-      d.send('join_room', <String, Object?>{'code': lobby.code, 'name': 'D'});
+      d.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': lobby.code,
+        'name': 'D'
+      });
       await _expectFrame(d, 'seat_assigned',
           who: 'D', scenario: scenario, expected: 'the join');
       final Map<String, Object?> dRoom = await _expectFrame(d, 'room',

@@ -22,6 +22,7 @@ import 'ruleset.dart';
 import 'snapshot.dart' show queuedBankedSixes;
 import 'seat_token.dart';
 import 'snapshot.dart' show buildRoomSnapshot;
+import 'strike_store.dart';
 import 'verify_record.dart';
 import 'verify_store.dart';
 
@@ -65,6 +66,9 @@ enum ProtocolError {
 
   /// Section 31 item 7: this seat was kicked from this room.
   kicked,
+
+  /// Section 32 item 9: a typed code from a banned device or a blocked IP.
+  codeBanned,
 }
 
 sealed class CreateResult {}
@@ -144,7 +148,12 @@ class KnockClosed extends KnockEvent {
     required super.hostSeatToken,
     required super.others,
     required this.outcome,
+    this.ban,
   });
+
+  /// Section 32 item 12: the ban this close's strike fired, for the knocker's
+  /// `knock_failed`. Null when none fired.
+  final BanInfo? ban;
 
   /// `accepted`, `rejected`, `timeout`, `full`, `withdrawn` or `switched_off`.
   final String outcome;
@@ -208,9 +217,13 @@ sealed class KickLobbyResult {}
 
 /// Section 31 item 6. [seat] is the seat as it stood before removal.
 class KickLobbyOk extends KickLobbyResult {
-  KickLobbyOk({required this.room, required this.seat});
+  KickLobbyOk({required this.room, required this.seat, this.ban});
   final Room room;
   final Seat seat;
+
+  /// Section 32 item 12: the ban this kick's strike fired, for the `kicked`
+  /// frame. Null when none fired.
+  final BanInfo? ban;
 }
 
 class KickLobbyFailure extends KickLobbyResult {
@@ -809,7 +822,10 @@ const Duration _lobbyLifetime = Duration(minutes: 60);
 /// absent seats, whose turns the timer plays at the deployed 90 seconds
 /// (about five hours).
 const Duration _maxRoomLifetime = Duration(hours: 6);
-const Duration _codeQuarantine = Duration(hours: 24);
+
+/// `docs/PROTOCOL.md` section 32 item 3: a reaped room's code rests this long
+/// on the server clock before it can be handed out again.
+const Duration _codeRest = Duration(minutes: 10);
 
 /// `docs/PROTOCOL.md` section 31 item 4: a knock unanswered this long closes
 /// `timeout`; item 3: a room holds at most this many open knocks.
@@ -845,7 +861,9 @@ class RoomRegistry {
     String verifyUrlBase = defaultVerifyUrlBase,
     String ruleset = ruleset202610,
     Random? linkRandom,
+    StrikeStore? strikeStore,
   })  : _clock = clock,
+        strikes = strikeStore ?? StrikeStore(clock: clock),
         _secure = secure,
         _linkRandom = linkRandom ?? Random.secure(),
         verifyStore = verifyStore ?? MemoryVerifyStore(clock),
@@ -860,6 +878,20 @@ class RoomRegistry {
 
   final Clock _clock;
   final Random _secure;
+
+  /// Section 32 items 7 to 12: the strike ladder and its store. Without a
+  /// caller's store, an in-memory one with a random salt.
+  final StrikeStore strikes;
+
+  /// Room code -> what the strike ladder needs to know about each socket that
+  /// took part in it: keyed by seat token for a seat, by knock id for a knock.
+  /// Keyed hashes only, never an install or an IP. Gone with the room.
+  final Map<String, Map<String, _StrikeIdentity>> _identities =
+      <String, Map<String, _StrikeIdentity>>{};
+
+  /// Room code -> the host's strike key: the keyed hash of the host's IP
+  /// (section 32 item 15 (a)), empty when the IP was not known.
+  final Map<String, String> _hostKeys = <String, String>{};
 
   /// Section 31 item 1: the source of link ids and knock ids. A separate
   /// CSPRNG from [_secure] so drawing them never moves a sequence the dice
@@ -897,8 +929,8 @@ class RoomRegistry {
 
   final Map<String, Room> _rooms = <String, Room>{};
 
-  /// Code -> the moment it stops being quarantined (reap time + 24h).
-  final Map<String, DateTime> _quarantine = <String, DateTime>{};
+  /// Code -> the moment it stops resting (reap time + 10 minutes).
+  final Map<String, DateTime> _resting = <String, DateTime>{};
 
   /// Room code -> the moment its room first had no connected seat, in any
   /// state. Absent while at least one seat is connected. A LOBBY and a
@@ -923,6 +955,8 @@ class RoomRegistry {
     required String name,
     required int players,
     required RulesConfig rules,
+    String? install,
+    String ip = '',
   }) {
     final String? trimmedName = _validName(name);
     if (trimmedName == null) {
@@ -966,6 +1000,7 @@ class RoomRegistry {
     );
     _rooms[code] = room;
     _roomsByLink[room.linkId] = room;
+    _hostKeys[code] = ip.isEmpty ? '' : strikes.key(ip);
     _refreshIdleTracking(room);
     return CreateOk(room: room, seat: hostSeat);
   }
@@ -995,7 +1030,7 @@ class RoomRegistry {
       room =
           byLink != null && byLink.state != RoomState.finished ? byLink : null;
     } else {
-      room = _rooms[code];
+      room = _rooms[foldRoomCode(code!)];
     }
     if (room == null) {
       return JoinFailure(ProtocolError.noSuchRoom);
@@ -1008,6 +1043,10 @@ class RoomRegistry {
       return JoinFailure(ProtocolError.badField);
     }
     final String barKey = _barKey(install: install, ip: ip);
+    final _StrikeIdentity identity = _StrikeIdentity(
+      installKey: install == null ? null : strikes.key(install),
+      ipKey: ip.isEmpty ? '' : strikes.key(ip),
+    );
     if (room.kickBars.contains(barKey)) {
       return JoinFailure(ProtocolError.kicked);
     }
@@ -1034,6 +1073,7 @@ class RoomRegistry {
         owner: owner,
       );
       room.knocks.add(knock);
+      _identitiesOf(room)[knock.id] = identity;
       room.seq++;
       return JoinKnocked(
         room: room,
@@ -1055,6 +1095,7 @@ class RoomRegistry {
       via: link != null ? 'link' : 'code',
       barKey: barKey,
     );
+    _identitiesOf(room)[seat.seatToken] = identity;
     room.seats = <Seat>[...room.seats, seat]
       ..sort((Seat a, Seat b) => a.seat.compareTo(b.seat));
     _refreshIdleTracking(room);
@@ -1127,7 +1168,9 @@ class RoomRegistry {
     }
     final List<KnockEvent> events = <KnockEvent>[];
     if (!rawAccept) {
-      events.add(_closeKnock(room, knock, 'rejected', bar: true));
+      // Section 32 item 7 (a): the one strike source on a knock.
+      final BanInfo? ban = _strike(room, _identitiesOf(room)[knock.id]);
+      events.add(_closeKnock(room, knock, 'rejected', bar: true, ban: ban));
     } else {
       _settleKnock(room, knock, events);
     }
@@ -1237,6 +1280,10 @@ class RoomRegistry {
       via: 'approved',
       barKey: knock.barKey,
     );
+    final _StrikeIdentity? knockIdentity = _identitiesOf(room)[knock.id];
+    if (knockIdentity != null) {
+      _identitiesOf(room)[seat.seatToken] = knockIdentity;
+    }
     room.seats = <Seat>[...room.seats, seat]
       ..sort((Seat a, Seat b) => a.seat.compareTo(b.seat));
     _refreshIdleTracking(room);
@@ -1264,6 +1311,7 @@ class RoomRegistry {
     Knock knock,
     String outcome, {
     bool bar = false,
+    BanInfo? ban,
   }) {
     room.knocks.removeWhere((Knock k) => k.id == knock.id);
     if (bar) {
@@ -1277,6 +1325,7 @@ class RoomRegistry {
       hostSeatToken: _hostToken(room),
       others: buildRoomSnapshot(room, now: _clock.now),
       outcome: outcome,
+      ban: ban,
     );
   }
 
@@ -1291,6 +1340,42 @@ class RoomRegistry {
     final Seat? host = _seatAt(room, room.hostSeat);
     return host?.seatToken;
   }
+
+  Map<String, _StrikeIdentity> _identitiesOf(Room room) =>
+      _identities.putIfAbsent(room.code, () => <String, _StrikeIdentity>{});
+
+  /// Records a strike against [target] from [room]'s host (section 32 item
+  /// 7). A socket that sent no `install` cannot be struck. Returns the ban the
+  /// strike fired, or null.
+  BanInfo? _strike(Room room, _StrikeIdentity? target) {
+    final String? installKey = target?.installKey;
+    if (target == null || installKey == null) {
+      return null;
+    }
+    final String hostKey = _hostKeys[room.code] ?? '';
+    // Item 15 (a): a host with no known IP, or the struck socket's own IP,
+    // is not a distinct host and records nothing.
+    if (hostKey.isEmpty || hostKey == target.ipKey) {
+      return null;
+    }
+    return strikes.recordStrike(
+      installKey: installKey,
+      hostKey: hostKey,
+      ipKey: target.ipKey,
+    );
+  }
+
+  /// Section 32 item 9: the ban that stops a typed code from this [install]
+  /// and [ip], or null. Asked before the lookup, so a banned caller learns
+  /// nothing about whether a room exists.
+  BanInfo? codeBan({String? install, required String ip}) => strikes.banFor(
+        installKey: install == null ? null : strikes.key(install),
+        ipKey: ip.isEmpty ? null : strikes.key(ip),
+      );
+
+  /// Section 32 item 11: the strike store's housekeeping, on the one-second
+  /// sweep.
+  void sweepStrikes() => strikes.sweep();
 
   /// Section 31 item 7: the SHA-256 (hex) of the `install` when there is one,
   /// otherwise of the IP. The two are prefixed apart so one string can never
@@ -1336,9 +1421,14 @@ class RoomRegistry {
     if (key != null) {
       room.kickBars.add(key);
     }
+    // Section 32 item 7 (b): a seat taken by typed code or by an accepted
+    // knock is a strike; a link seat is not.
+    final BanInfo? ban = target.via == 'code' || target.via == 'approved'
+        ? _strike(room, _identitiesOf(room)[target.seatToken])
+        : null;
     _removeLobbySeat(room, target);
     room.seq++;
-    return KickLobbyOk(room: room, seat: target);
+    return KickLobbyOk(room: room, seat: target, ban: ban);
   }
 
   /// Frees [seat] of a LOBBY or FINISHED room the way `leave_room` does.
@@ -1361,7 +1451,7 @@ class RoomRegistry {
   }
 
   ResumeResult resume({required String code, required String seatToken}) {
-    final Room? room = _rooms[code];
+    final Room? room = _rooms[foldRoomCode(code)];
     if (room == null) {
       return ResumeFailure(ProtocolError.noSuchRoom);
     }
@@ -2788,9 +2878,11 @@ class RoomRegistry {
       }
       _idleSince.remove(code);
       _finishedSince.remove(code);
-      _quarantine[code] = now.add(_codeQuarantine);
+      _identities.remove(code);
+      _hostKeys.remove(code);
+      _resting[code] = now.add(_codeRest);
     }
-    _quarantine.removeWhere(
+    _resting.removeWhere(
       (String code, DateTime expiry) => !now.isBefore(expiry),
     );
     // docs/VERIFY.md section 3: retention is enforced here, on the same
@@ -3058,13 +3150,15 @@ class RoomRegistry {
   }
 
   String _generateUniqueCode() {
-    while (true) {
-      final String candidate = generateRoomCode(_secure);
+    // Section 32 item 2: the lowest code in order that no live room holds and
+    // that is not resting.
+    for (int index = 0;; index++) {
+      final String candidate = roomCodeForIndex(index);
       if (_rooms.containsKey(candidate)) {
         continue;
       }
-      final DateTime? quarantinedUntil = _quarantine[candidate];
-      if (quarantinedUntil != null && _clock.now.isBefore(quarantinedUntil)) {
+      final DateTime? restingUntil = _resting[candidate];
+      if (restingUntil != null && _clock.now.isBefore(restingUntil)) {
         continue;
       }
       return candidate;
@@ -3208,4 +3302,13 @@ String? _validName(String name) {
     return null;
   }
   return trimmed;
+}
+
+/// What the strike ladder holds about one socket that joined or knocked:
+/// keyed hashes only (section 32 item 11). [ipKey] is empty when the socket's
+/// IP was not known.
+class _StrikeIdentity {
+  _StrikeIdentity({required this.installKey, required this.ipKey});
+  final String? installKey;
+  final String ipKey;
 }

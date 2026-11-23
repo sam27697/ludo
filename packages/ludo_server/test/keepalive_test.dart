@@ -285,7 +285,11 @@ class _Scenario {
 
     final WireTestClient b = await WireTestClient.connect(viaProxy);
     final _FrameLog bLog = _FrameLog(b, clock);
-    b.send('join_room', <String, Object?>{'code': code, 'name': 'Bo'});
+    b.send('join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
+      'code': code,
+      'name': 'Bo'
+    });
     final _Seen bAssigned = await bLog.expectType('seat_assigned', name);
     final int bSeat =
         (bAssigned.frame['d']! as Map<String, Object?>)['seat']! as int;

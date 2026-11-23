@@ -74,7 +74,7 @@ final RegExp _linkIdShape = RegExp(r'^[0-9a-z]{4,10}-[0-9a-z]{6}$');
 /// Extracts a room link id from an incoming link, or `null` when the link is
 /// not one of ours (see [isAppRoomLinkUri]) or its last segment is not shaped
 /// like a link id. The segment is folded to lower case first; a trailing empty
-/// segment is accepted as for [isAppRoomLinkUri]. A six-character room code
+/// segment is accepted as for [isAppRoomLinkUri]. A room code
 /// is not a link id and gives `null`. Untrusted input: the shape check is the
 /// whole of what is trusted. The query string and the fragment are never
 /// inspected.

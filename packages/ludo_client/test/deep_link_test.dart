@@ -88,7 +88,7 @@ Uri _validLink([String code = 'AB23CD']) {
 /// null for it): the "right host, right scheme, bad code" fixture. This is
 /// what a genuinely mistyped or corrupted room code looks like, as opposed
 /// to a uri that was never a room link at all.
-Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB0234');
+Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB_234');
 
 /// An [InitialLinkReader] whose future is held open by a [Completer] until
 /// the test calls [complete], and which counts how many times it was
@@ -376,15 +376,16 @@ void main() {
       );
     });
 
-    test('item 5: a code containing an excluded character (0) returns null, '
-        'matching the server, which also 404s AB0234', () {
-      final Uri uri = Uri.parse('https://ludo.provefair.app/r/AB0234');
+    test('item 5: a code containing a symbol outside the alphabet (_) returns '
+        'null, matching the server, which also 404s AB_234', () {
+      final Uri uri = Uri.parse('https://ludo.provefair.app/r/AB_234');
       expect(roomCodeFromUri(uri), isNull);
     });
 
-    test('item 6: a code shorter than 6 characters returns null', () {
+    test('item 6: a code shorter than 6 characters is a code (section 32 '
+        'item 1: 1 to 6 symbols)', () {
       final Uri uri = Uri.parse('https://ludo.provefair.app/r/AB23C');
-      expect(roomCodeFromUri(uri), isNull);
+      expect(roomCodeFromUri(uri), 'AB23C');
     });
 
     test('item 6: a code longer than 6 characters returns null', () {
@@ -435,9 +436,10 @@ void main() {
       expect(roomCodeFromUri(uri), isNull);
     });
 
-    test('item 9: L is accepted, it is in the alphabet on purpose', () {
+    test('item 9: L is folded to 1, it is not in the alphabet (section 32 '
+        'items 1 and 4)', () {
       final Uri uri = Uri.parse('https://ludo.provefair.app/r/ABLCDE');
-      expect(roomCodeFromUri(uri), 'ABLCDE');
+      expect(roomCodeFromUri(uri), 'AB1CDE');
     });
   });
 
