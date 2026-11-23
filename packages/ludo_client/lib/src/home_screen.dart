@@ -1766,10 +1766,7 @@ class _HomeScreenState extends State<HomeScreen>
                                                     ? loc.homeGameGoneNotice
                                                     : loc.homeRemovedNotice,
                                             },
-                                      refusal:
-                                          _knockNotice ==
-                                              _KnockNotice.notJoined ||
-                                          _knockNotice == _KnockNotice.kicked,
+                                      refusal: _knockNotice != null,
                                       dismissLabel: loc.homeNoticeDismiss,
                                       onDismiss: _dismissNotice,
                                     ),

@@ -187,9 +187,10 @@ class _KnockBarState extends State<KnockBar> {
   }
 }
 
-/// A card slides in and fades up when it first appears. It moves a painted
-/// layer only, so the layout under it is final from the first frame and a
-/// target is never somewhere other than where it is hit-tested.
+/// A card fades up when it first appears. It never travels: the door switch
+/// sits directly above the first card, so a card painted off its laid-out
+/// place would cross it, and a target is never somewhere other than where it
+/// is hit-tested.
 class _KnockEntrance extends StatelessWidget {
   const _KnockEntrance({required this.child});
 
@@ -205,13 +206,7 @@ class _KnockEntrance extends StatelessWidget {
       duration: kMotionShort,
       curve: Curves.easeOutCubic,
       builder: (BuildContext context, double t, Widget? child) {
-        return Opacity(
-          opacity: t,
-          child: Transform.translate(
-            offset: Offset(0, (1 - t) * -kSpace4),
-            child: child,
-          ),
-        );
+        return Opacity(opacity: t, child: child);
       },
       child: child,
     );
