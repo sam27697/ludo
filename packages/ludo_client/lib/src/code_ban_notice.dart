@@ -75,6 +75,25 @@ class CodeBan {
   int get hashCode => Object.hash(scope, untilMs, level, nextMs);
 }
 
+/// [text] with Arabic-Indic (U+0660..U+0669) and extended Arabic-Indic
+/// (U+06F0..U+06F9) digits written as Latin digits. The app writes every
+/// number in Latin digits (times, day counts, room codes), so a date line
+/// must not switch digit system halfway through a sentence. Weekday and month
+/// names stay in the language's own letters.
+String _latinDigits(String text) {
+  final StringBuffer out = StringBuffer();
+  for (final int unit in text.runes) {
+    if (unit >= 0x0660 && unit <= 0x0669) {
+      out.writeCharCode(0x30 + unit - 0x0660);
+    } else if (unit >= 0x06F0 && unit <= 0x06F9) {
+      out.writeCharCode(0x30 + unit - 0x06F0);
+    } else {
+      out.writeCharCode(unit);
+    }
+  }
+  return out.toString();
+}
+
 /// The notice text for [ban], one line per fact, in the language [context]
 /// is built in and with the end time in the phone's local zone and format.
 String codeBanText(BuildContext context, CodeBan ban) {
@@ -82,7 +101,7 @@ String codeBanText(BuildContext context, CodeBan ban) {
   final MaterialLocalizations material = MaterialLocalizations.of(context);
   final DateTime until = DateTime.fromMillisecondsSinceEpoch(ban.untilMs);
   final String when = loc.codeBanUntilFormat(
-    material.formatMediumDate(until),
+    _latinDigits(material.formatMediumDate(until)),
     material.formatTimeOfDay(
       TimeOfDay.fromDateTime(until),
       alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),

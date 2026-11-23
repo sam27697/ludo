@@ -1124,18 +1124,25 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     Center(
                       child: DieMark(
                         size: dieSize,
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            room.code,
-                            key: const Key('lobby-room-code'),
-                            textAlign: TextAlign.center,
-                            style: _roomCodeStyle(textTheme, room.code.length)
-                                ?.copyWith(
-                                  color: LudoColors.ink,
-                                  fontWeight: FontWeight.w700,
-                                  height: 1.0,
-                                ),
+                        // The code may only use the pip-free band through the
+                        // die's centre (P8): the box is as high as that band,
+                        // so the FittedBox shrinks a tall short code to it.
+                        child: SizedBox(
+                          width: dieSize * 0.56,
+                          height: dieSize * kDieMarkPipFreeHalfBand * 2,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              room.code,
+                              key: const Key('lobby-room-code'),
+                              textAlign: TextAlign.center,
+                              style: _roomCodeStyle(textTheme, room.code.length)
+                                  ?.copyWith(
+                                    color: LudoColors.ink,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.0,
+                                  ),
+                            ),
                           ),
                         ),
                       ),
