@@ -258,6 +258,28 @@ void main() {
       }
 
       for (final String code in <String>['Z', 'Z7']) {
+        testWidgets('code "$code" fills the pip-free centre', (tester) async {
+          final _Face f = await _Face.open(tester, code, lang);
+          final double ratio = f.code_.height / f.die.shortestSide;
+          // ignore: avoid_print
+          print('height ratio ${f.id}: ${ratio.toStringAsFixed(4)}');
+          expect(
+            ratio >= 0.26,
+            isTrue,
+            reason:
+                'expected the painted code height >= 0.26 x the die side '
+                '(${f.die.shortestSide}), measured ${f.code_.height} = '
+                '${ratio.toStringAsFixed(4)}. ${f.why}',
+          );
+          expect(
+            f.pipsHit,
+            isEmpty,
+            reason:
+                'expected the enlarged code rect ${f.code_} to touch no pip, '
+                'it reaches ${f.pipsHit}. ${f.why}',
+          );
+        });
+
         testWidgets('code "$code" is not set smaller than six symbols', (
           tester,
         ) async {
