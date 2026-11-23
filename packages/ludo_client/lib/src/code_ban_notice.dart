@@ -100,6 +100,27 @@ String codeBanText(BuildContext context, CodeBan ban) {
   return lines.join('\n');
 }
 
+/// The red mark every refusal notice leads with: a red disc with an X, so the
+/// refusal reads by shape as well as by colour (P9). The code-ban card, the
+/// knock refusal and kicked lines on home and the kicked card in the lobby all
+/// draw this one widget.
+class RefusalNoticeMark extends StatelessWidget {
+  const RefusalNoticeMark({super.key, this.size = 24});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: Icon(Icons.cancel_rounded, color: LudoColors.error, size: size),
+    );
+  }
+}
+
+/// The frame colour and width of a refusal notice card.
+const Color kRefusalNoticeFrame = LudoColors.error;
+const double kRefusalNoticeFrameWidth = 2;
+
 /// The card on home that carries [codeBanText]. A red block mark leads it and
 /// the words say the same thing, so colour is never the only signal. The mark
 /// sits at the start edge and the close control at the end edge, so the card
@@ -154,11 +175,14 @@ class _CodeBanNoticeState extends State<CodeBanNotice> {
   Widget build(BuildContext context) {
     final TextTheme textTheme = Theme.of(context).textTheme;
     final Widget card = DecoratedBox(
-      key: const Key('home-code-ban-card'),
+      key: const Key('code-ban-notice'),
       decoration: BoxDecoration(
         color: LudoColors.paperWashTop,
         borderRadius: BorderRadius.circular(kRadiusControl),
-        border: Border.all(color: LudoColors.error, width: 2),
+        border: Border.all(
+          color: kRefusalNoticeFrame,
+          width: kRefusalNoticeFrameWidth,
+        ),
       ),
       child: Padding(
         padding: const EdgeInsetsDirectional.only(
@@ -171,11 +195,7 @@ class _CodeBanNoticeState extends State<CodeBanNotice> {
           children: [
             const Padding(
               padding: EdgeInsets.only(top: kSpace3),
-              child: Icon(
-                Icons.block_rounded,
-                color: LudoColors.error,
-                size: 24,
-              ),
+              child: RefusalNoticeMark(),
             ),
             const SizedBox(width: kSpace3),
             Expanded(
@@ -196,7 +216,7 @@ class _CodeBanNoticeState extends State<CodeBanNotice> {
               ),
             ),
             IconButton(
-              key: const Key('home-code-ban-dismiss'),
+              key: const Key('code-ban-notice-dismiss'),
               onPressed: widget.onDismiss,
               tooltip: widget.dismissLabel,
               constraints: const BoxConstraints(minWidth: 48, minHeight: 48),

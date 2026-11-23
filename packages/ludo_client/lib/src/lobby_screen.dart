@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'code_ban_notice.dart' show RefusalNoticeMark;
 import 'die_mark.dart';
 import 'feedback.dart';
 import 'game_screen.dart' show GameScreenResult, showKickSheet;
@@ -835,6 +836,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       child: _lobbyCard(
         cardKey: const Key('lobby-error-card'),
         icon: icon,
+        mark: controller.errorCode == 'KICKED'
+            ? const RefusalNoticeMark(size: 32)
+            : null,
         title: linkRoomGone
             ? loc.lobbyErrorLinkRoomGone
             : lobbyErrorMessage(loc, controller.errorCode),
@@ -944,6 +948,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     required IconData icon,
     required String title,
     required List<Widget> children,
+    Widget? mark,
   }) {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 320),
@@ -958,7 +963,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Icon(icon, size: 32, color: LudoColors.inkMuted),
+              mark ?? Icon(icon, size: 32, color: LudoColors.inkMuted),
               const SizedBox(height: kSpace2),
               Text(
                 title,

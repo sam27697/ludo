@@ -1766,6 +1766,10 @@ class _HomeScreenState extends State<HomeScreen>
                                                     ? loc.homeGameGoneNotice
                                                     : loc.homeRemovedNotice,
                                             },
+                                      refusal:
+                                          _knockNotice ==
+                                              _KnockNotice.notJoined ||
+                                          _knockNotice == _KnockNotice.kicked,
                                       dismissLabel: loc.homeNoticeDismiss,
                                       onDismiss: _dismissNotice,
                                     ),
@@ -2249,8 +2253,12 @@ class _HomeNotice extends StatefulWidget {
     required this.text,
     required this.dismissLabel,
     required this.onDismiss,
+    this.refusal = false,
   });
 
+  /// A refusal (not joined, kicked) wears the red mark family of the code-ban
+  /// notice; every other notice keeps the neutral mark.
+  final bool refusal;
   final Key cardKey;
   final Key textKey;
   final String text;
@@ -2325,7 +2333,12 @@ class _HomeNoticeState extends State<_HomeNotice> {
       decoration: BoxDecoration(
         color: LudoColors.paperWashTop,
         borderRadius: BorderRadius.circular(kRadiusControl),
-        border: Border.all(color: LudoColors.feltLight),
+        border: widget.refusal
+            ? Border.all(
+                color: kRefusalNoticeFrame,
+                width: kRefusalNoticeFrameWidth,
+              )
+            : Border.all(color: LudoColors.feltLight),
       ),
       child: Padding(
         padding: const EdgeInsetsDirectional.only(
@@ -2335,11 +2348,14 @@ class _HomeNoticeState extends State<_HomeNotice> {
         ),
         child: Row(
           children: [
-            const Icon(
-              Icons.info_outline_rounded,
-              color: LudoColors.ink,
-              size: 24,
-            ),
+            if (widget.refusal)
+              const RefusalNoticeMark()
+            else
+              const Icon(
+                Icons.info_outline_rounded,
+                color: LudoColors.ink,
+                size: 24,
+              ),
             const SizedBox(width: kSpace3),
             Expanded(
               child: Padding(
