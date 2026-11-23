@@ -25986,6 +25986,22 @@ Map<String, Object?> _x203Ban(String scope, int nextMs, int untilMs) =>
       'next_ms': nextMs,
     };
 
+/// [text] with every Arabic-Indic (U+0660..U+0669) and Persian
+/// (U+06F0..U+06F9) digit written as the Latin digit of the same value.
+String _latinDigits(String text) {
+  final StringBuffer out = StringBuffer();
+  for (final int unit in text.runes) {
+    if (unit >= 0x0660 && unit <= 0x0669) {
+      out.writeCharCode(0x30 + unit - 0x0660);
+    } else if (unit >= 0x06F0 && unit <= 0x06F9) {
+      out.writeCharCode(0x30 + unit - 0x06F0);
+    } else {
+      out.writeCharCode(unit);
+    }
+  }
+  return out.toString();
+}
+
 /// The ban notice is on screen, drawn with the red refusal mark, and reads
 /// the lines section 32 item 12 asks for: the end time, the next-step days
 /// for a device ban that names a next block (and nothing about a next block
@@ -26028,11 +26044,23 @@ void _expectX203BanNotice(
   final BuildContext context = tester.element(notice);
   final AppLocalizations loc = AppLocalizations.of(context);
   final DateTime until = DateTime.fromMillisecondsSinceEpoch(untilMs);
-  final String date = MaterialLocalizations.of(context).formatMediumDate(until);
+  // Order 692 (X217): the Arabic UI writes Latin digits, so the date the
+  // locale prints with Arabic-Indic digits is expected with Latin ones.
+  final String date = _latinDigits(
+    MaterialLocalizations.of(context).formatMediumDate(until),
+  );
   final String text = tester
       .widget<Text>(find.byKey(const Key('home-code-ban-notice')))
       .data!;
   final List<String> lines = text.split('\n');
+  expect(
+    RegExp('[\u0660-\u0669\u06F0-\u06F9]').hasMatch(text),
+    isFalse,
+    reason:
+        '$shotName ($scenario): expected no Arabic-Indic or Persian digit '
+        '(U+0660..U+0669, U+06F0..U+06F9) in the notice, it reads "$text". '
+        'Reproduce: $repro',
+  );
   expect(
     text,
     contains(date),
