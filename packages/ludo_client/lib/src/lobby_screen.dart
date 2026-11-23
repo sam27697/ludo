@@ -1127,9 +1127,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         // The code may only use the pip-free band through the
                         // die's centre (P8): the box is as high as that band,
                         // so the FittedBox shrinks a tall short code to it.
+                        // One or two symbols use the centred pip-free square
+                        // instead, so a single letter fills it.
                         child: SizedBox(
-                          width: dieSize * 0.56,
-                          height: dieSize * kDieMarkPipFreeHalfBand * 2,
+                          width: room.code.length <= 2
+                              ? dieSize * kDieMarkPipFreeSquare
+                              : dieSize * 0.56,
+                          height: room.code.length <= 2
+                              ? dieSize * kDieMarkPipFreeSquare
+                              : dieSize * kDieMarkPipFreeHalfBand * 2,
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(

@@ -21,6 +21,23 @@ double homeDieMarkSize(bool compact) => compact ? dieMarkSize(true) : 88;
 /// the whole width of the face. A code painted on the die stays inside it.
 const double kDieMarkPipFreeHalfBand = 0.115;
 
+/// Pip geometry as fractions of the die size, shared with the painter: the
+/// centre offset of the corner pips, their radius, and the outer reach of the
+/// edge stroke (half of the 0.014 stroke).
+const double kDieMarkPipOffset = 0.22;
+const double kDieMarkPipRadius = 0.095;
+const double kDieMarkPipStrokeReach = 0.007;
+
+/// Side of the centred square that touches no pip, as a fraction of the die
+/// size. The clear disc around the centre has radius
+/// offset * sqrt2 - radius - stroke reach; the square inscribed in it has side
+/// radius * sqrt2. A one or two symbol code is boxed in this square.
+const double kDieMarkPipFreeSquare =
+    (kDieMarkPipOffset * math.sqrt2 -
+        kDieMarkPipRadius -
+        kDieMarkPipStrokeReach) *
+    math.sqrt2;
+
 /// Pip diameter on the compact game-chrome seat strip (space-2 on the 4/8 scale).
 const double kSeatPipSize = 8;
 
@@ -251,9 +268,9 @@ class _DieMarkPainter extends CustomPainter {
         ..strokeWidth = math.max(2.0, s * 0.028),
     );
 
-    final double pipR = s * 0.095;
+    final double pipR = s * kDieMarkPipRadius;
     final Offset c = Offset(s / 2, s / 2);
-    final double off = s * 0.22;
+    final double off = s * kDieMarkPipOffset;
     final List<Offset> spots = <Offset>[
       c + Offset(-off, -off),
       c + Offset(off, -off),
