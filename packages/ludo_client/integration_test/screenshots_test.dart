@@ -147,6 +147,7 @@ import 'package:ludo_client/src/app.dart'
 import 'package:ludo_client/src/board.dart' show LudoBoard;
 import 'package:ludo_client/src/board_geometry.dart' show cellFor;
 import 'package:ludo_client/src/chat_bubble.dart' show kChatMinDwell;
+import 'package:ludo_client/src/code_ban_notice.dart' show RefusalNoticeMark;
 import 'package:ludo_client/src/die_cube.dart' show BoardThrownDie;
 import 'package:ludo_client/src/end_card.dart' show EndCard;
 import 'package:ludo_client/src/feedback.dart'
@@ -154,6 +155,7 @@ import 'package:ludo_client/src/feedback.dart'
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/game_stats.dart';
 import 'package:ludo_client/src/home_screen.dart';
+import 'package:ludo_client/src/install_id.dart' show installId;
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/frame.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
@@ -7071,6 +7073,87 @@ void main() {
       locale: const Locale('ar'),
       roomCode: 'KKHA2K',
       ending: _X202End.kicked,
+    );
+  });
+
+  // ==========================================================================
+  // 172-177: order 689t (C-689t), the screens of order 686 (docs/PROTOCOL.md
+  // section 32): a one-symbol code in the join field, the code-ban notice
+  // (device and network scope), the notice beside a rejected knock, the
+  // one-symbol code on the lobby die and the kicked card with the red
+  // refusal mark. (171 is retired.) Bodies live at the bottom of the file.
+  // ==========================================================================
+  for (final String lang in <String>['en', 'ar']) {
+    final Locale locale = Locale(lang);
+
+    testWidgets('capture 172-home-short-code-$lang', (tester) async {
+      await _shootHomeShortCode(
+        tester,
+        binding,
+        shotName: '172-home-short-code-$lang',
+        locale: locale,
+      );
+    });
+
+    testWidgets('capture 173-home-code-ban-device-$lang', (tester) async {
+      await _shootHomeCodeBan(
+        tester,
+        binding,
+        shotName: '173-home-code-ban-device-$lang',
+        locale: locale,
+        scope: 'device',
+        nextMs: _x203Day * 7,
+      );
+    });
+
+    testWidgets('capture 174-home-code-ban-network-$lang', (tester) async {
+      await _shootHomeCodeBan(
+        tester,
+        binding,
+        shotName: '174-home-code-ban-network-$lang',
+        locale: locale,
+        scope: 'network',
+        nextMs: 0,
+      );
+    });
+
+    testWidgets('capture 175-home-knock-rejected-ban-$lang', (tester) async {
+      await _shootHomeKnockRejectedBan(
+        tester,
+        binding,
+        shotName: '175-home-knock-rejected-ban-$lang',
+        locale: locale,
+      );
+    });
+
+    testWidgets('capture 176-lobby-short-code-$lang', (tester) async {
+      await _shootLobbyShortCode(
+        tester,
+        binding,
+        shotName: '176-lobby-short-code-$lang',
+        locale: locale,
+      );
+    });
+
+    testWidgets('capture 177-lobby-kicked-card-$lang', (tester) async {
+      await _shootLobbyKickedCard(
+        tester,
+        binding,
+        shotName: '177-lobby-kicked-card-$lang',
+        locale: locale,
+      );
+    });
+  }
+
+  testWidgets('capture 174-home-code-ban-network-ar-2x', (tester) async {
+    await _shootHomeCodeBan(
+      tester,
+      binding,
+      shotName: '174-home-code-ban-network-ar-2x',
+      locale: const Locale('ar'),
+      scope: 'network',
+      nextMs: 0,
+      textScale: 2.0,
     );
   });
 }
@@ -25711,6 +25794,729 @@ Future<void> _shootX202Knocker(
     reason:
         '$shotName ($scenario): expected the line '
         '"${loc.knockOutcomeNotJoined}" on Home. Reproduce: $repro',
+  );
+  await _capture(binding, tester, shotName);
+}
+
+// --- order 689t: the screens of order 686 (docs/PROTOCOL.md section 32).
+
+const int _x203Day = 24 * 60 * 60 * 1000;
+
+/// What a typed-code join from Home leaves behind: the one controller and
+/// transport the factory made, and the id the join went out under.
+class _X203Join {
+  _X203Join({
+    required this.factory,
+    required this.controller,
+    required this.transport,
+    required this.joinId,
+    required this.joiner,
+    required this.scenario,
+    required this.repro,
+  });
+
+  final _ScreenshotControllerFactory factory;
+  final RoomController controller;
+  final FakeTransport transport;
+  final String joinId;
+  final String joiner;
+  final String scenario;
+  final String repro;
+}
+
+String _x203Repro(String shotName) =>
+    'flutter test integration_test/screenshots_test.dart -d flutter-tester '
+    '--plain-name "capture $shotName"';
+
+/// Mounts Home, types [code] and taps Join. The install id is read first
+/// (docs/PROTOCOL.md section 32 item 6: a code join waits for it), and the
+/// join is waited for on a condition, never a fixed sleep.
+Future<_X203Join> _x203JoinFromHome(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String code,
+  required String detail,
+  double? textScale,
+}) async {
+  final bool ar = locale.languageCode == 'ar';
+  final String scenario =
+      'code "$code", locale ${locale.languageCode}, $detail'
+      '${textScale == null ? '' : ', text scale $textScale'}';
+  final String repro = _x203Repro(shotName);
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  await installId();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+  if (textScale != null) {
+    tester.platformDispatcher.textScaleFactorTestValue = textScale;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  }
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  // Every caller ends with the join route returned, and Home then retires
+  // and disposes the controller itself, so no teardown disposes it twice.
+  expect(
+    isValidRoomCode(normalizeRoomCode(code)),
+    isTrue,
+    reason:
+        '$shotName: fixture broken, "$code" is not a typeable room code. '
+        '$scenario. Reproduce: $repro',
+  );
+  final String joiner = ar ? 'سام' : 'Sam';
+  await tester.enterText(find.byKey(const Key('home-name-field')), joiner);
+  await tester.enterText(find.byKey(const Key('room-code-field')), code);
+  await tester.pumpAndSettle();
+  await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+  var pumps = 0;
+  while (factory.transports.isEmpty ||
+      !factory.transports.single.sentRaw.any(
+        (String s) => _typeOf(s) == 'join_room',
+      )) {
+    if (pumps >= 200) {
+      fail(
+        '$shotName ($scenario): no join_room was sent after 200 frames; sent '
+        '${factory.transports.map((FakeTransport t) => t.sentRaw.map(_typeOf).toList()).toList()}. '
+        'Reproduce: $repro',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 16));
+    pumps += 1;
+  }
+  expect(
+    factory.controllers,
+    hasLength(1),
+    reason: '$shotName ($scenario): expected one controller. $repro',
+  );
+  final FakeTransport transport = factory.transports.single;
+  final List<String> joins = transport.sentRaw
+      .where((String s) => _typeOf(s) == 'join_room')
+      .toList();
+  expect(
+    joins,
+    hasLength(1),
+    reason:
+        '$shotName ($scenario): expected one join_room, sent '
+        '${transport.sentRaw.map(_typeOf).toList()}. Reproduce: $repro',
+  );
+  expect(
+    _dataOf(joins.single)['code'],
+    normalizeRoomCode(code),
+    reason:
+        '$shotName ($scenario): the join must carry the typed code in '
+        'canonical form. Reproduce: $repro',
+  );
+  expect(
+    _dataOf(joins.single)['install'],
+    isA<String>(),
+    reason:
+        '$shotName ($scenario): a typed-code join always carries install '
+        '(section 32 item 6). Reproduce: $repro',
+  );
+  return _X203Join(
+    factory: factory,
+    controller: factory.controllers.single,
+    transport: transport,
+    joinId: _idOf(joins.single),
+    joiner: joiner,
+    scenario: scenario,
+    repro: repro,
+  );
+}
+
+Map<String, Object?> _x203Ban(String scope, int nextMs, int untilMs) =>
+    <String, Object?>{
+      'scope': scope,
+      'until_ms': untilMs,
+      'level': 1,
+      'next_ms': nextMs,
+    };
+
+/// The ban notice is on screen, drawn with the red refusal mark, and reads
+/// the lines section 32 item 12 asks for: the end time, the next-step days
+/// for a device ban that names a next block (and nothing about a next block
+/// otherwise), and the line that a friend's link still works.
+void _expectX203BanNotice(
+  WidgetTester tester, {
+  required String shotName,
+  required String scenario,
+  required String repro,
+  required String scope,
+  required int untilMs,
+  required int nextMs,
+  bool fullInsideView = true,
+}) {
+  final Finder notice = find.byKey(const Key('code-ban-notice'));
+  expect(
+    notice,
+    findsOneWidget,
+    reason:
+        '$shotName ($scenario): expected the ban notice (code-ban-notice) on '
+        'Home. Reproduce: $repro',
+  );
+  expect(
+    find.descendant(of: notice, matching: find.byType(RefusalNoticeMark)),
+    findsOneWidget,
+    reason:
+        '$shotName ($scenario): expected the red refusal mark in the ban '
+        'notice. Reproduce: $repro',
+  );
+  expect(
+    find.descendant(
+      of: notice,
+      matching: find.byIcon(Icons.info_outline_rounded),
+    ),
+    findsNothing,
+    reason:
+        '$shotName ($scenario): the ban notice must not wear the neutral '
+        'mark. Reproduce: $repro',
+  );
+  final BuildContext context = tester.element(notice);
+  final AppLocalizations loc = AppLocalizations.of(context);
+  final DateTime until = DateTime.fromMillisecondsSinceEpoch(untilMs);
+  final String date = MaterialLocalizations.of(context).formatMediumDate(until);
+  final String text = tester
+      .widget<Text>(find.byKey(const Key('home-code-ban-notice')))
+      .data!;
+  final List<String> lines = text.split('\n');
+  expect(
+    text,
+    contains(date),
+    reason:
+        '$shotName ($scenario): expected the end date "$date" (until_ms '
+        '$untilMs) in the notice, it reads "$text". Reproduce: $repro',
+  );
+  expect(
+    lines.last,
+    loc.codeBanLinkStillWorks,
+    reason:
+        '$shotName ($scenario): expected the last line to be "a link still '
+        'works", it reads "$text". Reproduce: $repro',
+  );
+  final bool nextLine = scope == 'device' && nextMs > 0;
+  if (nextLine) {
+    final int days = (nextMs + _x203Day - 1) ~/ _x203Day;
+    expect(
+      lines,
+      contains(loc.codeBanDeviceNext(days)),
+      reason:
+          '$shotName ($scenario): expected the next-step line for $days '
+          'days (next_ms $nextMs), the notice reads "$text". Reproduce: '
+          '$repro',
+    );
+  }
+  expect(
+    lines,
+    hasLength(nextLine ? 3 : 2),
+    reason:
+        '$shotName ($scenario): expected ${nextLine ? 3 : 2} lines (scope '
+        '$scope, next_ms $nextMs), the notice reads "$text". Reproduce: '
+        '$repro',
+  );
+  final Rect rect = tester.getRect(notice);
+  final Size view = tester.view.physicalSize / tester.view.devicePixelRatio;
+  expect(
+    rect.left >= 0 && rect.right <= view.width,
+    isTrue,
+    reason:
+        '$shotName ($scenario): the notice rect (left ${rect.left}, right '
+        '${rect.right}) must lie inside the view width ${view.width}. '
+        'Reproduce: $repro',
+  );
+  if (fullInsideView) {
+    _expectRectInsideView(
+      tester,
+      notice,
+      label: 'code-ban-notice',
+      context: 'before capture $shotName ($scenario)',
+    );
+  } else {
+    expect(
+      rect.top >= 0,
+      isTrue,
+      reason:
+          '$shotName ($scenario): the notice must start inside the view, its '
+          'top is ${rect.top}. Reproduce: $repro',
+    );
+  }
+}
+
+/// 172: the join field holding what a player typed as `l`, shown as `1`,
+/// with the Join control enabled.
+Future<void> _shootHomeShortCode(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  await _mountPlainHome(tester, binding, shotName: shotName, locale: locale);
+  final String repro = _x203Repro(shotName);
+  const String typed = 'l';
+  const String shown = '1';
+  expect(
+    normalizeRoomCode(typed),
+    shown,
+    reason:
+        'capture $shotName: fixture broken, "$typed" must fold to "$shown" '
+        '(section 32). Reproduce: $repro',
+  );
+  expect(
+    find.byKey(const Key('join-room-button'), skipOffstage: false),
+    findsNothing,
+    reason:
+        'capture $shotName: join-room-button is absent before a code is '
+        'typed. Reproduce: $repro',
+  );
+  await tester.enterText(find.byKey(const Key('room-code-field')), typed);
+  await tester.pumpAndSettle();
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pump();
+  await tester.ensureVisible(find.byKey(const Key('join-room-button')));
+  await _settleForScreenshot(
+    tester,
+    find.byKey(const Key('join-room-button')),
+    'capture $shotName: join-room-button laid out after one symbol',
+  );
+  final Finder field = find.descendant(
+    of: find.byKey(const Key('room-code-field')),
+    matching: find.byType(EditableText),
+  );
+  expect(
+    tester.widget<EditableText>(field).controller.text,
+    shown,
+    reason:
+        'capture $shotName: expected the field to show "$shown" after typing '
+        '"$typed", it shows '
+        '"${tester.widget<EditableText>(field).controller.text}". '
+        'Reproduce: $repro',
+  );
+  final Finder join = find.byKey(const Key('join-room-button'));
+  expect(
+    join,
+    findsOneWidget,
+    reason:
+        'capture $shotName: expected join-room-button for a one-symbol '
+        'code. Reproduce: $repro',
+  );
+  final Finder pressable = find.descendant(
+    of: join,
+    matching: find.byWidgetPredicate((Widget w) => w is ButtonStyleButton),
+  );
+  final Widget joinWidget = join.evaluate().single.widget;
+  final ButtonStyleButton? button = joinWidget is ButtonStyleButton
+      ? joinWidget
+      : pressable.evaluate().isEmpty
+      ? null
+      : pressable.evaluate().first.widget as ButtonStyleButton;
+  expect(
+    button?.onPressed,
+    isNotNull,
+    reason:
+        'capture $shotName: expected the Join control enabled for the '
+        'one-symbol code "$shown" (button found: ${button != null}). '
+        'Reproduce: $repro',
+  );
+  _expectRectInsideView(
+    tester,
+    find.byKey(const Key('room-code-field')),
+    label: 'room-code-field',
+    context: 'with a one-symbol code before capture $shotName',
+  );
+  _expectRectInsideView(
+    tester,
+    join,
+    label: 'join-room-button',
+    context: 'with a one-symbol code before capture $shotName',
+  );
+  await _capture(binding, tester, shotName, frames: 0);
+}
+
+/// 173 and 174: a typed code answered `CODE_BANNED` with a `ban` object, and
+/// Home with the ban notice. [textScale] set means the 2x capture: the
+/// emulator's own width, the card must fit across it.
+Future<void> _shootHomeCodeBan(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String scope,
+  required int nextMs,
+  double? textScale,
+}) async {
+  final int untilMs = DateTime.now().millisecondsSinceEpoch + 3 * _x203Day;
+  final _X203Join j = await _x203JoinFromHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+    code: 'Z7K',
+    detail: 'CODE_BANNED scope $scope, until_ms $untilMs, next_ms $nextMs',
+    textScale: textScale,
+  );
+  j.transport.pushText(
+    _frame(
+      type: 'error',
+      re: j.joinId,
+      data: <String, Object?>{
+        'code': 'CODE_BANNED',
+        'message': 'code joins are blocked',
+        'ban': _x203Ban(scope, nextMs, untilMs),
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('code-ban-notice')),
+    '$shotName: the ban notice on Home after CODE_BANNED. ${j.scenario}',
+  );
+  await tester.pumpAndSettle();
+  expect(
+    find.byType(LobbyScreen),
+    findsNothing,
+    reason:
+        '$shotName (${j.scenario}): the lobby route must be gone after '
+        'CODE_BANNED. Reproduce: ${j.repro}',
+  );
+  expect(
+    tester.takeException(),
+    isNull,
+    reason:
+        '$shotName (${j.scenario}): the notice laid out without a layout '
+        'exception. Reproduce: ${j.repro}',
+  );
+  _expectX203BanNotice(
+    tester,
+    shotName: shotName,
+    scenario: j.scenario,
+    repro: j.repro,
+    scope: scope,
+    untilMs: untilMs,
+    nextMs: nextMs,
+    fullInsideView: textScale == null,
+  );
+  await _capture(binding, tester, shotName);
+}
+
+/// 175: `knock_failed` outcome `rejected` WITH a `ban`: the not-joined line
+/// with its red refusal mark and the ban notice above it.
+Future<void> _shootHomeKnockRejectedBan(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  final int untilMs = DateTime.now().millisecondsSinceEpoch + 3 * _x203Day;
+  const int nextMs = 7 * _x203Day;
+  final _X203Join j = await _x203JoinFromHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+    code: 'KR5',
+    detail: 'knock rejected with ban device, until_ms $untilMs',
+  );
+  j.transport.pushText(
+    _frame(
+      type: 'knock_pending',
+      re: j.joinId,
+      data: const <String, Object?>{
+        'knock_id': 'k-shot-175',
+        'expires_ms': 60000,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('knock-waiting')),
+    '$shotName: the waiting card after knock_pending. ${j.scenario}',
+  );
+  j.transport.pushText(
+    _frame(
+      type: 'knock_failed',
+      data: <String, Object?>{
+        'knock_id': 'k-shot-175',
+        'outcome': 'rejected',
+        'ban': _x203Ban('device', nextMs, untilMs),
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('home-knock-notice')),
+    '$shotName: Home with the not-joined line after knock_failed. '
+    '${j.scenario}',
+  );
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('code-ban-notice')),
+    '$shotName: the ban notice beside the not-joined line. ${j.scenario}',
+  );
+  await tester.pumpAndSettle();
+  expect(
+    find.byType(LobbyScreen),
+    findsNothing,
+    reason: '$shotName (${j.scenario}): the lobby must be gone. ${j.repro}',
+  );
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(HomeScreen)),
+  );
+  expect(
+    find.text(loc.knockOutcomeNotJoined),
+    findsOneWidget,
+    reason:
+        '$shotName (${j.scenario}): expected the line '
+        '"${loc.knockOutcomeNotJoined}" on Home. Reproduce: ${j.repro}',
+  );
+  final Finder card = find.byKey(const Key('home-notice'));
+  expect(
+    card,
+    findsOneWidget,
+    reason:
+        '$shotName (${j.scenario}): expected the not-joined card '
+        '(home-notice). Reproduce: ${j.repro}',
+  );
+  expect(
+    find.descendant(of: card, matching: find.byType(RefusalNoticeMark)),
+    findsOneWidget,
+    reason:
+        '$shotName (${j.scenario}): expected the red refusal mark on the '
+        'not-joined line. Reproduce: ${j.repro}',
+  );
+  expect(
+    find.descendant(
+      of: card,
+      matching: find.byIcon(Icons.info_outline_rounded),
+    ),
+    findsNothing,
+    reason:
+        '$shotName (${j.scenario}): the not-joined line must not wear the '
+        'neutral mark. Reproduce: ${j.repro}',
+  );
+  _expectX203BanNotice(
+    tester,
+    shotName: shotName,
+    scenario: j.scenario,
+    repro: j.repro,
+    scope: 'device',
+    untilMs: untilMs,
+    nextMs: nextMs,
+    fullInsideView: false,
+  );
+  await _capture(binding, tester, shotName);
+}
+
+/// 176: the host lobby of a room whose code is one symbol, `Z`, on the die.
+Future<void> _shootLobbyShortCode(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  const String roomCode = 'Z';
+  final bool ar = locale.languageCode == 'ar';
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, host lobby of two '
+      'seats';
+  final String repro = _x203Repro(shotName);
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final FakeTransport socket = FakeTransport();
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: (Uri url) async => socket,
+  );
+  addTearDown(controller.dispose);
+  final String hostName = ar ? 'ديمة' : 'Dee';
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      LobbyScreen(
+        controller: controller,
+        action: LobbyAction.create,
+        playerName: hostName,
+        players: 4,
+      ),
+      locale: locale,
+    ),
+  );
+  await tester.pump();
+  expect(
+    socket.sentRaw,
+    isNotEmpty,
+    reason:
+        '$shotName ($scenario): fixture broken, LobbyScreen.initState must '
+        'have sent create_room. Reproduce: $repro',
+  );
+  final String createId = _idOf(socket.sentRaw.last);
+  socket.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: const <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-176'},
+    ),
+  );
+  socket.pushText(
+    _frame(
+      type: 'room',
+      re: createId,
+      data: _x202Room(
+        code: roomCode,
+        seats: <Map<String, Object?>>[
+          _x202Seat(0, hostName, 'host'),
+          _x202Seat(1, ar ? 'ليلى' : 'Lina', 'code'),
+        ],
+        approval: false,
+        seq: 1,
+      ),
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('lobby-room-code')),
+    '$shotName: the room code on the die after the room frame. $scenario',
+  );
+  await _expectLobbyScreen(
+    tester,
+    localeName: locale.languageCode,
+    code: roomCode,
+    expectedSeatCount: 2,
+  );
+  expect(
+    controller.isHost,
+    true,
+    reason:
+        '$shotName ($scenario): expected a connected host. Reproduce: $repro',
+  );
+  _expectRectInsideView(
+    tester,
+    find.byKey(const Key('lobby-room-code')),
+    label: 'lobby-room-code',
+    context: 'before capture $shotName ($scenario)',
+  );
+  await _capture(binding, tester, shotName);
+}
+
+/// 177: the lobby error card for `KICKED`, answering a typed-code join,
+/// with the red refusal mark.
+Future<void> _shootLobbyKickedCard(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  const String roomCode = 'K4';
+  final String scenario =
+      'code $roomCode, locale ${locale.languageCode}, a join answered KICKED';
+  final String repro = _x203Repro(shotName);
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  await installId();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final FakeTransport socket = FakeTransport();
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: (Uri url) async => socket,
+  );
+  addTearDown(controller.dispose);
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      LobbyScreen(
+        controller: controller,
+        action: LobbyAction.join,
+        code: roomCode,
+        playerName: locale.languageCode == 'ar' ? 'سام' : 'Sam',
+      ),
+      locale: locale,
+    ),
+  );
+  var pumps = 0;
+  while (!socket.sentRaw.any((String s) => _typeOf(s) == 'join_room')) {
+    if (pumps >= 200) {
+      fail(
+        '$shotName ($scenario): no join_room was sent after 200 frames; sent '
+        '${socket.sentRaw.map(_typeOf).toList()}. Reproduce: $repro',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 16));
+    pumps += 1;
+  }
+  final String joinId = _idOf(
+    socket.sentRaw.firstWhere((String s) => _typeOf(s) == 'join_room'),
+  );
+  socket.pushText(
+    _frame(
+      type: 'error',
+      re: joinId,
+      data: const <String, Object?>{
+        'code': 'KICKED',
+        'message': 'removed by the host',
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('lobby-error-card')),
+    '$shotName: the lobby error card after KICKED. $scenario',
+  );
+  final Finder card = find.byKey(const Key('lobby-error-card'));
+  final AppLocalizations loc = AppLocalizations.of(tester.element(card));
+  expect(
+    controller.errorCode,
+    'KICKED',
+    reason:
+        '$shotName ($scenario): expected error code KICKED, got '
+        '${controller.errorCode}. Reproduce: $repro',
+  );
+  expect(
+    find.descendant(of: card, matching: find.text(loc.knockWasKicked)),
+    findsOneWidget,
+    reason:
+        '$shotName ($scenario): expected "${loc.knockWasKicked}" on the '
+        'card. Reproduce: $repro',
+  );
+  expect(
+    find.descendant(of: card, matching: find.byType(RefusalNoticeMark)),
+    findsOneWidget,
+    reason:
+        '$shotName ($scenario): expected the red refusal mark on the kicked '
+        'card. Reproduce: $repro',
+  );
+  expect(
+    find.descendant(
+      of: card,
+      matching: find.byIcon(Icons.info_outline_rounded),
+    ),
+    findsNothing,
+    reason:
+        '$shotName ($scenario): the kicked card must not wear the neutral '
+        'mark. Reproduce: $repro',
+  );
+  _expectRectInsideView(
+    tester,
+    card,
+    label: 'lobby-error-card',
+    context: 'before capture $shotName ($scenario)',
   );
   await _capture(binding, tester, shotName);
 }
