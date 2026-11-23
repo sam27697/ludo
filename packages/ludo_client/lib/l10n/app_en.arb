@@ -1469,5 +1469,41 @@
         "type": "int"
       }
     }
+  },
+  "seatOriginPublic": "joined from random players",
+  "@seatOriginPublic": {
+    "description": "Spoken label of the mark on a seat that was given from the waiting line."
+  },
+  "seatOriginBot": "computer",
+  "@seatOriginBot": {
+    "description": "Spoken label of the mark on a computer seat."
+  },
+  "botName1": "Zuzu",
+  "@botName1": {
+    "description": "Name of computer character 1."
+  },
+  "botName2": "Nono",
+  "@botName2": {
+    "description": "Name of computer character 2."
+  },
+  "botName3": "Kiko",
+  "@botName3": {
+    "description": "Name of computer character 3."
+  },
+  "botName4": "Bobo",
+  "@botName4": {
+    "description": "Name of computer character 4."
+  },
+  "botName5": "Tutu",
+  "@botName5": {
+    "description": "Name of computer character 5."
+  },
+  "botName6": "Mimi",
+  "@botName6": {
+    "description": "Name of computer character 6."
+  },
+  "lobbyFillComputer": "Fill with computer",
+  "@lobbyFillComputer": {
+    "description": "Lobby, host only, shown after about a minute in an open room with empty seats: seats computer players and starts."
   }
 }
