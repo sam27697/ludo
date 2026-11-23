@@ -38,6 +38,16 @@ const double kDieMarkPipFreeSquare =
         kDieMarkPipStrokeReach) *
     math.sqrt2;
 
+/// Height of the largest centred 2:1 (width : height) box that touches no pip,
+/// as a fraction of the die size. Its half width equals its height, which is
+/// past the pip column (offset), so the nearest box point to a pip centre is
+/// (offset, half height) and the box is clear while
+/// offset - half height >= radius + stroke reach. A two symbol code is boxed
+/// in it; the assert keeps the half width past the pip column.
+const double kDieMarkPipFreeWideHeight =
+    2 * (kDieMarkPipOffset - kDieMarkPipRadius - kDieMarkPipStrokeReach);
+const double kDieMarkPipFreeWideWidth = 2 * kDieMarkPipFreeWideHeight;
+
 /// Pip diameter on the compact game-chrome seat strip (space-2 on the 4/8 scale).
 const double kSeatPipSize = 8;
 
