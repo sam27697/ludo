@@ -431,11 +431,11 @@ void main() {
       final (C700Client ca, String _) =
           await r.queue(a, 1, name: 'A', row: 'L1 a');
       await _quiet(ca, 'L1', 'a before its socket closes');
-      await ca.close();
+      await r.closeQueued(ca, row: 'L1');
       final (C700Client cb, String tb) =
           await r.queue(b, 2, name: 'B', row: 'L1 b');
       await _quiet(cb, 'L1', 'b before its socket closes');
-      await cb.close();
+      await r.closeQueued(cb, row: 'L1');
       final (C700Client cc, String _) =
           await r.queue(c, 3, name: 'C', row: 'L1 c');
       await _quiet(cc, 'L1', 'c, the only attached ticket');
@@ -480,13 +480,13 @@ void main() {
       // and no cancel by an attached ticket can move another attached one.
       final Dev a = r.dev('a'), b = r.dev('b'), c = r.dev('c'), d = r.dev('d');
       final (C700Client ca, String _) = await r.queue(a, 1, row: 'L2 a');
-      await ca.close();
+      await r.closeQueued(ca, row: 'L2');
       r.tick(const Duration(seconds: 10));
       final (C700Client cb, String _) = await r.queue(b, 2, row: 'L2 b');
-      await cb.close();
+      await r.closeQueued(cb, row: 'L2');
       r.tick(const Duration(seconds: 10));
       final (C700Client cc, String _) = await r.queue(c, 3, row: 'L2 c');
-      await cc.close();
+      await r.closeQueued(cc, row: 'L2');
       r.tick(const Duration(seconds: 5));
       final (C700Client cd, String td) = await r.queue(d, 4, row: 'L2 d');
       await _quiet(cd, 'L2', 'd when it joined behind three detached tickets');
@@ -644,7 +644,7 @@ void main() {
     _s('L6 a detached ticket is passed over and is not one of two strangers',
         (C700Rig r) async {
       final (C700Client ca, String _) = await r.queue(r.dev('a'), 1, row: 'L6');
-      await ca.close();
+      await r.closeQueued(ca, row: 'L6');
       // AMBIGUITY: a detached ticket keeps its place, so it still counts in
       // the positions of those behind it.
       final (C700Client cb, String _) = await r.queue(r.dev('b'), 2, row: 'L6');
@@ -671,10 +671,10 @@ void main() {
       final Dev a = r.dev('a'), b = r.dev('b');
       final (C700Client ca, String ta) =
           await r.queue(a, 1, name: 'A', row: 'L7 a');
-      await ca.close();
+      await r.closeQueued(ca, row: 'L7');
       final (C700Client cb, String tb) =
           await r.queue(b, 2, name: 'B', row: 'L7 b');
-      await cb.close();
+      await r.closeQueued(cb, row: 'L7');
       r.tick(const Duration(milliseconds: 29999));
       // b first: in its old place it stays behind a.
       final (C700Client nb, String idb, Map<String, Object?> fb) =
@@ -707,7 +707,7 @@ void main() {
         'treated as new', (C700Rig r) async {
       final Dev a = r.dev('a');
       final (C700Client ca, String ta) = await r.queue(a, 1, row: 'L8');
-      await ca.close();
+      await r.closeQueued(ca, row: 'L8');
       r.tick(const Duration(milliseconds: 30000));
       final (C700Client _, String id, Map<String, Object?> f) =
           await r.find(a, ticket: ta);
@@ -728,7 +728,7 @@ void main() {
       final Dev a = r.dev('a');
       final (C700Client ca, String ta) =
           await r.queue(a, 1, name: 'A', row: 'L9');
-      await ca.close();
+      await r.closeQueued(ca, row: 'L9');
       final Dev other = r.dev('other', ip: a.ip);
       final (C700Client co, String ido, Map<String, Object?> fo) =
           await r.find(other, name: 'O', ticket: ta);
@@ -759,7 +759,7 @@ void main() {
         (C700Rig r) async {
       final (C700Client ca, String ta) =
           await r.queue(r.dev('a'), 1, row: 'L10');
-      await ca.close();
+      await r.closeQueued(ca, row: 'L10');
       const String unknown = 'AAAAAAAAAAAAAAAAAAAAAA';
       final (C700Client _, String id, Map<String, Object?> f) =
           await r.find(r.dev('e'), ticket: unknown);
@@ -869,7 +869,7 @@ void main() {
       // Its ticket stays detached for 30 000 ms after the close, so the same
       // install queueing again from another IP is position 2.
       await _quiet(r0.c, 'L15', 'R0 bars x');
-      await again.close();
+      await r.closeQueued(again, row: 'L15');
       final (C700Client fresh, String _) = await r.queue(
           Dev('x2', x.install, r.freshIp()), 2,
           name: 'X', row: 'L15 same install, another IP');

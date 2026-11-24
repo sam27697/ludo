@@ -432,6 +432,35 @@ class C700Rig {
         '$code going down');
   }
 
+  /// Closes the socket of a queued ticket and waits (bounded, on the
+  /// condition) until the server has noticed and detached it, so a later
+  /// [tick] cannot be read before the detach is stamped.
+  Future<void> closeQueued(C700Client c, {required String row}) async {
+    // Read through dynamic: the waiting line is the implementation's, and
+    // this file must analyze on a tree that does not have it yet.
+    int detached() {
+      final dynamic line = (registry as dynamic).line;
+      int n = 0;
+      for (final dynamic t in line.tickets as Iterable<dynamic>) {
+        if (!(t.attached as bool)) {
+          n++;
+        }
+      }
+      return n;
+    }
+
+    final int before = detached();
+    await c.close();
+    for (int i = 0; i < 400; i++) {
+      if (detached() > before) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    throw TestFailure('$row: fixture: the server never detached the ticket '
+        'of ${c.label} after its socket closed (detached tickets: $before)');
+  }
+
   /// strikes.json as text, waiting (bounded) for [ready].
   Future<String> fileText({bool Function(String)? ready}) async {
     String text = '';
