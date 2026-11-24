@@ -356,13 +356,10 @@ void main() {
       await _quietAll(t.all, 'K10', 'refused kicks');
     });
 
-    _s('K11 under 2026-10 the PLAYING kick stays WRONG_PHASE',
-        (C700Rig r) async {
-      // AMBIGUITY: item 8 says "stays WRONG_PHASE as today"; the existing
-      // c652 C2 pins BAD_TYPE for this case. This row follows item 8.
+    _s('K11 under 2026-10 the PLAYING kick stays BAD_TYPE', (C700Rig r) async {
       final _Table t = await _table(r, 3);
       t.host.c.send('kick', <String, Object?>{'seat': 1});
-      expectError(await t.host.c.next(), 'WRONG_PHASE',
+      expectError(await t.host.c.next(), 'BAD_TYPE',
           'K11: item 8: a PLAYING kick of a connected seat under 2026-10');
       await _quietAll(t.all, 'K11', 'nothing changed');
     }, ruleset: '2026-10');

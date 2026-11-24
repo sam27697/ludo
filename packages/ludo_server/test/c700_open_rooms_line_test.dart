@@ -42,19 +42,6 @@ void _forceFinished(C700Rig r, String code, {required int winner}) {
   room.state = RoomState.finished;
 }
 
-/// Makes [host]'s open room bar every device in [devs]: each joins by link
-/// and is kicked in LOBBY (section 31 item 7). The room stays matchable.
-Future<void> _barAll(C700Rig r, Held host, List<Dev> devs) async {
-  for (final Dev d in devs) {
-    final Held s = await r
-        .join(<String, Object?>{'link': host.linkId}, d, name: 'Bar${d.tag}');
-    host.c.send('kick', <String, Object?>{'seat': s.seat});
-    await s.c.untilType('kicked');
-    await host.c.sync();
-    await s.c.close();
-  }
-}
-
 Future<void> _quiet(C700Client c, String row, String what) async {
   final List<Map<String, Object?>> got = await c.sync();
   expect(got, isEmpty,
@@ -437,88 +424,111 @@ void main() {
 
   group('item 4: the line', () {
     _s(
-        'L1 the line in order: three tickets, then a new open room with two '
-        'free seats seats the first two in order and tells the third '
-        'position 1', (C700Rig r) async {
-      // AMBIGUITY: three tickets can wait together only while a matchable
-      // room exists that bars each of them; this reads "no matchable room
-      // exists for the head" (two strangers) as "no matchable room exists".
-      final Held r0 = await r.host(open: true, players: 4, name: 'R0');
+        'L1 the line in order: two detached tickets and an attached third, '
+        'then a new open room seats the third past them and the detached '
+        'two keep their places', (C700Rig r) async {
       final Dev a = r.dev('a'), b = r.dev('b'), c = r.dev('c');
-      await _barAll(r, r0, <Dev>[a, b, c]);
-      final (C700Client ca, String _) = await r.queue(a, 1, row: 'L1 a');
-      final (C700Client cb, String _) = await r.queue(b, 2, row: 'L1 b');
-      final (C700Client cc, String tc) = await r.queue(c, 3, row: 'L1 c');
-      await _quiet(ca, 'L1', 'a, while b and c joined behind it');
-      await _quiet(cb, 'L1', 'b, while c joined behind it');
-      expect(r.registry.roomCount, 1,
-          reason: 'L1: fixture: no room was made while R0 is matchable');
+      final (C700Client ca, String _) =
+          await r.queue(a, 1, name: 'A', row: 'L1 a');
+      await _quiet(ca, 'L1', 'a before its socket closes');
+      await ca.close();
+      final (C700Client cb, String tb) =
+          await r.queue(b, 2, name: 'B', row: 'L1 b');
+      await _quiet(cb, 'L1', 'b before its socket closes');
+      await cb.close();
+      final (C700Client cc, String _) =
+          await r.queue(c, 3, name: 'C', row: 'L1 c');
+      await _quiet(cc, 'L1', 'c, the only attached ticket');
+      expect(r.registry.roomCount, 0,
+          reason: 'L1: fixture: detached tickets are never two strangers, so '
+              'no room exists yet');
 
-      final Held r1 = await r.host(open: true, players: 3, name: 'R1');
-      await expectSeatedFromLine(ca,
-          row: 'L1', what: 'the head', code: r1.code, seat: 1);
-      await expectSeatedFromLine(cb,
-          row: 'L1', what: 'the second', code: r1.code, seat: 2);
-      expectQueued(await cc.next(),
-          position: 1,
-          re: null,
-          ticket: tc,
+      // players 2 (seats 0 and 2): the host and the third fill it, so nothing else can be
+      // seated while the detached tickets are probed below.
+      final Held r1 = await r.host(open: true, players: 2, name: 'R1');
+      await expectSeatedFromLine(cc,
           row: 'L1',
-          what: 'the third moves from 3 to 1');
-      await _quiet(cc, 'L1', 'the third after its fresh queued');
+          what: 'item 4: the third is seated past the two detached tickets',
+          code: r1.code,
+          seat: 2);
       final List<Map<String, Object?>> h1 = await r1.c.sync();
-      expect(ftypes(h1), <String>['player_joined', 'player_joined'],
-          reason: 'L1: R1 gets one player_joined per seat; got '
+      expect(ftypes(h1), <String>['player_joined'],
+          reason: 'L1: R1 gets one player_joined, for the third only; got '
               '${fdescAll(h1)}');
-      expect(<Object?>[fd(h1[0])['seat'], fd(h1[1])['seat']], <int>[1, 2],
-          reason: 'L1: in line order');
-      await _quiet(r0.c, 'L1', 'R0 bars all three');
+      expect(r.registry.lookup(r1.code)!.seats.length, 2,
+          reason: 'L1: the detached tickets are never seated');
+
+      // b is still held: re-attached inside 30 000 ms it gets its old
+      // position 2, with a still ahead of it.
+      r.tick(const Duration(milliseconds: 29000));
+      final (C700Client nb, String idb, Map<String, Object?> fb) =
+          await r.find(b, name: 'B', ticket: tb);
+      expectQueued(fb,
+          position: 2,
+          re: idb,
+          ticket: tb,
+          row: 'L1',
+          what: 'b re-attached keeps its ticket and its place behind a');
+      await _quiet(nb, 'L1', 'b after its re-attach');
     });
 
     _s('L2 queued is re-sent on every position change and not otherwise',
         (C700Rig r) async {
-      final Held r0 = await r.host(open: true, players: 4, name: 'R0');
-      final List<Dev> ds = <Dev>[
-        for (final String t in <String>['a', 'b', 'c', 'd']) r.dev(t)
-      ];
-      await _barAll(r, r0, ds);
-      final List<C700Client> cs = <C700Client>[];
-      final List<String> ts = <String>[];
-      for (int i = 0; i < 4; i++) {
-        final (C700Client c, String t) =
-            await r.queue(ds[i], i + 1, row: 'L2 ${ds[i].tag}');
-        cs.add(c);
-        ts.add(t);
-        for (int j = 0; j < i; j++) {
-          await _quiet(cs[j], 'L2',
-              '${ds[j].tag} when ${ds[i].tag} joins behind it (no change)');
-        }
-      }
-      Future<void> cancel(int i) async {
-        final String id = cs[i].send('cancel_find', <String, Object?>{});
-        final Map<String, Object?> f = await cs[i].next();
-        expect(f['t'], 'find_cancelled',
-            reason: 'L2: cancel_find by ${ds[i].tag}; got ${fdesc(f)}');
-        expect(f['re'], id, reason: 'L2: find_cancelled re');
-      }
+      // The line holds detached tickets a, b, c (detached at 0, 10 000 and
+      // 20 000 ms) and the attached tail d. Two attached tickets are always
+      // a room (item 4), so no second attached ticket can join behind d
+      // and no cancel by an attached ticket can move another attached one.
+      final Dev a = r.dev('a'), b = r.dev('b'), c = r.dev('c'), d = r.dev('d');
+      final (C700Client ca, String _) = await r.queue(a, 1, row: 'L2 a');
+      await ca.close();
+      r.tick(const Duration(seconds: 10));
+      final (C700Client cb, String _) = await r.queue(b, 2, row: 'L2 b');
+      await cb.close();
+      r.tick(const Duration(seconds: 10));
+      final (C700Client cc, String _) = await r.queue(c, 3, row: 'L2 c');
+      await cc.close();
+      r.tick(const Duration(seconds: 5));
+      final (C700Client cd, String td) = await r.queue(d, 4, row: 'L2 d');
+      await _quiet(cd, 'L2', 'd when it joined behind three detached tickets');
 
-      await cancel(1);
-      await _quiet(cs[0], 'L2', 'a ahead of the cancelled b');
-      expectQueued(await cs[2].next(),
-          position: 2, re: null, ticket: ts[2], row: 'L2', what: 'c 3 -> 2');
-      expectQueued(await cs[3].next(),
-          position: 3, re: null, ticket: ts[3], row: 'L2', what: 'd 4 -> 3');
-      await _quiet(cs[2], 'L2', 'c after one move');
-      await _quiet(cs[3], 'L2', 'd after one move');
+      r.tick(const Duration(seconds: 1));
+      await _quiet(cd, 'L2', 'd after a sweep with no expiry (26 000 ms)');
+      r.tick(const Duration(seconds: 3));
+      await _quiet(cd, 'L2', 'd after a sweep with no expiry (29 000 ms)');
 
-      await cancel(0);
-      expectQueued(await cs[2].next(),
-          position: 1, re: null, ticket: ts[2], row: 'L2', what: 'c 2 -> 1');
-      expectQueued(await cs[3].next(),
-          position: 2, re: null, ticket: ts[3], row: 'L2', what: 'd 3 -> 2');
+      r.tick(const Duration(seconds: 1));
+      expectQueued(await cd.next(),
+          position: 3,
+          re: null,
+          ticket: td,
+          row: 'L2',
+          what: 'd 4 -> 3 when a expires at 30 000 ms');
+      await _quiet(cd, 'L2', 'd after one change');
 
-      await cancel(3);
-      await _quiet(cs[2], 'L2', 'c when d behind it leaves');
+      r.tick(const Duration(seconds: 5));
+      await _quiet(cd, 'L2', 'd after a sweep with no expiry (35 000 ms)');
+      r.tick(const Duration(seconds: 5));
+      expectQueued(await cd.next(),
+          position: 2,
+          re: null,
+          ticket: td,
+          row: 'L2',
+          what: 'd 3 -> 2 when b expires at 40 000 ms');
+      r.tick(const Duration(seconds: 10));
+      expectQueued(await cd.next(),
+          position: 1,
+          re: null,
+          ticket: td,
+          row: 'L2',
+          what: 'd 2 -> 1 when c expires at 50 000 ms');
+      await _quiet(cd, 'L2', 'd at the head, alone');
+      expect(r.registry.roomCount, 0,
+          reason: 'L2: one attached ticket makes no room');
+
+      final String id = cd.send('cancel_find', <String, Object?>{});
+      final Map<String, Object?> f = await cd.next();
+      expect(<Object?>[f['t'], f['re']], <Object?>['find_cancelled', id],
+          reason: 'L2: cancel_find by d; got ${fdesc(f)}');
     });
 
     _s(
@@ -581,6 +591,7 @@ void main() {
           reason: 'L3: a lone fifth ticket makes no room');
       await _quiet(c5, 'L3', 'the fifth while the room is full');
 
+      await s3.c.sync();
       final String leaveId = s3.c.send('leave_room', <String, Object?>{});
       final Map<String, Object?> left = await s3.c.next();
       expect(left['re'], leaveId, reason: 'L3: fixture leave_room');
@@ -855,10 +866,12 @@ void main() {
       await r0.c.sync();
       final (C700Client again, String _) =
           await r.queue(x, 1, on: s.c, name: 'X', row: 'L15 same socket');
+      // Its ticket stays detached for 30 000 ms after the close, so the same
+      // install queueing again from another IP is position 2.
       await _quiet(r0.c, 'L15', 'R0 bars x');
       await again.close();
       final (C700Client fresh, String _) = await r.queue(
-          Dev('x2', x.install, r.freshIp()), 1,
+          Dev('x2', x.install, r.freshIp()), 2,
           name: 'X', row: 'L15 same install, another IP');
       await _quiet(fresh, 'L15', 'x waits');
       final Held r1 = await r.host(open: true, players: 4, name: 'R1');
