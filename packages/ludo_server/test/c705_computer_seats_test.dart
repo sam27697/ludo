@@ -1988,8 +1988,8 @@ void main() {
         final String arBot = await page(gameId, 'ar');
         final String arPlain = await page(plainId, 'ar');
         expect(
-          arBot.allMatches('كومبيوتر').length,
-          greaterThan(arPlain.allMatches('كومبيوتر').length),
+          'كومبيوتر'.allMatches(arBot).length,
+          greaterThan('كومبيوتر'.allMatches(arPlain).length),
           reason: 'EN-06: item 6: the Arabic page shows «كومبيوتر» beside '
               'the computer seat',
         );
