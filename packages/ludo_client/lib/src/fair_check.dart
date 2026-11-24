@@ -183,3 +183,34 @@ List<Frame>? wholeGameFrames(List<Frame> frames, {required String gameId}) {
   }
   return null;
 }
+
+/// C-704: what the end card needs to recheck every roll of the game it
+/// shows: the game's id, the `chain_commit` the room published before the
+/// game began, and where the game's frames come from. [loadFrames] completes
+/// with the frames [checkFairness] reads, or with an [Exception] when they
+/// cannot be had (offline, an error answer, a timeout).
+@immutable
+class EndCardFairSource {
+  const EndCardFairSource({
+    required this.gameId,
+    required this.chainCommit,
+    required this.loadFrames,
+  });
+
+  /// The finished game's `game_id`. A new id is a new game: the card drops
+  /// the result it holds and checks again.
+  final String gameId;
+
+  /// `chain_commit` of the room the game was played in.
+  final String chainCommit;
+
+  final Future<List<Frame>> Function() loadFrames;
+}
+
+/// Test seam for games whose dice are scripted, so their reveals are not a
+/// real chain. When set, `GameScreen` asks it first for the game's
+/// [EndCardFairSource]; its answer is used as given, and null means no check
+/// runs. It is read only inside an `assert`, so a release build never
+/// consults it and no variable can tell a shipped app that a game is fair.
+EndCardFairSource? Function(String gameId, String chainCommit)?
+debugFairSourceOverride;

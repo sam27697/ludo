@@ -37,6 +37,8 @@ import 'seat_mark.dart';
 import 'theme.dart';
 import 'verify_rolls_button.dart';
 
+export 'fair_check.dart' show EndCardFairSource;
+
 /// C-343 rule 1's floor: a name-carrying title never shrinks past this,
 /// even at system text scale 2.0. Only ever a ceiling on how far a title
 /// already at or above it may fall; a title that starts below it (a body
@@ -112,29 +114,6 @@ class EndCardPlace {
 
   /// True for a seat that was retired from the game.
   final bool out;
-}
-
-/// C-704: what the card needs to recheck every roll of the game it shows:
-/// the game's id, the `chain_commit` the room published before the game
-/// began, and where the game's frames come from. [loadFrames] completes with
-/// the frames [checkFairness] reads, or with an [Exception] when they cannot
-/// be had (offline, an error answer, a timeout).
-@immutable
-class EndCardFairSource {
-  const EndCardFairSource({
-    required this.gameId,
-    required this.chainCommit,
-    required this.loadFrames,
-  });
-
-  /// The finished game's `game_id`. A new id is a new game: the card drops
-  /// the result it holds and checks again.
-  final String gameId;
-
-  /// `chain_commit` of the room the game was played in.
-  final String chainCommit;
-
-  final Future<List<Frame>> Function() loadFrames;
 }
 
 /// The four states of the fair game line (C-704).
@@ -1104,9 +1083,8 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
   /// no verification page the card says the record was not kept instead.
   Widget _fairness(BuildContext context, AppLocalizations loc) {
     final String? url = widget.verifyUrl;
-    final Widget? fairLine = _fairCheckLine(context, loc);
     if (url == null || url.isEmpty) {
-      final Widget notKept = Text(
+      return Text(
         loc.endRecordNotKept,
         key: const Key('end-card-record-not-kept'),
         style: const TextStyle(
@@ -1114,32 +1092,13 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
           fontSize: kTypeLabel,
         ),
       );
-      if (fairLine == null) {
-        return notKept;
-      }
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          fairLine,
-          const SizedBox(height: kSpace1),
-          notKept,
-        ],
-      );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         Row(
           children: <Widget>[
-            Expanded(
-              child: Text(
-                loc.endFairLine,
-                style: const TextStyle(
-                  color: LudoColors.inkMuted,
-                  fontSize: kTypeLabel,
-                ),
-              ),
-            ),
+            Expanded(child: _fairRowText(context, loc)),
             IconButton(
               key: const Key('end-card-fair-hint'),
               constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
@@ -1149,7 +1108,6 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
             ),
           ],
         ),
-        ?fairLine,
         const SizedBox(height: kSpace1),
         Center(
           child: VerifyRollsButton(
@@ -1161,111 +1119,117 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     );
   }
 
-  /// C-704: the one small fair game line, or null with no check to show.
-  /// Each state carries its own key and a mark of its own shape, so no state
-  /// rests on colour: a drawn check in the "you can" green, the red X of
-  /// every refusal, or none for the two muted states. A state change fades
-  /// across rather than jumping.
-  Widget? _fairCheckLine(BuildContext context, AppLocalizations loc) {
-    final _FairLine? state = _fairLine;
-    if (state == null) {
-      return null;
-    }
-    final TextScaler scaler = MediaQuery.textScalerOf(context);
-    final double markSize = scaler.scale(kTypeLabel + 2);
+  /// C-704: the text of the existing fairness row, by state. The row keeps
+  /// its height in every state. Checking and unavailable show `endFairLine`
+  /// as it always was; fair swaps it for a drawn check and `endFairGame`;
+  /// a mismatch for the refusal mark and `endFairGameFailed` in the error
+  /// colour. Neither mark rests on colour alone. A state change fades across
+  /// rather than jumping. With no check to run the row is as it was.
+  Widget _fairRowText(BuildContext context, AppLocalizations loc) {
     const TextStyle muted = TextStyle(
       color: LudoColors.inkMuted,
       fontSize: kTypeLabel,
     );
+    final _FairLine? state = _fairLine;
+    if (state == null) {
+      return Text(loc.endFairLine, style: muted);
+    }
+    final double markSize = MediaQuery.textScalerOf(context)
+        .scale(kTypeLabel + 2);
     final Widget line = switch (state) {
-      _FairLine.checking => _fairLineRow(
+      _FairLine.checking => Text(
+        loc.endFairLine,
         key: const Key('end-fair-checking'),
-        // A still mark, not a spinner: the check is a few milliseconds of
-        // hashing, and a repeating animation would keep the screen from ever
-        // settling while a log request waits on a slow network.
-        mark: ExcludeSemantics(
-          child: Icon(
-            Icons.hourglass_top_rounded,
-            color: LudoColors.inkMuted,
-            size: markSize,
-          ),
-        ),
-        text: loc.endFairGameChecking,
         style: muted,
       ),
-      _FairLine.ok => _fairLineRow(
-        key: const Key('end-fair-ok'),
-        mark: ExcludeSemantics(
-          child: Icon(
-            Icons.check_circle_rounded,
-            color: LudoColors.success,
-            size: markSize,
-          ),
-        ),
-        text: loc.endFairGame,
-        style: const TextStyle(
-          color: LudoColors.ink,
-          fontSize: kTypeLabel,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      _FairLine.failed => _fairLineRow(
-        key: const Key('end-fair-failed'),
-        mark: RefusalNoticeMark(size: markSize),
-        text: loc.endFairGameFailed,
-        style: const TextStyle(
-          color: LudoColors.error,
-          fontSize: kTypeLabel,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      _FairLine.unavailable => Semantics(
-        key: const Key('end-fair-unavailable'),
-        button: true,
-        child: InkWell(
-          onTap: _runFairCheck,
-          borderRadius: BorderRadius.circular(kRadiusControl),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 48),
-            child: Center(
-              child: _fairLineRow(
-                mark: ExcludeSemantics(
-                  child: Icon(
-                    Icons.refresh_rounded,
-                    color: LudoColors.inkMuted,
-                    size: markSize,
-                  ),
-                ),
-                text: loc.endFairGameUnavailable,
-                style: muted,
-              ),
+      _FairLine.unavailable => InkWell(
+        onTap: _runFairCheck,
+        borderRadius: BorderRadius.circular(kRadiusControl),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Text(
+              loc.endFairLine,
+              key: const Key('end-fair-unavailable'),
+              style: muted,
             ),
           ),
         ),
       ),
+      _FairLine.ok => _fairMarked(
+        key: const Key('end-fair-ok'),
+        mark: Icon(
+          Icons.check_circle_rounded,
+          color: LudoColors.success,
+          size: markSize,
+        ),
+        text: loc.endFairGame,
+        color: LudoColors.ink,
+      ),
+      _FairLine.failed => _fairMarked(
+        key: const Key('end-fair-failed'),
+        mark: RefusalNoticeMark(size: markSize),
+        text: loc.endFairGameFailed,
+        color: LudoColors.error,
+      ),
     };
-    final bool still = MediaQuery.disableAnimationsOf(context);
-    return AnimatedSwitcher(
-      duration: Duration(milliseconds: still ? 0 : 220),
-      child: line,
+    // Every state's words are laid out invisibly under the live one, so the
+    // row is as tall as the tallest of them from the first frame and nothing
+    // below it moves when the verdict arrives.
+    Widget sizer(String text, double indent) => Visibility(
+      visible: false,
+      maintainSize: true,
+      maintainAnimation: true,
+      maintainState: true,
+      child: Padding(
+        padding: EdgeInsetsDirectional.only(start: indent),
+        child: Text(text, style: muted.copyWith(fontWeight: FontWeight.w600)),
+      ),
+    );
+    final double indent = markSize + kSpace2;
+    return Stack(
+      alignment: AlignmentDirectional.centerStart,
+      children: <Widget>[
+        sizer(loc.endFairLine, 0),
+        sizer(loc.endFairGame, indent),
+        sizer(loc.endFairGameFailed, indent),
+        AnimatedSwitcher(
+          duration: Duration(
+            milliseconds: MediaQuery.disableAnimationsOf(context) ? 0 : 220,
+          ),
+          layoutBuilder: (Widget? current, List<Widget> previous) => Stack(
+            alignment: AlignmentDirectional.centerStart,
+            children: <Widget>[...previous, ?current],
+          ),
+          child: line,
+        ),
+      ],
     );
   }
 
-  /// The mark, then the words, centred above the verify link; the words wrap
-  /// rather than clip at a large text scale, and the row mirrors in Arabic.
-  Widget _fairLineRow({
-    Key? key,
+  Widget _fairMarked({
+    required Key key,
     required Widget mark,
     required String text,
-    required TextStyle style,
+    required Color color,
   }) {
     return Row(
       key: key,
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        mark,
+        ExcludeSemantics(child: mark),
         const SizedBox(width: kSpace2),
-        Flexible(child: Text(text, style: style)),
+        Flexible(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontSize: kTypeLabel,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
       ],
     );
   }

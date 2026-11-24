@@ -38,7 +38,8 @@ import 'dead_mark.dart' show deadBadgeRect;
 import 'die_cube.dart';
 import 'die_mark.dart';
 import 'end_card.dart';
-import 'fair_check.dart' show wholeGameFrames;
+import 'fair_check.dart'
+    show EndCardFairSource, debugFairSourceOverride, wholeGameFrames;
 import 'feedback.dart';
 import 'game_die.dart';
 import 'game_stats.dart';
@@ -8877,6 +8878,20 @@ class _GameScreenState extends State<GameScreen> {
         gameId == null ||
         gameId.isEmpty) {
       return null;
+    }
+    EndCardFairSource? overridden;
+    bool overrideSet = false;
+    assert(() {
+      final EndCardFairSource? Function(String, String)? seam =
+          debugFairSourceOverride;
+      if (seam != null) {
+        overrideSet = true;
+        overridden = seam(gameId, finished.chainCommit);
+      }
+      return true;
+    }());
+    if (overrideSet) {
+      return overridden;
     }
     return EndCardFairSource(
       gameId: gameId,
