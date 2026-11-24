@@ -361,7 +361,19 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
 
   /// C-704: the fair game line's state, null while the card has no
   /// [EndCard.fairCheck] to run.
-  _FairLine? _fairLine;
+  _FairLine? _fairLineValue;
+
+  /// Counts every assignment of the line's state, so each child the row's
+  /// switcher holds carries a key of its own even when one state follows
+  /// itself (a retry that fails again inside the cross-fade).
+  int _fairStep = 0;
+
+  _FairLine? get _fairLine => _fairLineValue;
+
+  set _fairLine(_FairLine? value) {
+    _fairLineValue = value;
+    _fairStep += 1;
+  }
 
   /// The game [_fairLine] speaks for.
   String? _fairGameId;
@@ -1194,14 +1206,18 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
         sizer(loc.endFairLine, 0),
         sizer(loc.endFairGame, indent),
         sizer(loc.endFairGameFailed, indent),
-        AnimatedSwitcher(
+        // One child at any time, keyed by the step: a new state fades in
+        // over the same place, so no key is ever held twice, however fast
+        // the states follow each other, and the `end-fair-*` key is on the
+        // one visible text.
+        TweenAnimationBuilder<double>(
+          key: ValueKey<int>(_fairStep),
+          tween: Tween<double>(begin: _fairStep <= 1 ? 1 : 0, end: 1),
           duration: Duration(
             milliseconds: MediaQuery.disableAnimationsOf(context) ? 0 : 220,
           ),
-          layoutBuilder: (Widget? current, List<Widget> previous) => Stack(
-            alignment: AlignmentDirectional.centerStart,
-            children: <Widget>[...previous, ?current],
-          ),
+          builder: (BuildContext context, double opacity, Widget? child) =>
+              Opacity(opacity: opacity, child: child),
           child: line,
         ),
       ],
