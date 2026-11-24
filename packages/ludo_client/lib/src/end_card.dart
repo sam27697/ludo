@@ -1186,21 +1186,19 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
         color: LudoColors.error,
       ),
     };
-    // Every state's words are laid out invisibly under the live one, so the
-    // row is as tall as the tallest of them from the first frame and nothing
-    // below it moves when the verdict arrives.
-    Widget sizer(String text, double indent) => Visibility(
-      visible: false,
-      maintainSize: true,
-      maintainAnimation: true,
-      maintainState: true,
-      child: Padding(
-        padding: EdgeInsetsDirectional.only(start: indent),
-        child: Text(text, style: muted.copyWith(fontWeight: FontWeight.w600)),
-      ),
+    // Every state's words are laid out under the live one, so the row is as
+    // tall as the tallest of them from the first frame and nothing below it
+    // moves when the verdict arrives. They sit in an IndexedStack whose
+    // selected child is the live line: the others are sized but neither
+    // painted, nor visited as on-screen widgets, nor read by accessibility,
+    // so one line on screen is one widget to anything that looks for it.
+    Widget sizer(String text, double indent) => Padding(
+      padding: EdgeInsetsDirectional.only(start: indent),
+      child: Text(text, style: muted.copyWith(fontWeight: FontWeight.w600)),
     );
     final double indent = markSize + kSpace2;
-    return Stack(
+    return IndexedStack(
+      index: 3,
       alignment: AlignmentDirectional.centerStart,
       children: <Widget>[
         sizer(loc.endFairLine, 0),
