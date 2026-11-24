@@ -1181,9 +1181,6 @@ class _HomeScreenState extends State<HomeScreen>
     // C-523 D1: every room is created with the fixed rules.
     const RoomToggles toggles = RoomToggles();
     final RoomController controller = widget.controllerFactory();
-    // The lobby sends create_room itself, its retry too; the controller adds
-    // the flag to every create it sends.
-    controller.createOpen = open;
     _watchOwnedController(controller);
     // LobbyScreen/RoomRoute must not take a store dependency. Listen here
     // while create is in flight: connected + a room snapshot is a
@@ -1214,6 +1211,7 @@ class _HomeScreenState extends State<HomeScreen>
             playerName: name,
             players: players,
             toggles: toggles,
+            open: open,
           ),
         ),
       );

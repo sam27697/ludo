@@ -267,13 +267,6 @@ class RoomController extends ChangeNotifier {
   bool _cancelInFlight = false;
   bool _computerInFlight = false;
 
-  /// Section 33 item 1, set by home before the lobby is pushed: every
-  /// `create_room` this controller sends carries `open: true` when this is
-  /// true, whatever [createRoom] was passed. The lobby sends the create, and
-  /// its Retry sends it again, through [createRoom] without the flag, so the
-  /// choice the player made on the create sheet is held here.
-  bool createOpen = false;
-
   /// The last link join, kept so the lobby's own retry (which can only call
   /// [joinRoom]) repeats a link join as a link join. See [joinRoom].
   String? _retryLink;
@@ -461,7 +454,7 @@ class RoomController extends ChangeNotifier {
           players: players,
           toggles: toggles,
           install: installIdIfReady(),
-          open: open || createOpen,
+          open: open,
         );
       },
     );
