@@ -2384,7 +2384,11 @@ own turn to roll.
    the game while the roller holds a `pre`, that face is never published: there is no next roll.
    (e) When another seat is retired while the roller holds a `pre`, no new `turn` frame is sent;
    the `rolled` that follows is the truth, and a client that finds it differs from its `pre`
-   resyncs (item 5).
+   resyncs (item 5). (f) The socket of the seat that leaves or is kicked is not sent the frames
+   of its forced roll: it gets its `seat_retired` (and `kicked`), whose `seq` is past the frames it
+   was not sent. A client treats `seat_retired` for its own seat and `kicked` as final whatever
+   the gap. (g) When the forced roll is a six, the same-seat `turn` that follows carries no `pre`
+   and the retire discards the roll it owed.
 6. **Tests this section requires** (server, real sockets, fake clock): `pre` on the roller's `turn`
    and on no other socket's copy of the same frame, at the first turn, after a passed turn, after a
    six, after a capture bonus; `pre` equals the following `rolled` minus the four keys, over a whole
