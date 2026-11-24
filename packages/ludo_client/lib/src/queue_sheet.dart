@@ -175,17 +175,24 @@ class _QueueSheetState extends State<QueueSheet>
       child: SingleChildScrollView(
         key: const Key('queue-sheet'),
         padding: const EdgeInsets.fromLTRB(kSpace5, kSpace3, kSpace5, kSpace6),
-        child: AnimatedSize(
-          duration: reduce ? Duration.zero : kMotionShort,
-          curve: Curves.easeOutCubic,
-          alignment: Alignment.topCenter,
-          child: AnimatedSwitcher(
-            duration: reduce ? Duration.zero : kMotionShort,
-            switchInCurve: Curves.easeOut,
-            switchOutCurve: Curves.easeIn,
-            child: content,
-          ),
-        ),
+        // The one animated container of the window: the swap to the
+        // computer choice and the ahead line coming or going are eased here
+        // while the content crossfades. With reduced motion the content takes
+        // its new size on the next frame.
+        child: reduce
+            ? content
+            : AnimatedSize(
+                duration: kMotionShort,
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: AnimatedSwitcher(
+                  duration: kMotionShort,
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  layoutBuilder: homeSheetSwitcherLayout,
+                  child: content,
+                ),
+              ),
       ),
     );
   }
@@ -212,7 +219,6 @@ class _QueueSheetState extends State<QueueSheet>
     final RoomController controller = widget.controller;
     final int? position = controller.queueState?.position;
     final bool ahead = position != null && position > 1;
-    final bool reduce = MediaQuery.disableAnimationsOf(context);
     return Column(
       key: const ValueKey<String>('queue-waiting'),
       mainAxisSize: MainAxisSize.min,
@@ -222,17 +228,19 @@ class _QueueSheetState extends State<QueueSheet>
         const SizedBox(height: kSpace4),
         Center(child: ExcludeSemantics(child: _die())),
         const SizedBox(height: kSpace3),
-        AnimatedSwitcher(
-          duration: reduce ? Duration.zero : kMotionShort,
-          child: ahead
-              ? Text(
-                  loc.queueAhead(position - 1),
-                  key: const Key('queue-ahead'),
-                  textAlign: TextAlign.center,
-                  style: textTheme.bodyLarge?.copyWith(color: LudoColors.ink),
-                )
-              : const SizedBox(key: ValueKey<String>('queue-no-ahead')),
-        ),
+        // The count is the server's latest word: a new place replaces the
+        // old count at once, and the line leaves the moment the server says
+        // this phone is at the head, so a stale count is never on screen.
+        // Its arrival fades in; the window's size eases around it.
+        if (ahead)
+          HomeSheetFadeIn(
+            child: Text(
+              loc.queueAhead(position - 1),
+              key: const Key('queue-ahead'),
+              textAlign: TextAlign.center,
+              style: textTheme.bodyLarge?.copyWith(color: LudoColors.ink),
+            ),
+          ),
         if (controller.queueReconnecting) ...<Widget>[
           const SizedBox(height: kSpace2),
           Row(
