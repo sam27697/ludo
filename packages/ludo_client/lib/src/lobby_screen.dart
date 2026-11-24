@@ -67,7 +67,9 @@ const Set<String> _unretryableLobbyErrorCodes = <String>{
 /// C-536 D1: the label each seat in [seats] is drawn and spoken with,
 /// keyed by `seat`. Recomputed from the snapshot at hand every time it is
 /// asked, so a seat that leaves frees its name. The number is formatted for
-/// the locale the way the home screen formats its counts.
+/// the locale the way the home screen formats its counts. C-706: a computer
+/// seat's label is its character's name in the app's language
+/// ([seatShownName]).
 Map<int, String> seatLabelsFor(
   BuildContext context,
   Iterable<SeatState> seats,
@@ -78,6 +80,7 @@ Map<int, String> seatLabelsFor(
     seats,
     (String name, int number) =>
         loc.seatNameNumbered(name, material.formatDecimal(number)),
+    shownName: (SeatState seat) => seatShownName(loc, seat),
   );
 }
 
@@ -259,11 +262,28 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final List<int> _joinedAnnounceQueue = <int>[];
   Timer? _joinedTimer;
 
+  /// C-706: the host's wait before `fill_computer` is allowed, counted down
+  /// on this phone from the snapshot that carried it (section 34 item 3).
+  /// [_fillCountedMs] is the `fill_ms` the running count started from, and
+  /// [_fillDue] turns true when it has run out. A newer snapshot starts the
+  /// count again from its own value.
+  Timer? _fillTimer;
+  int? _fillCountedMs;
+  bool _fillDue = false;
+
+  /// True from the tap on `lobby-fill-computer` until the server answers.
+  bool _fillInFlight = false;
+
+  /// The code of the refusal that answered the last fill request, shown as
+  /// the lobby's error line under the control until the next tap.
+  String? _fillErrorCode;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onControllerChanged);
     _framesSubscription = widget.controller.frames.listen(_onFrame);
+    _syncFillCount();
     _issueRequest();
   }
 
@@ -271,6 +291,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void dispose() {
     _spokenLine.dispose();
     _joinedTimer?.cancel();
+    _fillTimer?.cancel();
     _framesSubscription?.cancel();
     _framesSubscription = null;
     widget.controller.removeListener(_onControllerChanged);
@@ -278,6 +299,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _onControllerChanged() {
+    _syncFillCount();
     setState(() {});
     _syncKickSheet();
     _syncUpdateRequiredAnnouncement();
@@ -423,6 +445,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
   // C-316 rule 3: a player_left naming this seat while in lobby leaves with
   // GameScreenResult.removed (C-533 D1: through _leaveWith, once).
   void _onFrame(Frame frame) {
+    if (frame.type == 'room') {
+      // C-706: every snapshot restarts the fill count from its own value,
+      // also one that carries the same value as the last.
+      final Object? fillMs = frame.data['fill_ms'];
+      _restartFillCount(fillMs is int ? fillMs : null);
+      return;
+    }
     if (frame.type == 'player_joined') {
       _onFriendJoined(frame);
       return;
@@ -510,6 +539,145 @@ class _LobbyScreenState extends State<LobbyScreen> {
           seatToken: resume.seatToken,
         );
     }
+  }
+
+  /// C-706: follows the held room's `fill_ms`. A value other than the one the
+  /// running count started from is a newer snapshot and restarts it; a push
+  /// reduced into the room keeps the value and leaves the count alone.
+  void _syncFillCount() {
+    final int? fillMs = widget.controller.room?.fillMs;
+    if (fillMs == _fillCountedMs) {
+      return;
+    }
+    _restartFillCount(fillMs);
+  }
+
+  /// Starts the fill count again from [fillMs] (null: the snapshot carries
+  /// no wait, so the control is never shown).
+  void _restartFillCount(int? fillMs) {
+    _fillTimer?.cancel();
+    _fillTimer = null;
+    _fillCountedMs = fillMs;
+    _fillDue = fillMs == 0;
+    if (fillMs != null && fillMs > 0) {
+      _fillTimer = Timer(Duration(milliseconds: fillMs), () {
+        _fillTimer = null;
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _fillDue = true;
+        });
+      });
+    }
+  }
+
+  /// C-706: whether the host is offered `lobby-fill-computer` right now: an
+  /// open room still in its lobby, a free seat, and the server's wait run
+  /// out on this phone's count. A guest's snapshot carries no `fill_ms`.
+  bool _fillOffered(RoomController controller, RoomSnapshot room) {
+    return controller.isHost &&
+        controller.phase == RoomPhase.connected &&
+        room.state == RoomState.lobby &&
+        room.open &&
+        room.seats.length < room.players &&
+        room.fillMs != null &&
+        _fillDue;
+  }
+
+  /// The tap handler for `lobby-fill-computer`: one `fill_computer`, and no
+  /// second one until the server has answered. A refusal the controller
+  /// keeps (a host request refused for a race or a rights reason) is shown
+  /// as the lobby's error line and felt as an invalid tap; a lost connection
+  /// goes the way every lost connection goes on this screen. Success needs
+  /// nothing here: the computer seats and the game's start arrive as frames.
+  Future<void> _fillWithComputer() async {
+    if (_fillInFlight) {
+      return;
+    }
+    final RoomController controller = widget.controller;
+    FeedbackScope.of(context).play(FeedbackCue.tap);
+    final String? codeBefore = controller.errorCode;
+    final String? messageBefore = controller.errorMessage;
+    setState(() {
+      _fillInFlight = true;
+      _fillErrorCode = null;
+    });
+    await controller.fillComputer();
+    if (!mounted) {
+      return;
+    }
+    // The controller keeps the last refused host request's code; one that
+    // was already there before this tap is not this request's answer.
+    final String? code = controller.errorCode;
+    final bool refused =
+        controller.phase == RoomPhase.connected &&
+        code != null &&
+        !(identical(code, codeBefore) &&
+            identical(controller.errorMessage, messageBefore));
+    setState(() {
+      _fillInFlight = false;
+      _fillErrorCode = refused ? code : null;
+    });
+    if (refused) {
+      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+      _spokenLine.speak(lobbyErrorMessage(AppLocalizations.of(context), code));
+    }
+  }
+
+  /// C-706: the host's fill control, above the start control. The quiet
+  /// pill the copy actions use, the robot glyph ahead of the label, 48 dp or
+  /// more, fading up as the lobby's other arrivals do.
+  Widget _fillComputerControl(AppLocalizations loc) {
+    final Widget button = OutlinedButton.icon(
+      key: const Key('lobby-fill-computer'),
+      style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+      onPressed: _fillInFlight ? null : () => unawaited(_fillWithComputer()),
+      icon: const Icon(Icons.smart_toy_rounded, size: 20),
+      label: Text(loc.lobbyFillComputer, textAlign: TextAlign.center),
+    );
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return button;
+    }
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: kMotionShort,
+      curve: Curves.easeOutCubic,
+      builder: (BuildContext context, double t, Widget? child) => Opacity(
+        opacity: t,
+        child: Transform.scale(scale: 0.9 + 0.1 * t, child: child),
+      ),
+      child: button,
+    );
+  }
+
+  /// C-706: the lobby's error line for a refused fill request: the words the
+  /// lobby's error card uses for the same code, with the info mark ahead of
+  /// them so the colour is never the only signal. Spoken once when it
+  /// appears, through the lobby's spoken line.
+  Widget _fillErrorLine(AppLocalizations loc, String code) {
+    final Color color = Theme.of(context).colorScheme.error;
+    return Padding(
+      key: const Key('lobby-fill-computer-error'),
+      padding: const EdgeInsets.only(top: kSpace1),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          ExcludeSemantics(
+            child: Icon(Icons.info_outline_rounded, size: 18, color: color),
+          ),
+          const SizedBox(width: kSpace2),
+          Flexible(
+            child: Text(
+              lobbyErrorMessage(loc, code),
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: color),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// The tap handler for `lobby-start-with-present-button`: shrinks the
@@ -1432,6 +1600,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
         _dockedWaiting(loc.lobbyWaitingForHost, const Key('lobby-waiting')),
       ];
     }
+    // C-706: the fill control and its error line go above the host's start
+    // control; when neither shows, nothing is reserved for them.
+    final String? fillError = _fillErrorCode;
+    final List<Widget> fill = <Widget>[
+      if (_fillOffered(controller, room)) _fillComputerControl(loc),
+      if (fillError != null &&
+          controller.phase == RoomPhase.connected &&
+          room.state == RoomState.lobby)
+        _fillErrorLine(loc, fillError),
+      if (_fillOffered(controller, room) || fillError != null)
+        const SizedBox(height: kSpace2),
+    ];
     // C-666 D2: a full room starts as before; two or three seated start with
     // whoever is present; the host alone waits for a friend.
     if (roomFull) {
@@ -1448,6 +1628,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
     if (room.state == RoomState.lobby && room.seats.length >= 2) {
       return <Widget>[
+        ...fill,
         ElevatedButton(
           key: const Key('lobby-start-with-present-button'),
           style: ElevatedButton.styleFrom(
@@ -1464,6 +1645,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ];
     }
     return <Widget>[
+      ...fill,
       _dockedWaiting(loc.lobbyWaitingForFriends, const Key('lobby-waiting')),
     ];
   }
@@ -1505,14 +1687,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
             room,
             controller,
             seat,
-            labels[seat.seat] ?? seat.name,
+            labels[seat.seat] ?? seatShownName(loc, seat),
             SeatCard(
               seat: seat,
               displayName: labels[seat.seat],
               isMine: controller.seat == seat.seat,
               isHost: seat.seat == room.hostSeat,
               youLabel: loc.seatYou,
-              originLabel: seatOriginLabel(loc, seat.via),
+              originLabel: seatOriginLabel(loc, seatOriginOf(seat)),
             ),
           ),
         ),
@@ -1764,13 +1946,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final double halfCardWidth = (constraints.maxWidth - kSpace2) / 2;
     final TextDirection textDirection = Directionality.of(context);
     final TextScaler textScaler = MediaQuery.textScalerOf(context);
+    final AppLocalizations loc = AppLocalizations.of(context);
 
     bool allFit = true;
     for (final SeatState seat in room.seats) {
-      final bool offline = !seat.connected;
+      final bool offline = seatCardShowsOffline(seat);
       final TextPainter painter = TextPainter(
         text: TextSpan(
-          text: labels[seat.seat] ?? seat.name,
+          text: labels[seat.seat] ?? seatShownName(loc, seat),
           style: seatCardNameStyle(context, offline: offline),
         ),
         textDirection: textDirection,
