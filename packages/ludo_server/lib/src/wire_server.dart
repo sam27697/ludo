@@ -482,12 +482,12 @@ class WireServer {
         onError: (String code, int? seat, Object error, StackTrace stack) {
           // ignore: avoid_print
           print('absent-retire failed room=$code seat=${seat ?? '-'} '
-              'error=$error\n$stack');
+              'error=${logSafeError(error)}\n$stack');
         },
       );
     } catch (error, stack) {
       // ignore: avoid_print
-      print('absent-retire sweep failed error=$error\n$stack');
+      print('absent-retire sweep failed error=${logSafeError(error)}\n$stack');
     }
   }
 

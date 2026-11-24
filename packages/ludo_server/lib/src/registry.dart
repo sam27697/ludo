@@ -3603,7 +3603,7 @@ class RoomRegistry {
       } catch (error, stack) {
         // ignore: avoid_print
         print('room=${room.code} type=computer id=- seat=- '
-            'outcome=computer_step_failed error=$error\n$stack');
+            'outcome=computer_step_failed error=${logSafeError(error)}\n$stack');
         continue;
       }
       if (step == null) {
@@ -3619,7 +3619,7 @@ class RoomRegistry {
       } catch (error, stack) {
         // ignore: avoid_print
         print('room=${room.code} type=computer id=- seat=${step.seat} '
-            'outcome=computer_publish_failed error=$error\n$stack');
+            'outcome=computer_publish_failed error=${logSafeError(error)}\n$stack');
       }
     }
     return steps;
