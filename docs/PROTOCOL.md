@@ -2240,7 +2240,8 @@ stand except where an item below says otherwise. Needs `MIN_CLIENT_BUILD` raised
    `{ "seat": int }` from the host in PLAYING removes any playing seat, connected or not. The
    ladder: `NOT_HOST`; `seat` an int 0..3 and no other key (`BAD_FIELD`); the host's own seat, an
    empty seat, a finished seat or a retired seat `ILLEGAL_MOVE`. `NOT_ABSENT` is no longer sent.
-   Under `2026-10` the PLAYING kick stays `WRONG_PHASE` as today. On acceptance: the room gets
+   Under `2026-10` the PLAYING kick stays `BAD_TYPE` as today (`kick` is an unknown type there,
+   section 31 item 11 (e2)). On acceptance: the room gets
    `seat_retired` `{ "seat", "reason": "kicked", "host_seat" }` (with `re` on the host's copy) and
    what section 28 item 4 says follows a retire; the kicked seat's socket, when it has one, first
    gets that `seat_retired`, then `kicked` `{ }` (no `seq`; with `ban` when item 6 fired a ban,
@@ -2252,8 +2253,10 @@ stand except where an item below says otherwise. Needs `MIN_CLIENT_BUILD` raised
    oldest matchable room and skips a friends-only room, a PLAYING room, a full room, a room whose
    host socket is down and a room with a computer seat; `via: "public"` on that seat and after its
    resume; `find_game` without `install` and with a seated socket; the line in order over three
-   tickets and one new open room of two free seats (first two seated in order, the third told
-   `position` 1); `queued` re-sent on every position change and not otherwise; the two-strangers
+   tickets (the head and the second detached, the third attached at `position` 3) and one new open
+   room: the third is seated past the two detached tickets, which keep their places; `queued` re-sent
+   on every position change (a detached ticket ahead expiring, a cancel) and not otherwise. At rest
+   the line never holds two ATTACHED tickets: two attached strangers are always a room (item 4); the two-strangers
    room (host is the head, `players` 4, `open` true, the second ticket seated in it, a third and a
    fourth too, a fifth stays queued until a seat frees); a single ticket alone creates nothing;
    `cancel_find` with and without a ticket; a detached ticket is passed over, re-attached by
