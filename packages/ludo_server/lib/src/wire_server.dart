@@ -21,6 +21,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'client_build.dart';
 import 'clock.dart';
 import 'connection.dart';
+import 'envelope.dart' show logSafeError;
 import 'link_id.dart';
 import 'link_pages.dart';
 import 'privacy_page.dart';
@@ -372,7 +373,7 @@ class WireServer {
       expired = registry.expireTurns();
     } catch (error, stack) {
       // ignore: avoid_print
-      print('turn-expiry sweep failed error=$error\n$stack');
+      print('turn-expiry sweep failed error=${logSafeError(error)}\n$stack');
       return;
     }
     for (final ExpiredTurn one in expired) {
@@ -405,7 +406,7 @@ class WireServer {
       } catch (error, stack) {
         // ignore: avoid_print
         print('turn-expiry publish failed room=${one.code} '
-            'seat=${one.seat} error=$error\n$stack');
+            'seat=${one.seat} error=${logSafeError(error)}\n$stack');
       }
     }
   }

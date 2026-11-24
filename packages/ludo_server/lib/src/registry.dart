@@ -15,12 +15,14 @@ import 'package:ludo_engine/ludo_engine.dart' as engine;
 
 import 'clock.dart';
 import 'computer_seat.dart';
+import 'envelope.dart' show logSafeError;
 import 'grace.dart';
 import 'link_id.dart';
 import 'room.dart';
 import 'room_code.dart';
 import 'ruleset.dart';
-import 'snapshot.dart' show queuedBankedSixes;
+import 'snapshot.dart'
+    show TurnQueueFields, buildRollPayload, queuedBankedSixes, turnQueueFields;
 import 'seat_token.dart';
 import 'snapshot.dart' show buildRoomSnapshot;
 import 'strike_store.dart';
@@ -469,6 +471,8 @@ class RollOk extends RollResult {
     required this.events,
     required this.k,
     required this.reveal,
+    required this.payload,
+    required this.after,
     required this.rolledSeq,
     required this.rolledDeadlineMs,
     this.release = false,
@@ -492,6 +496,16 @@ class RollOk extends RollResult {
 
   /// `s[k]`, 64 lowercase hex characters.
   final String reveal;
+
+  /// The roll's payload from the one draw ([RoomRegistry]'s `_drawRoll`):
+  /// the `rolled` frame minus `seq`, `reveal`, `deadline_ms` and `by`, the
+  /// same map a `pre` for this roll was (`docs/PROTOCOL.md` section 35).
+  final Map<String, Object?> payload;
+
+  /// The engine state this roll left. Frames are built from it and never
+  /// from `room.game`, which a retire that took this roll first has already
+  /// moved on.
+  final engine.GameState after;
 
   final int rolledSeq;
 
@@ -900,9 +914,17 @@ class RetireOk extends RetireResult {
     this.verifyUrl,
     this.freed = const <FreedSeat>[],
     this.ban,
+    this.shownRoll,
   });
 
   final Room room;
+
+  /// `docs/PROTOCOL.md` section 35 item 3: the retired seat had been sent a
+  /// `pre` for the roll it owed, so that roll was taken first, as the turn
+  /// timer takes it, before the retirement. Its frames (`rolled` with
+  /// `by: "timer"`, then the step's) go out ahead of `seat_retired`. Null
+  /// when the seat held no `pre`.
+  final RollOk? shownRoll;
 
   /// Section 33 item 6 and section 32 item 12: the ban the strike of a
   /// PLAYING kick fired, for the kicked socket's `kicked` frame. Null when
@@ -2294,43 +2316,18 @@ class RoomRegistry {
       // INTERNAL, with the room code and the sequence number.
       return RollFailure(ProtocolError.internal);
     }
-    final String reveal = room.chain.reveal(k);
-    final int value = drawDie(reveal, room.gameId!, room.clientSeeds!, k, 0);
-
-    final engine.ApplyResult applied =
-        engine.apply(game, engine.RollIntention(seat.seat, value));
-    if (applied is engine.Rejected) {
+    final _RollDraw draw = _drawRoll(room, seat, commit: true);
+    final engine.EngineError? refused = draw.refused;
+    if (refused != null) {
       // Unreachable given the ladder above already matches the engine's own
       // ordering for this intention, but the engine's contract is "never
       // throws, every refusal is a Rejected" and this call site honours
-      // that rather than assuming: nothing above has touched room state, so
-      // this, too, advances nothing.
-      return RollFailure(_mapEngineError(applied.error));
+      // that rather than assuming: _drawRoll touches no room state when the
+      // engine refuses, so this, too, advances nothing.
+      return RollFailure(_mapEngineError(refused));
     }
-    final engine.Applied appliedOk = applied as engine.Applied;
-    room.game = appliedOk.state;
-    _noteQueuedBanked(room, appliedOk.events);
-    room.rollCount = k;
-    seat.timerSteps = 0;
-    // docs/VERIFY.md section 1.2: this is the one code path that sets
-    // room.rollCount = k, whether a player rolled or the turn timer did on
-    // their behalf (expireTurns() reaches here through this same method) --
-    // so appending here, and only here, keeps rollSeats.length == rollCount
-    // true without a second place either could drift from the other.
-    room.rollSeats.add(seat.seat);
-    // docs/PROTOCOL.md section 28 rule 2 and section 30 rule 7: the roll
-    // numbers whose roll granted a yard release, lapses included, for the
-    // verify record. Under 2026-11 the engine's YardReleased event is the
-    // source; under 2026-12 it is emitted when the release is taken, so the
-    // roll is read off the state it left behind instead.
-    final bool releaseRoll = _grantedRelease(game, appliedOk);
-    if (releaseRoll) {
-      room.releases.add(k);
-      // Section 30 rule 7: a release roll that raised no offer was a lapse.
-      if (game.config.rules.sharedRelease && !appliedOk.state.releaseOffered) {
-        room.lapsed.add(k);
-      }
-    }
+    final engine.Applied appliedOk = draw.applied!;
+    final String reveal = draw.reveal;
 
     room.seq++;
     final int rolledSeq = room.seq;
@@ -2378,14 +2375,150 @@ class RoomRegistry {
       events: appliedOk.events,
       k: k,
       reveal: reveal,
+      payload: draw.payload!,
+      after: appliedOk.state,
       rolledSeq: rolledSeq,
       rolledDeadlineMs: rolledDeadlineMs,
-      release: releaseRoll,
+      release: draw.release,
       turnPassedSeq: turnPassedSeq,
       turnSeq: turnSeq,
       nextDeadlineMs: nextDeadlineMs,
       nextGraceMs: nextGraceMs,
     );
+  }
+
+  /// Section 12.1 steps 1 to 4, the one draw of a roll: reads `chain.reveal(k)`
+  /// for `k = rollCount + 1`, draws the face with `drawDie`, applies
+  /// `RollIntention` with the engine's `apply`, and builds the roll's payload
+  /// ([buildRollPayload]) from what the engine returned. The caller has run
+  /// the whole ladder of [roll] and checked `k` against the chain's length.
+  ///
+  /// With [commit] true this is [roll]'s own step: the room takes the new
+  /// engine state, the roll counter, the roll's seat and its release marks.
+  /// With [commit] false it is section 35's `pre`: nothing on [room] or
+  /// [seat] is written. `engine.apply` is pure (a `GameState` is immutable
+  /// and `apply` returns a new one), so the state it returns is simply
+  /// dropped; `chain.reveal` and `drawDie` only read. The same link, face and
+  /// engine call therefore give the same payload when the roll is committed.
+  ///
+  /// An engine refusal returns [_RollDraw.refused] and touches nothing,
+  /// committing or not.
+  _RollDraw _drawRoll(Room room, Seat seat, {required bool commit}) {
+    final engine.GameState game = room.game!;
+    final int k = room.rollCount + 1;
+    final String reveal = room.chain.reveal(k);
+    final int value = drawDie(reveal, room.gameId!, room.clientSeeds!, k, 0);
+    final engine.ApplyResult applied =
+        engine.apply(game, engine.RollIntention(seat.seat, value));
+    if (applied is engine.Rejected) {
+      return _RollDraw.refused(k: k, reveal: reveal, refused: applied.error);
+    }
+    final engine.Applied appliedOk = applied as engine.Applied;
+    final bool releaseRoll = _grantedRelease(game, appliedOk);
+    final engine.Rolled event =
+        appliedOk.events.whereType<engine.Rolled>().single;
+    final TurnQueueFields afterFields = turnQueueFields(appliedOk.state);
+    final Map<String, Object?> payload = buildRollPayload(
+      seat: event.seat,
+      value: event.value,
+      legal: event.legal,
+      k: k,
+      queue: afterFields.queue,
+      legalByFace: afterFields.legalByFace,
+      release: releaseRoll,
+      offer: afterFields.offer,
+    );
+    if (commit) {
+      room.game = appliedOk.state;
+      _noteQueuedBanked(room, appliedOk.events);
+      room.rollCount = k;
+      seat.timerSteps = 0;
+      // docs/VERIFY.md section 1.2: this is the one code path that sets
+      // room.rollCount = k, whether a player rolled or the turn timer did on
+      // their behalf (expireTurns() reaches here through roll()) -- so
+      // appending here, and only here, keeps rollSeats.length == rollCount
+      // true without a second place either could drift from the other.
+      room.rollSeats.add(seat.seat);
+      // docs/PROTOCOL.md section 28 rule 2 and section 30 rule 7: the roll
+      // numbers whose roll granted a yard release, lapses included, for the
+      // verify record. Under 2026-11 the engine's YardReleased event is the
+      // source; under 2026-12 it is emitted when the release is taken, so
+      // the roll is read off the state it left behind instead.
+      if (releaseRoll) {
+        room.releases.add(k);
+        // Section 30 rule 7: a release roll that raised no offer was a lapse.
+        if (game.config.rules.sharedRelease &&
+            !appliedOk.state.releaseOffered) {
+          room.lapsed.add(k);
+        }
+      }
+    }
+    return _RollDraw(
+      k: k,
+      reveal: reveal,
+      applied: appliedOk,
+      release: releaseRoll,
+      payload: payload,
+    );
+  }
+
+  /// `docs/PROTOCOL.md` section 35 item 1: the `pre` owed to the socket
+  /// holding [seatToken] in room [code], or null when it is owed none. It is
+  /// owed one exactly when the room is PLAYING, that seat is a human seat on
+  /// turn and the game awaits its roll: the payload of the `rolled` its
+  /// `roll` would produce now, from [_drawRoll] without committing. The roll
+  /// counter, the chain and the engine are left as they were, so two calls
+  /// in a row give the same map.
+  ///
+  /// Called by the socket layer only for a copy it is about to send. The
+  /// room remembers the game, seat and `k` handed out, which is how a
+  /// retirement of that seat knows to take the roll first (item 3).
+  Map<String, Object?>? preRollFor({
+    required String code,
+    required String seatToken,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null || room.state != RoomState.playing) {
+      return null;
+    }
+    final Seat? seat = _findSeat(room, seatToken);
+    if (seat == null || seat.bot != null) {
+      return null;
+    }
+    final engine.GameState? game = room.game;
+    if (game == null ||
+        game.phase != engine.GamePhase.awaitRoll ||
+        game.currentSeat != seat.seat) {
+      return null;
+    }
+    if (room.rollCount + 1 > room.chain.chainLength) {
+      // [roll] refuses this roll with INTERNAL before reading a link, so
+      // there is no face to show either.
+      return null;
+    }
+    final _RollDraw draw = _drawRoll(room, seat, commit: false);
+    final Map<String, Object?>? payload = draw.payload;
+    if (payload == null) {
+      return null;
+    }
+    room.preGameId = room.gameId;
+    room.preSeat = seat.seat;
+    room.preK = draw.k;
+    return payload;
+  }
+
+  /// Section 35 item 3: [seat] was sent a `pre` for the roll it owes now, and
+  /// that roll has not been taken.
+  bool _holdsPre(Room room, Seat seat) {
+    final engine.GameState? game = room.game;
+    return game != null &&
+        room.state == RoomState.playing &&
+        game.phase == engine.GamePhase.awaitRoll &&
+        game.currentSeat == seat.seat &&
+        room.preGameId != null &&
+        room.preGameId == room.gameId &&
+        room.preSeat == seat.seat &&
+        room.preK == room.rollCount + 1;
   }
 
   /// Section 30 rule 5: keeps `room.queuedBankedCount` equal to what the
@@ -2702,7 +2835,8 @@ class RoomRegistry {
       }
     } catch (error) {
       stderr.writeln(
-        'verify_record_not_saved game_id=${room.gameId} reason=$error',
+        'verify_record_not_saved game_id=${room.gameId} '
+        'reason=${logSafeError(error)}',
       );
     }
     room.seq++;
@@ -3033,6 +3167,7 @@ class RoomRegistry {
       verifyUrl: retired.verifyUrl,
       freed: retired.freed,
       ban: ban,
+      shownRoll: retired.shownRoll,
     );
   }
 
@@ -3126,16 +3261,34 @@ class RoomRegistry {
   /// off its events (`docs/ENGINE_API.md` section 12.4), never derived from a
   /// state difference.
   RetireResult _retire(Room room, Seat seat, String reason) {
-    final engine.GameState game = room.game!;
+    final engine.GameState before = room.game!;
     // A retirement that would leave no playing seat has no `game_over` to
     // announce (the engine ends such a game without `GameWon`). A running
     // game always has two playing seats or more, so this is a guard, and it
     // refuses before anything is touched.
     final int playing =
-        game.config.seats.where((int s) => _isPlayingSeat(game, s)).length;
+        before.config.seats.where((int s) => _isPlayingSeat(before, s)).length;
     if (playing < 2) {
       return RetireFailure(ProtocolError.internal);
     }
+    // docs/PROTOCOL.md section 35 item 3: a seat that was shown the face of
+    // the roll it owes does not take that face away with it. The roll is
+    // taken first, through [roll], exactly as [expireTurns] takes it (the
+    // timer's step count included), so the next roll is a link no device has
+    // seen. A roll never ends a game, so the retirement below always runs.
+    RollOk? shownRoll;
+    if (_holdsPre(room, seat)) {
+      final int stepsBefore = seat.timerSteps;
+      final RollResult taken = roll(code: room.code, seatToken: seat.seatToken);
+      if (taken is RollFailure) {
+        // Nothing was touched: the roll and the retirement are refused
+        // together rather than retiring a seat over a face it was shown.
+        return RetireFailure(taken.error);
+      }
+      seat.timerSteps = stepsBefore + 1;
+      shownRoll = taken as RollOk;
+    }
+    final engine.GameState game = room.game!;
     final int previousTurnOwner = game.currentSeat;
     final engine.ApplyResult applied =
         engine.apply(game, engine.RetireIntention(seat.seat));
@@ -3203,6 +3356,7 @@ class RoomRegistry {
       gameOverSeq: gameOverSeq,
       verifyUrl: verifyUrl,
       freed: freed,
+      shownRoll: shownRoll,
     );
   }
 
@@ -4097,4 +4251,31 @@ class _StrikeIdentity {
   _StrikeIdentity({required this.installKey, required this.ipKey});
   final String? installKey;
   final String ipKey;
+}
+
+/// What [RoomRegistry]'s `_drawRoll` produced: the link it read, and either
+/// the engine's step with the payload built from it, or the engine's refusal.
+class _RollDraw {
+  _RollDraw({
+    required this.k,
+    required this.reveal,
+    required engine.Applied this.applied,
+    required this.release,
+    required Map<String, Object?> this.payload,
+  }) : refused = null;
+
+  _RollDraw.refused({
+    required this.k,
+    required this.reveal,
+    required engine.EngineError this.refused,
+  })  : applied = null,
+        release = false,
+        payload = null;
+
+  final int k;
+  final String reveal;
+  final engine.Applied? applied;
+  final bool release;
+  final Map<String, Object?>? payload;
+  final engine.EngineError? refused;
 }

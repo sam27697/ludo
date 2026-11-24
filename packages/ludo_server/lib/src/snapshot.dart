@@ -374,27 +374,19 @@ Map<String, Object?> buildSeatSeed({
   };
 }
 
-/// `rolled`, section 5, section 11.2/11.3 and section 21.1/21.3: `value`,
-/// `legal`, `deadline_ms`, `k` and `reveal` are exactly what the registry's
-/// `roll()` call decided -- this never recomputes a face, a chain link or a
-/// `seq`, it only lays out the fields that were already fixed by the one
-/// code path allowed to read `chain.reveal(k)` and publish it. `queue` is
-/// the queue after the roll (section 21.3 rule 3), and `legalByFace` is
-/// given, and only given, when the phase after the roll is `await_move`.
-/// `by`, section 22: given, and only given, as `"timer"` when a turn
-/// expiry produced this roll; absent (the key not present at all) for
-/// every roll a client's own `roll` produced.
-Map<String, Object?> buildRolled({
+/// The roll's own payload: the `d` of `rolled` without `seq`, `reveal`,
+/// `deadline_ms` and `by`. `RoomRegistry`'s one draw builds it, and both the
+/// `rolled` frame ([buildRolled]) and section 35's `pre` are this map, so the
+/// two cannot differ by a field. `queue` is the queue after the roll (section
+/// 21.3 rule 3), and `legalByFace` is given, and only given, when the phase
+/// after the roll is `await_move`.
+Map<String, Object?> buildRollPayload({
   required int seat,
   required int value,
   required List<int> legal,
-  required int deadlineMs,
   required int k,
-  required String reveal,
-  required int seq,
   List<int>? queue,
   List<Map<String, Object?>>? legalByFace,
-  String? by,
   bool release = false,
   bool offer = false,
 }) {
@@ -402,10 +394,7 @@ Map<String, Object?> buildRolled({
     'seat': seat,
     'value': value,
     'legal': legal,
-    'deadline_ms': deadlineMs,
     'k': k,
-    'reveal': reveal,
-    'seq': seq,
     if (queue != null) 'queue': queue,
     if (legalByFace != null) 'legal_by_face': legalByFace,
     // docs/PROTOCOL.md section 28 rule 2: given, and only given, as `true`
@@ -413,8 +402,73 @@ Map<String, Object?> buildRolled({
     if (release) 'release': true,
     // Section 30 rule 2: the release is an offer, not yet taken.
     if (offer) 'offer': true,
-    if (by != null) 'by': by,
   };
+}
+
+/// `rolled`, section 5, section 11.2/11.3 and section 21.1/21.3: [payload]
+/// (from [buildRollPayload]), `deadline_ms` and `reveal` are exactly what
+/// the registry's `roll()` call decided -- this never recomputes a face, a
+/// chain link or a `seq`, it only lays out the fields that were already
+/// fixed by the one code path allowed to read `chain.reveal(k)` and publish
+/// it. The key order is `seat`, `value`, `legal`, `deadline_ms`, `k`,
+/// `reveal`, `seq`, then the payload's remaining keys, then `by`.
+/// `by`, section 22: given, and only given, as `"timer"` when a turn
+/// expiry produced this roll; absent (the key not present at all) for
+/// every roll a client's own `roll` produced.
+Map<String, Object?> buildRolled({
+  required Map<String, Object?> payload,
+  required int deadlineMs,
+  required String reveal,
+  required int seq,
+  String? by,
+}) {
+  final Map<String, Object?> rolled = <String, Object?>{};
+  for (final MapEntry<String, Object?> entry in payload.entries) {
+    rolled[entry.key] = entry.value;
+    if (entry.key == 'legal') {
+      rolled['deadline_ms'] = deadlineMs;
+    } else if (entry.key == 'k') {
+      rolled['reveal'] = reveal;
+      rolled['seq'] = seq;
+    }
+  }
+  if (by != null) {
+    rolled['by'] = by;
+  }
+  return rolled;
+}
+
+/// `docs/PROTOCOL.md` section 35 item 1: [data] as the socket of the seat on
+/// turn receives it, with [pre] added. For a `turn` frame `pre` is the
+/// frame's last key; for a `room` snapshot it is the last key of its `turn`
+/// object. [data] itself is never touched: it is the one map every other
+/// socket and the game log share, so the copy is the only place `pre` lives.
+/// Null when [type] carries no `turn` in `await_roll`.
+Map<String, Object?>? withRollerPre({
+  required String type,
+  required Map<String, Object?> data,
+  required Map<String, Object?> pre,
+}) {
+  if (type == 'turn') {
+    return <String, Object?>{
+      ...data,
+      'pre': Map<String, Object?>.of(pre),
+    };
+  }
+  if (type == 'room') {
+    final Object? turn = data['turn'];
+    if (turn is! Map<String, Object?>) {
+      return null;
+    }
+    return <String, Object?>{
+      ...data,
+      'turn': <String, Object?>{
+        ...turn,
+        'pre': Map<String, Object?>.of(pre),
+      },
+    };
+  }
+  return null;
 }
 
 /// `turn_passed`, section 5: `reason` is `"no_legal_move"` or
@@ -636,25 +690,19 @@ List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
 /// timer's, so the two cannot drift.
 List<OutFrame> buildRollFrames(RollOk ok, {String? by}) {
   final List<OutFrame> frames = <OutFrame>[];
-  final engine.Rolled event = ok.events.whereType<engine.Rolled>().single;
-  final engine.GameState afterRoll = ok.room.game!;
+  // The state this roll left, not `room.game`: a retire that took the roll
+  // first (section 35 item 3) has already moved the room's game on.
+  final engine.GameState afterRoll = ok.after;
   final TurnQueueFields afterRollFields = turnQueueFields(afterRoll);
   frames.add(
     OutFrame(
       'rolled',
       buildRolled(
-        seat: event.seat,
-        value: event.value,
-        legal: event.legal,
+        payload: ok.payload,
         deadlineMs: ok.rolledDeadlineMs,
-        k: ok.k,
         reveal: ok.reveal,
         seq: ok.rolledSeq,
-        queue: afterRollFields.queue,
-        legalByFace: afterRollFields.legalByFace,
         by: by,
-        release: ok.release,
-        offer: afterRollFields.offer,
       ),
     ),
   );
@@ -851,9 +899,14 @@ List<OutFrame> buildMoveFrames(MoveOk ok, {String? by}) {
 /// Every frame a retirement decided on, `docs/PROTOCOL.md` section 28 rule 4,
 /// in the order the engine's events say: `seat_retired`, then nothing more,
 /// or a `turn` for the next playing seat, or a `game_over` followed by one
-/// `player_left` per freed retired seat.
+/// `player_left` per freed retired seat. Section 35 item 3: when the retired
+/// seat held a `pre`, the roll it was shown comes first, exactly as the turn
+/// timer publishes it (`rolled` with `by: "timer"`, then the frames of that
+/// step), and `seat_retired` follows.
 List<OutFrame> buildRetireFrames(RetireOk ok) {
+  final RollOk? shown = ok.shownRoll;
   final List<OutFrame> frames = <OutFrame>[
+    if (shown != null) ...buildRollFrames(shown, by: 'timer'),
     OutFrame(
       'seat_retired',
       buildSeatRetired(
