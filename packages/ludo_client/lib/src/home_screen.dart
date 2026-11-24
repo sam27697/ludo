@@ -115,6 +115,15 @@ class _HomeScreenState extends State<HomeScreen>
   // Section 32 item 12: the ban a typed-code join, a rejected knock or a host
   // removal just told this phone about. Null when there is none to show.
   CodeBan? _codeBan;
+  // C-701: the ban a CODE_BANNED answer gave the code typed in the join
+  // sheet. Shown in the sheet, where the code was typed, while it is up.
+  final ValueNotifier<CodeBan?> _sheetCodeBan = ValueNotifier<CodeBan?>(null);
+  // C-701: true while the join sheet is up, so a typed-code ban lands in it.
+  bool _joinSheetUp = false;
+  // C-701: the join sheet's route while it is up. The sheet reads home's code
+  // controller and notifiers; if home goes first, the sheet is taken down and
+  // those are released only once it is gone.
+  Route<Object?>? _joinSheetRoute;
   // C-529 D4: the code a room link filled into the code field, kept only
   // while the field still holds exactly it. A Join tap on it is a link join.
   String? _linkFilledCode;
@@ -618,8 +627,18 @@ class _HomeScreenState extends State<HomeScreen>
     _autoResumeWaiting = null;
     _codeController.removeListener(_clearErrorOnEdit);
     _nameController.removeListener(_onNameEdited);
-    _codeController.dispose();
-    _codeError.dispose();
+    final Route<Object?>? sheet = _joinSheetRoute;
+    if (_joinSheetUp && sheet != null) {
+      // Released in [_onJoinTapped] once the sheet's future completes.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final NavigatorState? navigator = sheet.navigator;
+        if (sheet.isActive && navigator != null) {
+          navigator.removeRoute(sheet);
+        }
+      });
+    } else {
+      _releaseCodeEntry();
+    }
     _nameController.dispose();
     _nameFocusNode.dispose();
     _nameShake.dispose();
@@ -1062,9 +1081,22 @@ class _HomeScreenState extends State<HomeScreen>
   /// removed it. The rejected and timed-out outcomes say the same thing, so a
   /// stranger learns nothing; a withdrawn knock was this player's own Cancel
   /// and says nothing. Sets nothing when neither happened.
-  void _noteKnockOutcome(RoomController controller) {
+  ///
+  /// Returns true when the outcome was a typed code refused with a ban and
+  /// [toSheet] is set: the ban then goes to the join sheet's notice, not to
+  /// home's, and home's notices are left as they are.
+  bool _noteKnockOutcome(RoomController controller, {bool toSheet = false}) {
     if (!mounted) {
-      return;
+      return false;
+    }
+    if (toSheet &&
+        !controller.wasKicked &&
+        controller.errorCode == 'CODE_BANNED') {
+      final CodeBan? sheetBan = controller.ban;
+      if (sheetBan != null) {
+        _sheetCodeBan.value = sheetBan;
+        return true;
+      }
     }
     final _KnockNotice? notice = controller.wasKicked
         ? _KnockNotice.kicked
@@ -1084,13 +1116,14 @@ class _HomeScreenState extends State<HomeScreen>
         ? controller.ban
         : null;
     if (notice == null && ban == null) {
-      return;
+      return false;
     }
     setState(() {
       _clearNotices();
       _knockNotice = notice;
       _codeBan = ban;
     });
+    return false;
   }
 
   /// C-529 D4: a join that came back refused NO_SUCH_ROOM or ROOM_STARTED
@@ -1137,21 +1170,70 @@ class _HomeScreenState extends State<HomeScreen>
       _refuseForName();
       return;
     }
-    final JoinChoice? choice = await showJoinSheet(
-      context,
-      codeController: _codeController,
-      errorText: _codeError,
-      onJoinCode: _checkCode,
-    );
-    if (!mounted || choice == null) {
+    _sheetCodeBan.value = null;
+    _joinSheetUp = true;
+    final JoinChoice? choice;
+    try {
+      choice = await showJoinSheet(
+        context,
+        codeController: _codeController,
+        errorText: _codeError,
+        codeBan: _sheetCodeBan,
+        checkCode: _checkCode,
+        onJoinCode: _joinFromSheet,
+        onDismissBan: () => _sheetCodeBan.value = null,
+        onRoute: (Route<Object?> route) => _joinSheetRoute = route,
+      );
+    } finally {
+      _joinSheetUp = false;
+      _joinSheetRoute = null;
+      if (_screenDisposed) {
+        _releaseCodeEntry();
+      }
+    }
+    if (!mounted) {
       return;
     }
+    _sheetCodeBan.value = null;
     switch (choice) {
-      case JoinChoice.code:
-        await _joinRoom(fromLink: _codeIsFromLink);
       case JoinChoice.random:
         await _findGame();
+      case JoinChoice.code:
+      case null:
+        // The typed-code join already ran from the sheet.
+        break;
     }
+  }
+
+  /// The code entry's controller and notifiers, which the join sheet reads.
+  void _releaseCodeEntry() {
+    _codeController.dispose();
+    _codeError.dispose();
+    _sheetCodeBan.dispose();
+  }
+
+  /// The join sheet's Join on a code [_checkCode] accepted. The join runs
+  /// with the sheet still up under the room's route; the returned future
+  /// completes as soon as that route has come back, true when the server
+  /// refused the code with a ban that the sheet now shows (the sheet stays),
+  /// false when the sheet should close. The rest of the join (retiring the
+  /// controller, a new table) goes on after it.
+  Future<bool> _joinFromSheet() {
+    final Completer<bool> returned = Completer<bool>();
+    void answer(bool stay) {
+      if (!returned.isCompleted) {
+        returned.complete(stay);
+      }
+    }
+
+    _sheetCodeBan.value = null;
+    unawaited(
+      _joinRoom(
+        fromLink: _codeIsFromLink,
+        onRouteReturned: answer,
+      ).whenComplete(() => answer(false)),
+    );
+    return returned.future;
   }
 
   /// The join sheet's Join: false, with the invalid-code line, for a code that
@@ -1247,11 +1329,19 @@ class _HomeScreenState extends State<HomeScreen>
   /// the player has not changed: the lobby then words a vanished room in the
   /// link's terms (C-447 D4b, C-529 D4). A join from a typed code leaves it
   /// false.
-  Future<void> _joinRoom({bool fromLink = false}) async {
+  ///
+  /// [onRouteReturned] hears, once, as soon as the join's route has come
+  /// back (or the join ended before pushing one): true when a ban for this
+  /// code was handed to the join sheet.
+  Future<void> _joinRoom({
+    bool fromLink = false,
+    void Function(bool bannedInSheet)? onRouteReturned,
+  }) async {
     final AppLocalizations loc = AppLocalizations.of(context);
     final String normalized = normalizeRoomCode(_codeController.text);
     if (!isValidRoomCode(normalized)) {
       _codeError.value = loc.homeRoomCodeInvalid;
+      onRouteReturned?.call(false);
       return;
     }
     _codeError.value = null;
@@ -1261,11 +1351,13 @@ class _HomeScreenState extends State<HomeScreen>
     // runs. A stale record is safe, a refused resume clears it and says so.
     final SeatRecord? held = _seatRecordFor(normalized);
     if (held != null) {
+      onRouteReturned?.call(false);
       await _rejoinRoom(held);
       return;
     }
     final String name = _typedName;
     if (name.isEmpty) {
+      onRouteReturned?.call(false);
       _refuseForName();
       return;
     }
@@ -1315,9 +1407,13 @@ class _HomeScreenState extends State<HomeScreen>
     // C-316 rule 3: set the notice before the retire below; see the
     // matching comment in _createRoom.
     _showNoticeFor(result);
-    _noteKnockOutcome(controller);
+    final bool bannedInSheet = _noteKnockOutcome(
+      controller,
+      toSheet: _joinSheetUp,
+    );
     // C-529 D4: read before the retire below, which ends the controller.
     _clearDeadJoinCode(controller, normalized);
+    onRouteReturned?.call(bannedInSheet);
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
@@ -1733,12 +1829,17 @@ class _HomeScreenState extends State<HomeScreen>
           },
           child: field,
         ),
-        AnimatedSize(
-          duration: reduce ? Duration.zero : kMotionShort,
-          curve: Curves.easeOut,
-          alignment: Alignment.topCenter,
-          child: line,
-        ),
+        // With reduced motion the line takes its place on the next frame; an
+        // AnimatedSize of zero duration is not used for that (C-701 R2).
+        if (reduce)
+          line
+        else
+          AnimatedSize(
+            duration: kMotionShort,
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            child: line,
+          ),
       ],
     );
   }
