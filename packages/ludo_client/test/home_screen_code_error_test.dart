@@ -71,6 +71,8 @@ import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/deep_link.dart';
 import 'package:ludo_client/src/home_screen.dart';
 
+import 'support/home_flow.dart';
+
 // --- shared fixtures --------------------------------------------------
 
 /// An [InitialLinkReader] whose future is held open by a [Completer] until
@@ -146,11 +148,14 @@ TextField _codeField(WidgetTester tester) {
   return tester.widget<TextField>(find.byKey(const Key('room-code-field')));
 }
 
-String _codeFieldText(WidgetTester tester) =>
-    _codeField(tester).controller!.text;
-
 String? _codeFieldError(WidgetTester tester) =>
     _codeField(tester).decoration?.errorText;
+
+/// Order 701: home has no room code field, so a link-raised error can no
+/// longer be read off the field's decoration. Requirements 1 and 2 read the
+/// invalid-code line wherever it is painted instead.
+Finder _invalidCodeLine(WidgetTester tester) =>
+    find.text(_loc(tester).homeRoomCodeInvalid);
 
 AppLocalizations _loc(WidgetTester tester) =>
     AppLocalizations.of(tester.element(find.byType(HomeScreen)));
@@ -242,15 +247,19 @@ void main() {
         await tester.pump();
 
         expect(
-          _codeFieldError(tester),
-          isNull,
+          _invalidCodeLine(tester),
+          findsNothing,
           reason:
               'a link that is not a room link at all (${testCase.description}, '
               'uri: ${testCase.uri}) must not put an error on a field the '
               'player has never touched; roomCodeFromUri returning null for '
               'this reason is not the same as a bad room code',
         );
-        expect(_codeFieldText(tester), isEmpty);
+        expect(
+          find.byKey(const Key('room-code-field'), skipOffstage: false),
+          findsNothing,
+          reason: 'order 701: a link opens no code entry and fills no field',
+        );
         expect(observer.pushCount, pushesBefore);
         expect(observer.popCount, popsBefore);
       });
@@ -275,8 +284,8 @@ void main() {
         await tester.pump();
 
         expect(
-          _codeFieldError(tester),
-          isNull,
+          _invalidCodeLine(tester),
+          findsNothing,
           reason:
               'a link arriving on the warm-start stream while the app is '
               'already running is subject to exactly the same rule as one '
@@ -284,7 +293,11 @@ void main() {
               '${testCase.description}, uri: ${testCase.uri} must not put '
               'an error on screen',
         );
-        expect(_codeFieldText(tester), isEmpty);
+        expect(
+          find.byKey(const Key('room-code-field'), skipOffstage: false),
+          findsNothing,
+          reason: 'order 701: a link opens no code entry and fills no field',
+        );
         expect(observer.pushCount, pushesBefore);
         expect(observer.popCount, popsBefore);
       });
@@ -318,8 +331,8 @@ void main() {
         await tester.pump();
 
         expect(
-          _codeFieldError(tester),
-          _loc(tester).homeRoomCodeInvalid,
+          _invalidCodeLine(tester),
+          findsOneWidget,
           reason:
               'a link on this app\'s own host, shaped as /r/<code>, whose '
               'code fails isValidRoomCode (${testCase.description}, uri: '
@@ -351,8 +364,8 @@ void main() {
         await tester.pump();
 
         expect(
-          _codeFieldError(tester),
-          _loc(tester).homeRoomCodeInvalid,
+          _invalidCodeLine(tester),
+          findsOneWidget,
           reason:
               'the warm-start path is subject to the same rule as the '
               'cold-start path (requirement 7); ${testCase.description}, '
@@ -508,6 +521,10 @@ void main() {
       final _NavigatorProbe observer = _NavigatorProbe();
       await tester.pumpWidget(_homeScreenApp(observer: observer));
       await tester.pump();
+      // Order 701: a name, then the join sheet's code entry; the sheet's own
+      // route is pushed before the count is taken.
+      await enterName(tester, 'Player');
+      await openCodeEntry(tester);
       final int pushesBefore = observer.pushCount;
 
       await tester.enterText(

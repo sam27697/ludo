@@ -43,6 +43,8 @@ import 'package:ludo_client/src/deep_link.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/theme.dart' show FeltBackdrop;
 
+import 'support/home_flow.dart';
+
 // --- fixed test surface and inset ------------------------------------------
 
 const Size _kSurfaceSize = Size(360, 420);
@@ -183,10 +185,11 @@ Uri _roomLink(String code) => Uri.parse('https://$kAppLinkHost/r/$code');
 /// IN-END can drag it directly rather than guess at it by type (a guess
 /// that would also catch a TextField's own internal horizontal-scrolling
 /// Scrollable, since more than one exists in this tree).
+///
+/// Order 701: room-code-field is no longer on home; the walk starts from
+/// home-name-field, which sits in the same scroll view.
 Scrollable _homeScrollable(WidgetTester tester) {
-  final BuildContext context = tester.element(
-    find.byKey(const Key('room-code-field')),
-  );
+  final BuildContext context = tester.element(find.byKey(homeNameFieldKey));
   return Scrollable.of(context).widget;
 }
 
@@ -293,19 +296,8 @@ void main() {
 
       _expectInsetInEffect(tester, 'IN-END', _kBottomInset);
 
-      // Join is in the tree only with a full-length code (C-523 D3), and it
-      // is then the last control home renders.
-      await tester.enterText(
-        find.byKey(const Key('room-code-field')),
-        'K7M2QP',
-      );
-      await _settle(tester);
-
-      // Read: with no link delivered and no platform storage available in
-      // a widget test (SessionMemory.load's own documented empty-snapshot
-      // fallback), _recentCodes stays empty and the seat-rejoin chip never
-      // appears, so the KeyedSubtree wrapping join-room-button is the last
-      // control the Column in home_screen.dart's build renders. A large
+      // Order 701: home ends with its two buttons; join-game-button, the
+      // second, is the last control home renders. A large
       // negative dy drags the scroll view past its max scroll extent, so
       // the physics settle at the end regardless of exactly how far short
       // of that a single drag falls.
@@ -317,11 +309,11 @@ void main() {
 
       _expectBottomWithinInset(
         tester,
-        key: const Key('join-room-button'),
+        key: joinGameButtonKey,
         caseId: 'IN-END',
         elementLabel:
-            'join-room-button (the last control home_screen.dart renders '
-            'with a full code typed and no recent codes stored)',
+            'join-game-button (the last control home renders since order '
+            '701)',
         bottomInset: _kBottomInset,
       );
     },

@@ -58,6 +58,7 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart' as flow;
 
 const String _testUrl = 'wss://leave-table-end-card-test.invalid/ws';
 
@@ -883,7 +884,10 @@ void main() {
       final _RecordingControllerFactory factory = _RecordingControllerFactory();
       await tester.pumpWidget(_homeScreenApp(factory.call));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('create-room-button')));
+      // Order 701: a name first (X226); Create opens the sheet and the
+      // friends-only tile creates the room.
+      await flow.enterName(tester, 'Player');
+      await flow.tapCreateRoom(tester);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       return factory;

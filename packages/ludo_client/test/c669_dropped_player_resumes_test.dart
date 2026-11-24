@@ -84,6 +84,7 @@ import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _createKey = Key('create-room-button');
 const Key _joinKey = Key('join-room-button');
@@ -397,7 +398,25 @@ class _World {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
+  /// Order 701: a name first (X226), then the code entry in the join sheet.
+  Future<void> openEntry() async {
+    await enterName(tester, 'Player');
+    await openCodeEntry(tester);
+  }
+
+  /// Opens the code entry when the field is not in the tree. Order 701: the
+  /// field lives in the join sheet, which is gone once Home is back.
+  Future<void> ensureEntry() async {
+    if (find.byKey(_codeKey, skipOffstage: false).evaluate().isEmpty) {
+      await openEntry();
+    }
+  }
+
+  /// Opens the code entry when it is not already up, then types [text].
   Future<void> typeCode(String text) async {
+    if (find.byKey(_codeKey).evaluate().isEmpty) {
+      await openEntry();
+    }
     await tester.enterText(find.byKey(_codeKey), text);
     // A full code opens the Join control through a 200 ms AnimatedSize.
     await tester.pump();
@@ -414,7 +433,13 @@ class _World {
     token = seatToken;
     steps.add('create $roomCode');
     final int from = rig.transports.length;
-    await tap(_createKey);
+    // Order 701: a name first (X226); Create opens the sheet and the
+    // friends-only tile creates the room.
+    await enterName(tester, 'Player');
+    await tester.ensureVisible(find.byKey(_createKey));
+    await tapCreateRoom(tester);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     final List<String> creates = rig.sent('create_room', from: from);
     expect(creates, hasLength(1), reason: why('fixture: one create_room'));
     final FakeTransport transport = rig.last;
@@ -1123,6 +1148,7 @@ void main() {
       );
       final int from = w.rig.transports.length;
       w.steps.add('clear the field, type $_codeA, tap Join');
+      await w.openEntry();
       await tester.enterText(find.byKey(_codeKey), '');
       await tester.pump();
       await w.typeCode(_codeA);
@@ -1917,6 +1943,7 @@ void main() {
       );
       await w.refuseLast('join_room', 'NO_SUCH_ROOM');
       await w.backToHomeIfOffered();
+      await w.ensureEntry();
       expect(
         w.codeFieldText(),
         isEmpty,
@@ -1943,16 +1970,19 @@ void main() {
       final int from = w.rig.transports.length;
       w.steps.add('type $_codeA, tap Join');
       await w.typeCode(_codeA);
-      await w.tap(_joinKey);
-      w.expectResumeNotJoin(from, _codeA);
+      // Order 701: read the field before Join; the join sheet may be gone
+      // once the lobby route is up.
       expect(
         w.codeFieldText(),
         _codeA,
         reason: w.why('fixture: the typed code is still in the field'),
       );
+      await w.tap(_joinKey);
+      w.expectResumeNotJoin(from, _codeA);
 
       await w.refuseLast('resume', 'NO_SUCH_ROOM');
       await w.backToHomeIfOffered();
+      await w.ensureEntry();
       expect(
         w.codeFieldText(),
         isEmpty,

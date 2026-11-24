@@ -33,6 +33,7 @@ import 'package:ludo_client/src/net/transport.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _code = 'K7M2QP';
 const String _linkId = 't5k2q9a-x7m3pd';
@@ -182,7 +183,10 @@ class _Join {
   }
 
   /// Types the code and taps Join; returns once the join_room frame is sent.
+  /// Order 701: a name first (X226), then the code entry in the join sheet.
   Future<void> typeAndJoin() async {
+    await enterOldDefaultName(tester);
+    await openCodeEntry(tester);
     await tester.enterText(find.byKey(const Key('room-code-field')), _code);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -240,10 +244,21 @@ class _Join {
     return cond();
   }
 
+  // Order 701: the code field is no longer on home itself; home is the
+  // screen that holds join-game-button (with or without its sheet up).
   bool get onHome =>
-      find.byKey(const Key('room-code-field')).evaluate().isNotEmpty &&
+      find.byKey(joinGameButtonKey).evaluate().isNotEmpty &&
       find.byKey(const Key('knock-waiting')).evaluate().isEmpty &&
       find.byType(LobbyScreen, skipOffstage: false).evaluate().isEmpty;
+
+  /// Order 701: the code field lives in the join sheet. Opens the code
+  /// entry when the field is not on screen (back on home after a knock or a
+  /// kick), so the kept code can be read or a new try made.
+  Future<void> ensureCodeEntry() async {
+    if (find.byKey(const Key('room-code-field')).evaluate().isEmpty) {
+      await openCodeEntry(tester);
+    }
+  }
 
   String get codeText {
     final Finder f = find.byKey(const Key('room-code-field'));
@@ -372,6 +387,7 @@ void main() {
         isTrue,
         reason: 'expected the home screen back within 12 s. ${j.why}',
       );
+      await j.ensureCodeEntry();
       expect(
         j.codeText,
         _code,
@@ -404,12 +420,15 @@ void main() {
         reason: 'expected home after $outcome. ${j.why}',
       );
       await tester.pump(const Duration(milliseconds: 600));
+      // Order 701: read the gained lines on home before the code entry is
+      // opened, so the sheet's own labels are not counted.
+      final List<String> gained = _gained(before, j.visibleTexts());
+      await j.ensureCodeEntry();
       expect(
         j.codeText,
         _code,
         reason: 'expected the code field kept after $outcome. ${j.why}',
       );
-      final List<String> gained = _gained(before, j.visibleTexts());
       await j.finish();
       return gained;
     }
@@ -575,7 +594,12 @@ void main() {
         reason: 'expected the kicked line exactly once. ${j.why}',
       );
       // A second attempt reaches the lobby or the waiting card; the old line
-      // must not come back with it.
+      // must not come back with it. Order 701: the attempt starts from the
+      // code entry in the join sheet.
+      await j.ensureCodeEntry();
+      await tester.enterText(find.byKey(const Key('room-code-field')), _code);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       await j.tapJoin();
       await tester.runAsync(() => pumpEventQueue());
       await tester.pump();

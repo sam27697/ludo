@@ -57,6 +57,7 @@ import 'package:ludo_client/src/server_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://composed-play-test.invalid/ws';
 
@@ -264,7 +265,11 @@ void main() {
           'Priya',
         );
 
-        await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+        // Order 701: Create opens the sheet; the friends-only tile creates
+        // the room.
+        await tapCreateRoom(tester);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
 
         expect(
           factory.controllers,
@@ -717,6 +722,8 @@ void main() {
           find.byKey(const Key('home-name-field')),
           'Riri',
         );
+        // Order 701: the code field is behind the join sheet's code tile.
+        await openCodeEntry(tester);
         await tester.enterText(
           find.byKey(const Key('room-code-field')),
           'K7M2QP',
@@ -871,6 +878,8 @@ void main() {
         await tester.pumpAndSettle();
 
         await tester.enterText(find.byKey(const Key('home-name-field')), 'Dee');
+        // Order 701: the code field is behind the join sheet's code tile.
+        await openCodeEntry(tester);
         await tester.enterText(
           find.byKey(const Key('room-code-field')),
           'AB23CD',
@@ -981,6 +990,8 @@ void main() {
         await tester.pumpAndSettle();
 
         await tester.enterText(find.byKey(const Key('home-name-field')), 'Zev');
+        // Order 701: the code field is behind the join sheet's code tile.
+        await openCodeEntry(tester);
         await tester.enterText(
           find.byKey(const Key('room-code-field')),
           'LT88MN',

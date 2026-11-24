@@ -1,7 +1,7 @@
-// Widget tests for the home screen's default player name and the seat
-// count Create forwards: the name field shows the localised default on
-// first paint, and since C-666 D1 there is no seat-count control, so
-// Create Room always forwards four seats.
+// Widget tests for the home screen's player name and the seat count Create
+// forwards. Since order 701 (X226) the name field starts empty with its label
+// as the hint and an empty name opens nothing; since C-666 D1 there is no
+// seat-count control, so Create Room always forwards four seats.
 //
 // Create Room builds a RoomController from widget.controllerFactory().
 // The default factory opens a real WebSocket, so every test that taps
@@ -23,6 +23,8 @@ import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
+
+import 'support/home_flow.dart';
 
 const Key _nameKey = Key('home-name-field');
 const Key _createKey = Key('create-room-button');
@@ -69,11 +71,61 @@ AppLocalizations _loc(WidgetTester tester) {
   return AppLocalizations.of(tester.element(find.byType(Scaffold)));
 }
 
-Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
-  await tester.ensureVisible(find.byKey(buttonKey));
-  await tester.tap(find.byKey(buttonKey));
+/// Order 701: Create opens a sheet; the friends-only tile creates the room.
+Future<void> _createAndAwaitPushedRoute(WidgetTester tester) async {
+  await tester.ensureVisible(find.byKey(_createKey));
+  await tapCreateRoom(tester);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
+}
+
+/// X226: the empty field carries its label as the hint. Read either the
+/// decoration's hint or its label: the design names the text, not which slot
+/// of the decoration carries it.
+void _expectEmptyWithLabelHint(WidgetTester tester, String locale) {
+  final AppLocalizations loc = _loc(tester);
+  expect(
+    _nameFieldText(tester),
+    isEmpty,
+    reason:
+        'X226 ($locale): on first paint the name field must be empty; got '
+        '"${_nameFieldText(tester)}"',
+  );
+  final InputDecoration? decoration = tester
+      .widget<TextField>(find.byKey(_nameKey))
+      .decoration;
+  expect(
+    decoration?.hintText == loc.homeNameFieldLabel ||
+        decoration?.labelText == loc.homeNameFieldLabel,
+    isTrue,
+    reason:
+        'X226 ($locale): the empty field shows its label '
+        '"${loc.homeNameFieldLabel}" as the hint; hintText '
+        '"${decoration?.hintText}", labelText "${decoration?.labelText}"',
+  );
+}
+
+/// Taps Create on an empty or blank name and asserts nothing opened.
+Future<void> _expectCreateRefused(WidgetTester tester, String scenario) async {
+  await tester.ensureVisible(find.byKey(_createKey));
+  await tester.tap(find.byKey(_createKey));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+  expect(
+    find.byKey(createRoomSheetKey),
+    findsNothing,
+    reason: 'X226 ($scenario): Create must not open the create sheet',
+  );
+  expect(
+    find.byType(LobbyScreen),
+    findsNothing,
+    reason: 'X226 ($scenario): no lobby may be pushed without a name',
+  );
+  expect(
+    find.byKey(homeNameRequiredKey),
+    findsOneWidget,
+    reason: 'X226 ($scenario): home-name-required must show under the field',
+  );
 }
 
 LobbyScreen _pushedLobbyScreen(WidgetTester tester) {
@@ -90,49 +142,24 @@ LobbyScreen _pushedLobbyScreen(WidgetTester tester) {
 
 void main() {
   testWidgets(
-    'first paint name field equals the localised default in English',
+    'first paint name field is empty with its label as the hint in English',
     (tester) async {
       await tester.pumpWidget(const LudoApp());
       await tester.pumpAndSettle();
 
-      final AppLocalizations loc = _loc(tester);
-      expect(
-        loc.homeDefaultPlayerName,
-        isNotEmpty,
-        reason: 'fixture is broken: homeDefaultPlayerName must not be empty',
-      );
-      expect(
-        _nameFieldText(tester),
-        loc.homeDefaultPlayerName,
-        reason:
-            'on first paint the name field must show the localised '
-            'homeDefaultPlayerName ("${loc.homeDefaultPlayerName}"); got '
-            '"${_nameFieldText(tester)}"',
-      );
+      _expectEmptyWithLabelHint(tester, 'en');
     },
   );
 
-  testWidgets('first paint name field equals the localised default in Arabic', (
-    tester,
-  ) async {
-    await tester.pumpWidget(const LudoApp(initialLocale: Locale('ar')));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'first paint name field is empty with its label as the hint in Arabic',
+    (tester) async {
+      await tester.pumpWidget(const LudoApp(initialLocale: Locale('ar')));
+      await tester.pumpAndSettle();
 
-    final AppLocalizations loc = _loc(tester);
-    expect(
-      loc.homeDefaultPlayerName,
-      isNotEmpty,
-      reason: 'fixture is broken: homeDefaultPlayerName must not be empty',
-    );
-    expect(
-      _nameFieldText(tester),
-      loc.homeDefaultPlayerName,
-      reason:
-          'on first paint in Arabic the name field must show the '
-          'localised homeDefaultPlayerName ("${loc.homeDefaultPlayerName}"); '
-          'got "${_nameFieldText(tester)}"',
-    );
-  });
+      _expectEmptyWithLabelHint(tester, 'ar');
+    },
+  );
 
   // C-666 D1: the closed control that read "4" and the menu behind it are
   // gone; the same first-paint situation now asserts there is nothing to
@@ -159,8 +186,10 @@ void main() {
     }
   });
 
+  // X226: a blank field is no longer filled with a default name, so a locale
+  // toggle leaves it blank.
   testWidgets(
-    'locale toggle rewrites a blank name field to the new locale default',
+    'locale toggle leaves a blank name field blank',
     (tester) async {
       await tester.pumpWidget(const LudoApp());
       await tester.pumpAndSettle();
@@ -172,12 +201,6 @@ void main() {
       await tester.tap(find.byKey(_localeKey));
       await tester.pumpAndSettle();
 
-      final AppLocalizations loc = _loc(tester);
-      expect(
-        loc.homeDefaultPlayerName,
-        isNotEmpty,
-        reason: 'fixture is broken: homeDefaultPlayerName must not be empty',
-      );
       expect(
         find.text('إنشاء غرفة'),
         findsOneWidget,
@@ -185,11 +208,10 @@ void main() {
       );
       expect(
         _nameFieldText(tester),
-        loc.homeDefaultPlayerName,
+        isEmpty,
         reason:
-            'a blank name field must be rewritten to the new locale\'s '
-            'homeDefaultPlayerName ("${loc.homeDefaultPlayerName}"); got '
-            '"${_nameFieldText(tester)}"',
+            'X226: a blank name field must stay blank across a locale '
+            'toggle; got "${_nameFieldText(tester)}"',
       );
     },
   );
@@ -234,7 +256,8 @@ void main() {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
-    await _tapAndAwaitPushedRoute(tester, _createKey);
+    await enterName(tester, 'Player');
+    await _createAndAwaitPushedRoute(tester);
 
     expect(
       _pushedLobbyScreen(tester).players,
@@ -272,45 +295,23 @@ void main() {
     );
   });
 
-  testWidgets('an empty name field is not sent; Create carries the non-empty '
-      'localised default', (tester) async {
+  testWidgets('an empty name field is not sent: Create opens nothing and '
+      'asks for a name', (tester) async {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
-    final String defaultName = _loc(tester).homeDefaultPlayerName;
-    expect(
-      defaultName,
-      isNotEmpty,
-      reason: 'fixture is broken: homeDefaultPlayerName must not be empty',
-    );
-
-    await _tapAndAwaitPushedRoute(tester, _createKey);
-
-    final LobbyScreen pushed = _pushedLobbyScreen(tester);
-    expect(pushed.playerName, isNotEmpty);
-    expect(pushed.playerName, defaultName);
+    await _expectCreateRefused(tester, 'empty name');
   });
 
   testWidgets(
-    'a whitespace-only name is not sent; Create carries the non-empty '
-    'localised default',
+    'a whitespace-only name is empty after trim: Create opens nothing and '
+    'asks for a name',
     (tester) async {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
-      final String defaultName = _loc(tester).homeDefaultPlayerName;
-
       await tester.enterText(find.byKey(_nameKey), '   ');
-      await _tapAndAwaitPushedRoute(tester, _createKey);
-
-      expect(
-        _pushedLobbyScreen(tester).playerName,
-        defaultName,
-        reason:
-            'a name of only whitespace must be trimmed to empty and then '
-            'fall back, the same as a genuinely empty field; got '
-            '"${_pushedLobbyScreen(tester).playerName}"',
-      );
+      await _expectCreateRefused(tester, 'whitespace-only name');
     },
   );
 }

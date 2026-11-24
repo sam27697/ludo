@@ -34,6 +34,7 @@ import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _nameKey = Key('home-name-field');
 const Key _codeKey = Key('room-code-field');
@@ -427,7 +428,12 @@ Future<String> _completeSuccessfulCreate(
 }) async {
   await tester.enterText(find.byKey(_nameKey), name);
   await tester.pump();
-  await _tapAndAwaitPushedRoute(tester, _createKey);
+  // Order 701: Create opens the sheet; the friends-only tile creates the
+  // room.
+  await tester.ensureVisible(find.byKey(_createKey));
+  await tapCreateRoom(tester);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
 
   final FakeTransport transport = factory.transports.last;
   final List<String> createMessages = transport.sentRaw
@@ -492,6 +498,8 @@ Future<String> _completeSuccessfulJoin(
     await tester.enterText(find.byKey(_nameKey), name);
     await tester.pump();
   }
+  // Order 701: the code field is behind the join sheet's code tile.
+  await openCodeEntry(tester);
   await tester.enterText(find.byKey(_codeKey), code);
   await _tapAndAwaitPushedRoute(tester, _joinKey);
 
@@ -992,9 +1000,10 @@ void main() {
       mount.opener.add(_validLink(_linkId));
       await tester.pump();
 
+      // Order 701: home has no room-code-field at all.
       expect(
-        _fieldText(tester, _codeKey, skipOffstage: false),
-        isEmpty,
+        find.byKey(_codeKey, skipOffstage: false),
+        findsNothing,
         reason:
             'decision 5: a link id while another route sits above home '
             'fills no field and starts no join, even for a stored-name-only '
@@ -1118,7 +1127,8 @@ void main() {
 
   testWidgets(
     'decision 6: recent codes with no stored name is still first-time for '
-    'the link, which joins by link id under the default name',
+    'the link, which waits for a name and then joins by link id under it '
+    '(order 701, X226)',
     (tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         _codesPrefsKey: <String>['ZY98XW', 'QW34ER'],
@@ -1129,17 +1139,17 @@ void main() {
       final int pushesBefore = mount.observer.pushCount;
       mount.reader.complete(_validLink(_linkId));
       await _pumpAfterLink(tester);
+      // Order 701 (X226): no stored name, so the link waits on home until a
+      // name is submitted from the keyboard; the old default is typed.
+      await submitName(tester, 'Player');
+      await _pumpAfterLink(tester);
 
       expect(
-        _fieldText(tester, _codeKey, skipOffstage: false),
-        isEmpty,
-        reason: 'decision 6: a link id fills no room-code-field',
-      );
-      expect(
-        _codeFieldError(tester, skipOffstage: false),
-        isNull,
+        find.byKey(_codeKey, skipOffstage: false),
+        findsNothing,
         reason:
-            'decision 6: a valid link id must not show the invalid-code error',
+            'decision 6: a link id fills no room-code-field (home has none '
+            'since order 701)',
       );
       expect(
         mount.observer.pushCount,
@@ -1150,14 +1160,11 @@ void main() {
             '(pushCount ${mount.observer.pushCount}, before $pushesBefore)',
       );
       final FakeTransport transport = mount.factory.transports.single;
-      final AppLocalizations loc = AppLocalizations.of(
-        tester.element(find.byType(LobbyScreen)),
-      );
       expect(
         _noInstall(_dataOf(transport.sentRaw.single)),
-        <String, Object?>{'link': _linkId, 'name': loc.homeDefaultPlayerName},
+        <String, Object?>{'link': _linkId, 'name': 'Player'},
         reason:
-            'decision 6: one join_room by link under the default name; sent '
+            'decision 6: one join_room by link under the name submitted; sent '
             '${transport.sentRaw.map(_typeOf).toList()}',
       );
       await _disposeControllers(tester, mount.factory);

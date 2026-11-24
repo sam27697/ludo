@@ -36,6 +36,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
+import 'package:ludo_client/src/account.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/end_card.dart';
 import 'package:ludo_client/src/game_screen.dart';
@@ -296,6 +297,10 @@ void main() {
     testWidgets('home-last-game-check resolves to VerifyRollsButton', (
       tester,
     ) async {
+      // Order 701: the last-game card shows only to a player signed in with
+      // Google; this case signs in through the account test seam.
+      debugGoogleSignedInOverride = true;
+      addTearDown(() => debugGoogleSignedInOverride = null);
       final DateTime fixedNow = DateTime.utc(2026, 10, 12, 12, 0, 0);
       await SessionMemory.recordLastGame(
         LastGame(

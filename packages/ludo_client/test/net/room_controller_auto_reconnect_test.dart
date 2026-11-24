@@ -44,6 +44,7 @@ import 'package:ludo_client/src/net/snapshot.dart' show RoomState;
 import 'package:ludo_client/src/net/transport.dart';
 import 'package:ludo_client/src/server_config.dart';
 
+import '../support/home_flow.dart';
 import 'fake_transport.dart';
 
 const String _testUrl = 'wss://order-167-test.invalid/ws';
@@ -1109,7 +1110,9 @@ void main() {
       await tester.pumpWidget(_homeScreenApp(controllerFactory: factory));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('create-room-button')));
+      // Order 701: a name first (X226), then the create sheet's friends tile.
+      await enterName(tester, 'Player');
+      await tapCreateRoom(tester);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
@@ -1206,7 +1209,9 @@ void main() {
     await tester.pumpWidget(_homeScreenApp(controllerFactory: factory));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('create-room-button')));
+    // Order 701: a name first (X226), then the create sheet's friends tile.
+    await enterName(tester, 'Player');
+    await tapCreateRoom(tester);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 

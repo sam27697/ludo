@@ -26,6 +26,7 @@ import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _nameKey = Key('home-name-field');
 const Key _codeKey = Key('room-code-field');
@@ -306,6 +307,16 @@ String? _codeFieldError(WidgetTester tester, {bool skipOffstage = true}) {
       ?.errorText;
 }
 
+/// Order 701: home has no room code field; it lives in the join sheet. A
+/// link fills no field because there is none on home to fill.
+void _expectNoCodeFieldOnHome(WidgetTester tester, String why) {
+  expect(
+    find.byKey(_codeKey, skipOffstage: false),
+    findsNothing,
+    reason: '$why: home has no room-code-field since order 701',
+  );
+}
+
 void _expectKnownName(WidgetTester tester) {
   expect(
     _fieldText(tester, _nameKey),
@@ -495,8 +506,7 @@ void main() {
     mount.reader.complete(_validLink(_linkId));
     await _pumpAfterLink(tester);
 
-    expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
-    expect(_codeFieldError(tester, skipOffstage: false), isNull);
+    _expectNoCodeFieldOnHome(tester, 'known player, valid cold link');
     _expectNavigation(
       observer: mount.observer,
       pushesBefore: pushesBefore,
@@ -531,8 +541,7 @@ void main() {
     mount.opener.add(_validLink(_linkId));
     await _pumpAfterLink(tester);
 
-    expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
-    expect(_codeFieldError(tester, skipOffstage: false), isNull);
+    _expectNoCodeFieldOnHome(tester, 'known player, valid warm link');
     _expectNavigation(
       observer: mount.observer,
       pushesBefore: pushesBefore,
@@ -566,7 +575,7 @@ void main() {
       mount.reader.complete(_validLink(_linkId));
       await _pumpAfterLink(tester);
 
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
+      _expectNoCodeFieldOnHome(tester, 'seat record carrying the link id');
       _expectNavigation(
         observer: mount.observer,
         pushesBefore: pushesBefore,
@@ -602,7 +611,7 @@ void main() {
       mount.reader.complete(_validLink(_linkId));
       await _pumpAfterLink(tester);
 
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
+      _expectNoCodeFieldOnHome(tester, 'seat record for a different code');
       _expectNavigation(
         observer: mount.observer,
         pushesBefore: pushesBefore,
@@ -620,8 +629,8 @@ void main() {
   );
 
   testWidgets(
-    'first-time player: valid link id pushes once and joins with the default '
-    'name, filling no field',
+    'first-time player: valid link id waits for a name, then pushes once and '
+    'joins with the name submitted, filling no field (order 701, X226)',
     (tester) async {
       final _Mount mount = _prepare(tester);
       await _pumpHome(tester, mount);
@@ -636,9 +645,13 @@ void main() {
 
       mount.reader.complete(_validLink(_linkId));
       await _pumpAfterLink(tester);
+      // Order 701 (X226): no name, so the link waits on home until a name is
+      // submitted from the keyboard. The name typed is the old default the
+      // frame below used to carry.
+      await submitName(tester, 'Player');
+      await _pumpAfterLink(tester);
 
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
-      expect(_codeFieldError(tester, skipOffstage: false), isNull);
+      _expectNoCodeFieldOnHome(tester, 'first-time player, valid link id');
       _expectNavigation(
         observer: mount.observer,
         pushesBefore: pushesBefore,
@@ -649,13 +662,10 @@ void main() {
         reason: 'first-time player, valid cold link id',
       );
       _expectOneController(mount.factory);
-      final AppLocalizations loc = AppLocalizations.of(
-        tester.element(find.byType(HomeScreen, skipOffstage: false)),
-      );
       expect(
         _dataOf(mount.factory.transports.single.sentRaw.single)['name'],
-        loc.homeDefaultPlayerName,
-        reason: 'a first-time player joins under the default name',
+        'Player',
+        reason: 'a first-time player joins under the name submitted',
       );
       expect(_lobby(tester).action, LobbyAction.join);
       await _disposeControllers(tester, mount.factory);
@@ -688,7 +698,7 @@ void main() {
       mount.opener.add(_validLink(_linkId));
       await tester.pump();
 
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
+      _expectNoCodeFieldOnHome(tester, 'route already above home');
       expect(find.byKey(_aboveHomeKey), findsOneWidget);
       _expectNavigation(
         observer: mount.observer,
@@ -732,12 +742,10 @@ void main() {
               'the load must have applied the stored name before any '
               'later push; got "${_optionalFieldText(tester, _nameKey)}"',
         );
-        expect(
-          _optionalFieldText(tester, _codeKey),
-          isEmpty,
-          reason:
-              'a link id fills no code field while '
-              'the push is still waiting on the load',
+        _expectNoCodeFieldOnHome(
+          tester,
+          'a link id fills no code field while the push is still waiting on '
+          'the load',
         );
       }
 
@@ -768,7 +776,7 @@ void main() {
       expect(mount.observer.popCount, 0);
       expect(mount.observer.replaceCount, 0);
       expect(mount.observer.removeCount, 0);
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
+      _expectNoCodeFieldOnHome(tester, 'link before memory has loaded');
       _expectOneController(mount.factory);
       _expectConnectingJoin(tester);
       _expectJoinFrame(mount.factory.transports.single);
@@ -797,7 +805,7 @@ void main() {
       mount.opener.add(link);
       await _pumpAfterLink(tester);
 
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
+      _expectNoCodeFieldOnHome(tester, 'same link on reader and stream');
       _expectNavigation(
         observer: mount.observer,
         pushesBefore: pushesBefore,

@@ -42,6 +42,7 @@ import 'package:ludo_client/src/refusal_mark.dart' show RefusalMark;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _noticeKey = Key('code-ban-notice');
 const Key _dismissKey = Key('code-ban-notice-dismiss');
@@ -208,6 +209,8 @@ class _Join {
     );
     await tester.pump();
     await tester.pump();
+    // Order 701 (X226): a join needs a name; the default the old field held.
+    await enterName(tester, oldDefaultName(locale.languageCode));
     return j;
   }
 
@@ -258,6 +261,8 @@ class _Join {
   }
 
   Future<void> typeAndJoin() async {
+    // Order 701: the code field is behind the join sheet's code tile.
+    await openCodeEntry(tester);
     await tester.enterText(find.byKey(_codeKey), _code);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -311,8 +316,10 @@ class _Join {
     return cond();
   }
 
+  // Order 701: the code field is no longer on home itself; home is the
+  // screen that holds join-game-button (with or without its sheet up).
   bool get onHome =>
-      find.byKey(_codeKey).evaluate().isNotEmpty &&
+      find.byKey(joinGameButtonKey).evaluate().isNotEmpty &&
       find.byKey(const Key('knock-waiting')).evaluate().isEmpty &&
       find.byType(LobbyScreen, skipOffstage: false).evaluate().isEmpty;
 
@@ -851,6 +858,12 @@ void main() {
       await tester.tap(find.byKey(_dismissKey));
       await tester.pump(const Duration(milliseconds: 600));
       expect(j.noticeShown, isFalse, reason: 'dismissed. ${j.why}');
+      // Order 701: the refused knock left the join sheet; a new try opens
+      // the code entry again and types the code.
+      await openCodeEntry(tester);
+      await tester.enterText(find.byKey(_codeKey), _code);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       await j.tapJoin();
       await tester.runAsync(() => pumpEventQueue());
       await tester.pump();

@@ -64,6 +64,7 @@ import 'package:ludo_client/src/server_config.dart' show RoomControllerFactory;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _nameKey = Key('home-name-field');
 const Key _codeKey = Key('room-code-field');
@@ -365,6 +366,15 @@ Future<void> _finish(WidgetTester tester, _Rig rig) async {
   await tester.pump();
 }
 
+/// Order 701: Create opens the sheet and the friends-only tile creates the
+/// room; the same bounded pumps as [_tap] follow.
+Future<void> _tapCreate(WidgetTester tester) async {
+  await tester.ensureVisible(find.byKey(_createKey));
+  await tapCreateRoom(tester);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
 Future<void> _tap(WidgetTester tester, Key key) async {
   await tester.ensureVisible(find.byKey(key));
   await tester.tap(find.byKey(key));
@@ -372,9 +382,23 @@ Future<void> _tap(WidgetTester tester, Key key) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
+/// Order 701: the code field lives in the join sheet's code entry, which
+/// opens only with a name. Opens it when the field is not on screen, typing
+/// the old default name first when the name field is empty.
+Future<void> _ensureCodeEntry(WidgetTester tester) async {
+  if (find.byKey(_codeKey).evaluate().isNotEmpty) {
+    return;
+  }
+  if (_fieldText(tester, _nameKey).trim().isEmpty) {
+    await enterOldDefaultName(tester);
+  }
+  await openCodeEntry(tester);
+}
+
 /// Types a full code, then waits out the 200 ms AnimatedSize that brings Join
 /// in (C-523 D3) so a tap lands on its final rect.
 Future<void> _typeCode(WidgetTester tester, String code) async {
+  await _ensureCodeEntry(tester);
   await tester.enterText(find.byKey(_codeKey), code);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 250));
@@ -524,7 +548,10 @@ Future<void> _hostLobbyAwaitingResume(
   _Rig rig,
   String scenario,
 ) async {
-  await _tap(tester, _createKey);
+  // Order 701: a name first (X226); Create opens the sheet and the
+  // friends-only tile creates the room.
+  await enterOldDefaultName(tester);
+  await _tapCreate(tester);
   expect(
     rig.sent('create_room'),
     hasLength(1),
@@ -632,10 +659,11 @@ void main() {
       final _LinkRig links = _LinkRig();
       await _mount(tester, rig, links: links);
 
+      // Order 701: home has no code field at all.
       expect(
-        _fieldText(tester, _codeKey),
-        isEmpty,
-        reason: '$scenario: fixture: no link yet, the code field is empty',
+        find.byKey(_codeKey, skipOffstage: false),
+        findsNothing,
+        reason: '$scenario: fixture: no link yet, no code field on home',
       );
       expect(
         rig.controllers,
@@ -892,7 +920,7 @@ void main() {
 
         await tester.enterText(find.byKey(_nameKey), pasted);
         await tester.pump();
-        await _tap(tester, _createKey);
+        await _tapCreate(tester);
 
         final List<String> creates = rig.sent('create_room');
         expect(
@@ -1292,11 +1320,15 @@ void main() {
       const String scenario = 'D4a first-time link id, joined, gone';
       final _Rig rig = _Rig();
       await _mount(tester, rig, links: _LinkRig(cold: _linkTo(_linkId)));
+      // Order 701: home has no code field, so a link fills none.
       expect(
-        _fieldText(tester, _codeKey),
-        isEmpty,
+        find.byKey(_codeKey, skipOffstage: false),
+        findsNothing,
         reason: '$scenario: fixture: a link id fills no code field',
       );
+      // Order 701 (X226): a first-time friend has no name; the link waits
+      // on home until one is submitted from the keyboard.
+      await submitName(tester, 'Player');
       await _pumpBounded(tester, frames: 3);
       final List<String> joins = rig.sent('join_room');
       expect(
@@ -1340,6 +1372,7 @@ void main() {
           'D4b first-time, code edited then restored by typing, Join';
       final _Rig rig = _Rig();
       await _mount(tester, rig);
+      await _ensureCodeEntry(tester);
       expect(_fieldText(tester, _codeKey), isEmpty);
       await tester.enterText(find.byKey(_codeKey), 'AB23C');
       await tester.pump();
@@ -1432,6 +1465,9 @@ void main() {
           final String scenario = 'D4d link join answered $code';
           final _Rig rig = _Rig();
           await _mount(tester, rig, links: _LinkRig(cold: _linkTo(_linkId)));
+          // Order 701 (X226): the link waits for a name submitted from the
+          // keyboard.
+          await submitName(tester, 'Player');
           await _pumpBounded(tester, frames: 3);
           _answerError(rig.last, rig.lastRequestId('join_room'), code);
           await _pumpBounded(tester, frames: 3);
@@ -1573,7 +1609,8 @@ void main() {
 
           final _Rig create = _Rig(rejectFirstConnects: 1);
           await _mount(tester, create, locale: variant.locale);
-          await _tap(tester, _createKey);
+          await enterOldDefaultName(tester);
+          await _tapCreate(tester);
           expect(
             find.byKey(_lobbyErrorKey),
             findsOneWidget,
@@ -1620,7 +1657,9 @@ void main() {
             links: fromLink ? _LinkRig(cold: _linkTo(_linkId)) : null,
           );
           if (fromLink) {
-            // A link id joins at once, so there is no Join to tap.
+            // A link id joins once a name is submitted (order 701, X226), so
+            // there is no Join to tap.
+            await submitName(tester, 'Player');
             await _pumpBounded(tester, frames: 3);
           } else {
             await _typeCode(tester, _linkCode);
@@ -1643,6 +1682,8 @@ void main() {
             isTrue,
             reason: '$scenario: Back to home must return to Home',
           );
+          // Order 701: the field lives in the join sheet; open it to read it.
+          await _ensureCodeEntry(tester);
           expect(
             _fieldText(tester, _codeKey),
             '',

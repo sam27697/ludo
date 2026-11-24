@@ -65,6 +65,7 @@ import 'package:ludo_client/src/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _noticeKey = Key('home-notice');
 const Key _dismissKey = Key('home-notice-dismiss');
@@ -294,8 +295,11 @@ Future<void> _driveRemoved(
   _Factory factory, {
   required String scenario,
 }) async {
+  // Order 701: a name first (X226); Create opens the sheet and the
+  // friends-only tile creates the room.
+  await enterOldDefaultName(tester);
   await tester.ensureVisible(find.byKey(_createKey));
-  await tester.tap(find.byKey(_createKey));
+  await tapCreateRoom(tester);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   expect(
@@ -824,6 +828,8 @@ void main() {
         reason: '$scenario: home-notice is absent, so there is no card to hide',
       );
 
+      // Order 701: Create now opens the create sheet; the tap itself is
+      // what this case watches, so the sheet is left up.
       await tester.ensureVisible(find.byKey(_createKey));
       await tester.tap(find.byKey(_createKey));
       await tester.pump();
@@ -855,6 +861,9 @@ void main() {
         reason: '$scenario: home-notice is absent, so there is no card to hide',
       );
 
+      // Order 701 (X226): with an empty name Create opens nothing, which is
+      // not the tap this case watches; type the old default name first.
+      await enterOldDefaultName(tester);
       await tester.ensureVisible(find.byKey(_createKey));
       await tester.tap(find.byKey(_createKey));
       await tester.pump();

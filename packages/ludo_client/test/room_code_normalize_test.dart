@@ -15,6 +15,8 @@ import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/home_flow.dart';
+
 const Key _codeKey = Key('room-code-field');
 const Key _joinKey = Key('join-room-button');
 
@@ -102,6 +104,11 @@ void main() {
         final _NavigatorProbe observer = _NavigatorProbe();
         await tester.pumpWidget(_homeScreenApp(observer: observer));
         await tester.pumpAndSettle();
+        // Order 701: the code field is behind the join sheet's code tile,
+        // and the sheet opens only with a name. Opening the sheet pushes its
+        // own route, before the paste counts are taken below.
+        await enterName(tester, 'Player');
+        await openCodeEntry(tester);
 
         expect(
           _displayedCode(tester),
@@ -146,7 +153,7 @@ void main() {
         expect(
           find.byKey(_joinKey),
           findsOneWidget,
-          reason: 'Join must remain on Home after the paste',
+          reason: 'Join must remain in the code entry after the paste',
         );
       });
     }

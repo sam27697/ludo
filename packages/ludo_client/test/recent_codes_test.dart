@@ -27,6 +27,7 @@ import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _nameKey = Key('home-name-field');
 const Key _joinKey = Key('join-room-button');
@@ -255,6 +256,8 @@ Future<void> _joinThenReturnHome(
 }) async {
   await tester.enterText(find.byKey(_nameKey), name);
   await tester.pump();
+  // Order 701: the code field is behind the join sheet's code tile.
+  await openCodeEntry(tester);
   await tester.enterText(find.byKey(_codeKey), code);
   await tester.pump();
   await _tapAndAwaitPushedRoute(tester, _joinKey);
@@ -295,10 +298,11 @@ Future<void> _joinThenReturnHome(
   );
   await tester.pump();
   await _flushAnyOutstandingRequestTimeout(tester);
+  // Order 701: home holds join-game-button; the code field is in its sheet.
   expect(
-    find.byKey(_codeKey),
+    find.byKey(joinGameButtonKey),
     findsOneWidget,
-    reason: 'backing out of the lobby must return to Home with room-code-field',
+    reason: 'backing out of the lobby must return to Home with join-game-button',
   );
 }
 
@@ -395,6 +399,9 @@ void main() {
             'in session memory',
       );
       _expectNoChips(tester, <String>[_codeMid]);
+      // Order 701: open the code entry to read the field (a name first).
+      await enterName(tester, 'Riri');
+      await openCodeEntry(tester);
       expect(
         _codeFieldText(tester),
         isEmpty,

@@ -29,6 +29,7 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://ux-instrument.invalid/ws';
 const Size _phone = Size(390, 844);
@@ -196,16 +197,25 @@ void main() {
 
     expect(find.byType(HomeScreen), findsOneWidget);
     expect(find.byKey(const Key('create-room-button')), findsOneWidget);
+    // Order 701: home's join control is join-game-button; the code field and
+    // join-room-button are in the join sheet's code entry, measured there
+    // and closed again before the home guidelines and shots.
+    expect(find.byKey(joinGameButtonKey), findsOneWidget);
+    await enterName(tester, 'Player');
+    await openCodeEntry(tester);
     // Join is in the tree only with a full-length code (C-523 D3).
     await tester.enterText(find.byKey(const Key('room-code-field')), 'K7M2QP');
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('join-room-button')), findsOneWidget);
+    _printSize(tester, const Key('join-room-button'), 'join-room');
+    _printSize(tester, const Key('room-code-field'), 'code-field');
+    await backOutOfSheet(tester, joinSheetKey);
+    await tester.pumpAndSettle();
 
     _printSize(tester, const Key('create-room-button'), 'create-room');
-    _printSize(tester, const Key('join-room-button'), 'join-room');
+    _printSize(tester, joinGameButtonKey, 'join-game');
     _printSize(tester, const Key('locale-toggle-button'), 'locale-toggle');
     _printSize(tester, const Key('home-name-field'), 'name-field');
-    _printSize(tester, const Key('room-code-field'), 'code-field');
     // C-666 D1: the players control is gone, so there is no size to print.
     expect(find.byKey(const Key('home-players-button')), findsNothing);
 
@@ -242,7 +252,8 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const Key('home-name-field')), 'Priya');
-    await tester.tap(find.byKey(const Key('create-room-button')));
+    // Order 701: Create opens the sheet; the friends-only tile creates.
+    await tapCreateRoom(tester);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
