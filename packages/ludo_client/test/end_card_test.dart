@@ -1280,6 +1280,10 @@ void main() {
     // of the three is its own case rather than one that could pass by only
     // proving the win.
     testWidgets('endFairLine is shown on a win', (tester) async {
+      // Scripted dice: no fair check runs, so the row shows the line as
+      // before C-704. The verdict states are covered in c704_*_test.dart.
+      debugFairSourceOverride = (String gameId, String chainCommit) => null;
+      addTearDown(() => debugFairSourceOverride = null);
       final (RoomController controller, _) = await _minimalWinGame(tester);
       final AppLocalizations loc = _locOf(tester);
       expect(controller.room!.state, RoomState.finished);
@@ -1294,6 +1298,10 @@ void main() {
     });
 
     testWidgets('endFairLine is shown on a loss', (tester) async {
+      // Scripted dice: no fair check runs, so the row shows the line as
+      // before C-704. The verdict states are covered in c704_*_test.dart.
+      debugFairSourceOverride = (String gameId, String chainCommit) => null;
+      addTearDown(() => debugFairSourceOverride = null);
       await _minimalLoseGame(tester);
       final AppLocalizations loc = _locOf(tester);
       final String blob = _blobUnder(tester, find.byType(GameScreen));
