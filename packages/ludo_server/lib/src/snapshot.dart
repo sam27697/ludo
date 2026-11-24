@@ -24,6 +24,8 @@ import 'room.dart';
 /// directly -- so the caller (`connection.dart`, holding the same injected
 /// `Clock` the registry was built with) passes the reading in.
 ///
+/// Section 33 item 1: `open`.
+///
 /// Section 31 item 1 and 3: `link_id`, `guest_approval` and `knocks`. The open
 /// knocks are shown to the host only: [forHost] true lists them, and every
 /// other viewer, and every frame broadcast to a whole room, sees `[]`.
@@ -37,6 +39,8 @@ Map<String, Object?> buildRoomSnapshot(
     'code': room.code,
     'link_id': room.linkId,
     'guest_approval': room.guestApproval,
+    // Section 33 item 1: on every room, whatever its state.
+    'open': room.open,
     'knocks': <Object?>[
       if (forHost)
         for (final Knock knock in room.knocks) knockPayload(knock, now),

@@ -331,6 +331,7 @@ class WireServer {
   void _runTurnExpiry() {
     _runKnockExpiry();
     _runAbsentRetirement();
+    _runWaitingLine();
     final List<ExpiredTurn> expired;
     try {
       expired = registry.expireTurns();
@@ -413,6 +414,19 @@ class WireServer {
         print('knock-expiry publish failed room=${event.room.code} '
             'knock=${event.knock.id} error=$error\n$stack');
       }
+    }
+  }
+
+  /// `docs/PROTOCOL.md` section 33 item 4: drops the tickets detached for
+  /// 30 000 ms on the injected clock, then serves the line, so the positions
+  /// an expiry changed are told at once. Guarded like the other sweeps.
+  void _runWaitingLine() {
+    try {
+      expireWaitingLine(registry);
+      serveWaitingLine(registry, _hub);
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('waiting-line sweep failed error=$error\n$stack');
     }
   }
 

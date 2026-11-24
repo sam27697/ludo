@@ -25,6 +25,7 @@ import 'snapshot.dart' show buildRoomSnapshot;
 import 'strike_store.dart';
 import 'verify_record.dart';
 import 'verify_store.dart';
+import 'waiting_line.dart';
 
 /// Every error this package can hand a caller, one to one with the table in
 /// `docs/PROTOCOL.md` section 7. A value is never invented at a call site;
@@ -53,6 +54,8 @@ enum ProtocolError {
   updateRequired,
 
   /// Section 28 rule 4: a `kick` named a playing seat whose socket is up.
+  /// Section 33 item 8 retired it: no path sends it any more. Kept so the
+  /// table of codes stays one to one with what older builds may read.
   notAbsent,
 
   /// Section 31 item 3: a room already holds 3 open knocks.
@@ -69,6 +72,9 @@ enum ProtocolError {
 
   /// Section 32 item 9: a typed code from a banned device or a blocked IP.
   codeBanned,
+
+  /// Section 33 item 3: `find_game` from a socket that holds a seat.
+  alreadySeated,
 }
 
 sealed class CreateResult {}
@@ -229,6 +235,48 @@ class KickLobbyOk extends KickLobbyResult {
 class KickLobbyFailure extends KickLobbyResult {
   KickLobbyFailure(this.error);
   final ProtocolError error;
+}
+
+/// One thing a pass over the waiting line did, section 33 item 4, with its
+/// `seq` fixed and the `room` the seated socket is owed already built.
+sealed class LineEvent {
+  LineEvent({
+    required this.ticket,
+    required this.room,
+    required this.seat,
+    required this.seq,
+    required this.snapshot,
+  });
+
+  /// The ticket that was seated; already out of the line.
+  final Ticket ticket;
+  final Room room;
+  final Seat seat;
+  final int seq;
+  final Map<String, Object?> snapshot;
+}
+
+/// [ticket] took the lowest free seat of a matchable room, `via: "public"`.
+class LineSeated extends LineEvent {
+  LineSeated({
+    required super.ticket,
+    required super.room,
+    required super.seat,
+    required super.seq,
+    required super.snapshot,
+  });
+}
+
+/// "Two strangers and no room": a room was created for the head ticket,
+/// which is its host.
+class LineRoomCreated extends LineEvent {
+  LineRoomCreated({
+    required super.ticket,
+    required super.room,
+    required super.seat,
+    required super.seq,
+    required super.snapshot,
+  });
 }
 
 sealed class ResumeResult {}
@@ -751,9 +799,15 @@ class RetireOk extends RetireResult {
     this.gameOverSeq,
     this.verifyUrl,
     this.freed = const <FreedSeat>[],
+    this.ban,
   });
 
   final Room room;
+
+  /// Section 33 item 6 and section 32 item 12: the ban the strike of a
+  /// PLAYING kick fired, for the kicked socket's `kicked` frame. Null when
+  /// none fired, and always for `left` and `absent`.
+  final BanInfo? ban;
 
   /// The seat that was retired. Still in `room.seats` unless [freed] holds it.
   final Seat seat;
@@ -868,7 +922,13 @@ class RoomRegistry {
         _linkRandom = linkRandom ?? Random.secure(),
         verifyStore = verifyStore ?? MemoryVerifyStore(clock),
         _verifyUrlBase = verifyUrlBase,
-        ruleset = _checkedRuleset(ruleset);
+        ruleset = _checkedRuleset(ruleset) {
+    line = WaitingLine(clock: clock, random: _linkRandom);
+  }
+
+  /// Section 33 items 3 and 4: the one waiting line of this server. Ticket
+  /// ids are drawn from the same CSPRNG as link ids, never from [_secure].
+  late final WaitingLine line;
 
   /// `docs/PROTOCOL.md` section 28 rule 1: the ruleset every room created
   /// from here on takes, [ruleset202610], [ruleset202611] or [ruleset202612]. `bin/server.dart`
@@ -951,12 +1011,15 @@ class RoomRegistry {
   /// unexercised by anything in this order's own scope.
   final Map<String, DateTime> _finishedSince = <String, DateTime>{};
 
+  /// `create_room`. [open] is section 33 item 1's flag, fixed for the life
+  /// of the room except that a computer seat clears it (section 34).
   CreateResult createRoom({
     required String name,
     required int players,
     required RulesConfig rules,
     String? install,
     String ip = '',
+    bool open = false,
   }) {
     final String? trimmedName = _validName(name);
     if (trimmedName == null) {
@@ -997,6 +1060,7 @@ class RoomRegistry {
       chain: chain,
       linkId: _generateUniqueLinkId(),
       ruleset: ruleset,
+      open: open,
     );
     _rooms[code] = room;
     _roomsByLink[room.linkId] = room;
@@ -1103,6 +1167,170 @@ class RoomRegistry {
     return JoinOk(room: room, seat: seat);
   }
 
+  /// Section 4's name rule for a name no room holds yet (a ticket of the
+  /// waiting line): the trimmed name, or null when it fails.
+  String? validDisplayName(String name) => _validName(name);
+
+  /// Section 33 item 2: [room] may take a stranger from the waiting line. It
+  /// is open, in LOBBY (a rematch LOBBY counts), has a free seat, holds no
+  /// computer seat, and its host seat's socket is connected.
+  bool isMatchable(Room room) {
+    if (!room.open ||
+        room.state != RoomState.lobby ||
+        room.hasComputerSeat ||
+        _freeSeats(room).isEmpty) {
+      return false;
+    }
+    final Seat? host = _seatAt(room, room.hostSeat);
+    return host != null && host.connected;
+  }
+
+  /// Section 33 items 2 and 7: the oldest matchable room that does not bar
+  /// the device with [install] (else [ip]), or null. Rooms created in the
+  /// same instant go in the order they were created.
+  Room? matchableRoomFor({required String? install, required String ip}) {
+    final String barKey = _barKey(install: install, ip: ip);
+    Room? oldest;
+    for (final Room room in _rooms.values) {
+      if (!isMatchable(room) || room.kickBars.contains(barKey)) {
+        continue;
+      }
+      if (oldest == null || room.createdAt.isBefore(oldest.createdAt)) {
+        oldest = room;
+      }
+    }
+    return oldest;
+  }
+
+  /// Section 33 items 3 and 5: seats a stranger on the lowest free seat of
+  /// [room], `via: "public"`. Refuses, changing nothing, unless [room] is
+  /// matchable and does not bar the device: `ROOM_FULL` for a room that is
+  /// no longer matchable, `KICKED` for a barred device.
+  JoinResult seatPublic(
+    Room room, {
+    required String name,
+    required String install,
+    required String ip,
+  }) {
+    if (!isMatchable(room)) {
+      return JoinFailure(ProtocolError.roomFull);
+    }
+    final String barKey = _barKey(install: install, ip: ip);
+    if (room.kickBars.contains(barKey)) {
+      return JoinFailure(ProtocolError.kicked);
+    }
+    final Seat seat = Seat(
+      seat: _freeSeats(room).first,
+      name: name,
+      seatToken: generateSeatToken(_secure),
+      connected: true,
+      via: 'public',
+      barKey: barKey,
+    );
+    _identitiesOf(room)[seat.seatToken] = _StrikeIdentity(
+      installKey: strikes.key(install),
+      ipKey: ip.isEmpty ? '' : strikes.key(ip),
+    );
+    room.seats = <Seat>[...room.seats, seat]
+      ..sort((Seat a, Seat b) => a.seat.compareTo(b.seat));
+    _refreshIdleTracking(room);
+    room.seq++;
+    return JoinOk(room: room, seat: seat);
+  }
+
+  /// Section 33 item 4: one seating pass over the waiting line. Attached
+  /// tickets are served from the head, each into the oldest matchable room
+  /// that does not bar it; a ticket no room takes stays where it is and the
+  /// ones behind it are still served. When no ticket can be seated and two
+  /// or more attached tickets wait, a room is created for the first attached
+  /// one (`players` 4, `open`, default rules, that ticket its host), outside
+  /// the per-IP creation limit, and the pass goes on. Detached tickets are
+  /// passed over and never counted. Each seated ticket leaves the line.
+  ///
+  /// Every event is returned in the order it happened, its snapshot built at
+  /// that moment. Run again with nothing changed, it does nothing.
+  List<LineEvent> serveLine() {
+    final List<LineEvent> events = <LineEvent>[];
+    while (!line.isEmpty) {
+      LineEvent? seated;
+      for (final Ticket ticket in line.attachedTickets) {
+        final Room? room =
+            matchableRoomFor(install: ticket.install, ip: ticket.ip);
+        if (room == null) {
+          continue;
+        }
+        final JoinResult joined = seatPublic(
+          room,
+          name: ticket.name,
+          install: ticket.install,
+          ip: ticket.ip,
+        );
+        if (joined is! JoinOk) {
+          // matchableRoomFor has just said this room takes this ticket; a
+          // refusal here means the two checks drifted apart. Say so and leave
+          // the ticket where it is.
+          // ignore: avoid_print
+          print('room=${room.code} type=- id=- seat=- outcome=line_seat_failed '
+              'error=${(joined as JoinFailure).error.name}');
+          continue;
+        }
+        line.remove(ticket);
+        seated = LineSeated(
+          ticket: ticket,
+          room: room,
+          seat: joined.seat,
+          seq: room.seq,
+          snapshot: buildRoomSnapshot(
+            room,
+            now: _clock.now,
+            forHost: joined.seat.seat == room.hostSeat,
+          ),
+        );
+        break;
+      }
+      if (seated != null) {
+        events.add(seated);
+        continue;
+      }
+      final List<Ticket> attached = line.attachedTickets;
+      if (attached.length < 2) {
+        break;
+      }
+      final Ticket head = attached.first;
+      final CreateResult created = createRoom(
+        name: head.name,
+        players: 4,
+        rules: const RulesConfig(),
+        install: head.install,
+        ip: head.ip,
+        open: true,
+      );
+      if (created is! CreateOk) {
+        // The name was checked when the ticket was made and the other
+        // arguments are fixed, so this is a drift, not a caller's mistake.
+        // ignore: avoid_print
+        print('room=- type=- id=- seat=- outcome=line_room_failed '
+            'error=${(created as CreateFailure).error.name}');
+        break;
+      }
+      line.remove(head);
+      events.add(
+        LineRoomCreated(
+          ticket: head,
+          room: created.room,
+          seat: created.seat,
+          seq: created.room.seq,
+          snapshot: buildRoomSnapshot(
+            created.room,
+            now: _clock.now,
+            forHost: true,
+          ),
+        ),
+      );
+    }
+    return events;
+  }
+
   /// Section 31 item 11 (e): `start_game` closes every knock still open,
   /// outcome `full`.
   List<KnockEvent> _closeAllKnocksFull(Room room) => <KnockEvent>[
@@ -1168,8 +1396,10 @@ class RoomRegistry {
     }
     final List<KnockEvent> events = <KnockEvent>[];
     if (!rawAccept) {
-      // Section 32 item 7 (a): the one strike source on a knock.
-      final BanInfo? ban = _strike(room, _identitiesOf(room)[knock.id]);
+      // Section 33 item 6 (a), replacing section 32 item 7: the one strike
+      // source on a knock, and only in a room that is not open.
+      final BanInfo? ban =
+          room.open ? null : _strike(room, _identitiesOf(room)[knock.id]);
       events.add(_closeKnock(room, knock, 'rejected', bar: true, ban: ban));
     } else {
       _settleKnock(room, knock, events);
@@ -1421,14 +1651,24 @@ class RoomRegistry {
     if (key != null) {
       room.kickBars.add(key);
     }
-    // Section 32 item 7 (b): a seat taken by typed code or by an accepted
-    // knock is a strike; a link seat is not.
-    final BanInfo? ban = target.via == 'code' || target.via == 'approved'
-        ? _strike(room, _identitiesOf(room)[target.seatToken])
-        : null;
+    final BanInfo? ban = _kickStrike(room, target);
     _removeLobbySeat(room, target);
     room.seq++;
     return KickLobbyOk(room: room, seat: target, ban: ban);
+  }
+
+  /// Section 33 item 6 (b), replacing section 32 item 7: the host's kick, in
+  /// LOBBY or in PLAYING, of a seat taken by typed code or by an accepted
+  /// knock is a strike, and only while the room is not open. A `public`,
+  /// `link` or `bot` seat never is. Returns the ban it fired, or null.
+  BanInfo? _kickStrike(Room room, Seat target) {
+    if (room.open) {
+      return null;
+    }
+    if (target.via != 'code' && target.via != 'approved') {
+      return null;
+    }
+    return _strike(room, _identitiesOf(room)[target.seatToken]);
   }
 
   /// Frees [seat] of a LOBBY or FINISHED room the way `leave_room` does.
@@ -2595,14 +2835,20 @@ class RoomRegistry {
     return true;
   }
 
-  /// `kick`, `docs/PROTOCOL.md` section 28 rule 4 "kicked". The host retires
-  /// a playing seat whose socket is down. [data] is the message's whole `d`,
-  /// because the ladder puts `NOT_HOST` and the phase check ahead of the
-  /// payload check, so the payload is only looked at here, in that order:
-  /// room exists, seat authorised, `NOT_HOST`, state not PLAYING
-  /// (`WRONG_PHASE`; the LOBBY kick is [kickLobby], section 31 item 6), `seat` an int 0..3 and no other
-  /// key (`BAD_FIELD`), a playing seat (`ILLEGAL_MOVE`), its socket down
-  /// (`NOT_ABSENT`).
+  /// `kick` in PLAYING, `docs/PROTOCOL.md` section 33 item 8, replacing
+  /// section 28 rule 4 "kicked": the host retires any playing seat, connected
+  /// or not. [data] is the message's whole `d`, because the ladder puts
+  /// `NOT_HOST` and the phase check ahead of the payload check, so the
+  /// payload is only looked at here, in that order: room exists, seat
+  /// authorised, `NOT_HOST`, state not PLAYING (`WRONG_PHASE`; the LOBBY kick
+  /// is [kickLobby], section 31 item 6), `seat` an int 0..3 and no other key
+  /// (`BAD_FIELD`), then the host's own seat, an empty seat, a finished seat
+  /// or a retired seat (`ILLEGAL_MOVE`).
+  ///
+  /// On acceptance the seat is barred from the room as a lobby kick bars it
+  /// (item 7), struck when item 6 says so, and its token is dead: no
+  /// `resume` finds it again. It stays in `seats`, as any retired seat does,
+  /// until `game_over` frees it.
   RetireResult kick({
     required String code,
     required String seatToken,
@@ -2630,13 +2876,37 @@ class RoomRegistry {
       return RetireFailure(ProtocolError.badField);
     }
     final Seat? target = _seatAt(room, rawSeat);
-    if (target == null || !_isPlayingSeat(game, rawSeat)) {
+    if (target == null ||
+        target.seat == room.hostSeat ||
+        !_isPlayingSeat(game, rawSeat)) {
       return RetireFailure(ProtocolError.illegalMove);
     }
-    if (target.connected) {
-      return RetireFailure(ProtocolError.notAbsent);
+    final RetireResult retired = _retire(room, target, 'kicked');
+    if (retired is! RetireOk) {
+      return retired;
     }
-    return _retire(room, target, 'kicked');
+    target.tokenDead = true;
+    final String? key = target.barKey;
+    if (key != null) {
+      room.kickBars.add(key);
+    }
+    final BanInfo? ban = _kickStrike(room, target);
+    return RetireOk(
+      room: retired.room,
+      seat: retired.seat,
+      reason: retired.reason,
+      events: retired.events,
+      after: retired.after,
+      retiredSeq: retired.retiredSeq,
+      hostSeat: retired.hostSeat,
+      turnSeq: retired.turnSeq,
+      nextDeadlineMs: retired.nextDeadlineMs,
+      nextGraceMs: retired.nextGraceMs,
+      gameOverSeq: retired.gameOverSeq,
+      verifyUrl: retired.verifyUrl,
+      freed: retired.freed,
+      ban: ban,
+    );
   }
 
   /// The absent half of the turn timer's 1 s sweep, `docs/PROTOCOL.md`
@@ -2747,10 +3017,12 @@ class RoomRegistry {
     final engine.Applied appliedOk = applied as engine.Applied;
     room.game = appliedOk.state;
     _noteQueuedBanked(room, appliedOk.events);
-    if (reason == 'left') {
+    if (reason == 'left' || reason == 'kicked') {
       // The leaver's socket is gone from the room (the wire layer detaches
       // it); the seat stays, as `connected: false`. No `presence` is sent for
       // it: `seat_retired` is the only frame, and takes the only `seq`.
+      // Section 33 item 8: a kicked seat's socket, when it has one, is
+      // detached the same way and holds no seat afterwards.
       seat.connected = false;
       seat.absentSince ??= _clock.now;
     }
@@ -3140,9 +3412,11 @@ class RoomRegistry {
   /// something this method should throw over.
   int _remainingSegmentMs(Room room) => room.segmentRemainingMs(_clock.now);
 
+  /// The live seat holding [seatToken]. Section 33 item 8: the token of a
+  /// seat kicked in PLAYING is dead, so that seat is never found by it.
   Seat? _findSeat(Room room, String seatToken) {
     for (final Seat seat in room.seats) {
-      if (seat.seatToken == seatToken) {
+      if (seat.seatToken == seatToken && !seat.tokenDead) {
         return seat;
       }
     }

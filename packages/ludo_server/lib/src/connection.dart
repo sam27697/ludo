@@ -61,6 +61,7 @@ import 'room_code.dart';
 import 'ruleset.dart';
 import 'snapshot.dart';
 import 'strike_store.dart' show BanInfo;
+import 'waiting_line.dart';
 
 /// `docs/PROTOCOL.md` section 7.1: the four close codes, and the only four
 /// this file ever passes to a socket close. The `web_socket` package
@@ -343,6 +344,75 @@ void publishKnockEvents(
   }
 }
 
+/// Section 33 item 4: drops every ticket detached for 30 000 ms or more, one
+/// log line each. Run by the one-second sweep, and before a `find_game` is
+/// answered so a ticket at exactly 30 000 ms is never re-attached.
+void expireWaitingLine(RoomRegistry registry) {
+  final int gone = registry.line.expire();
+  for (int i = 0; i < gone; i++) {
+    // ignore: avoid_print
+    print('room=- type=- id=- seat=- outcome=ticket_expired');
+  }
+}
+
+/// Section 33 item 4: one seating pass over the waiting line, published.
+/// A seated socket gets `seat_assigned` then `room`, neither with `re`, and
+/// the room it joined gets `player_joined`, as a link join; the head ticket
+/// of a "two strangers" room gets `seat_assigned` then `room` as its host.
+/// Then every attached ticket whose position is not the one it was last told
+/// gets a fresh `queued` (same ticket, no `re`, no `seq`).
+void serveWaitingLine(RoomRegistry registry, RoomHub hub) {
+  if (registry.line.isEmpty) {
+    return;
+  }
+  for (final LineEvent event in registry.serveLine()) {
+    final String code = event.room.code;
+    final Object? owner = event.ticket.owner;
+    final Connection? conn = owner is Connection ? owner : null;
+    if (conn != null) {
+      conn.roomCode = code;
+      conn.seatToken = event.seat.seatToken;
+      hub.attach(code: code, conn: conn);
+      conn._send(
+        type: 'seat_assigned',
+        data: buildSeatAssigned(event.seat),
+        re: null,
+      );
+      conn._send(type: 'room', data: event.snapshot, re: null);
+    }
+    switch (event) {
+      case LineSeated():
+        hub.broadcast(
+          code: code,
+          type: 'player_joined',
+          data: buildPlayerJoined(event.seat, event.seq),
+          exceptConn: conn,
+        );
+        // ignore: avoid_print
+        print('room=$code type=- id=- seat=${event.seat.seat} '
+            'outcome=line_seated via=public seq=${event.seq}');
+      case LineRoomCreated():
+        // ignore: avoid_print
+        print('room=$code type=- id=- seat=${event.seat.seat} '
+            'outcome=line_room_created players=${event.room.players} '
+            'open=${event.room.open} seq=${event.seq}');
+    }
+  }
+  for (final Ticket ticket in registry.line.takePositionChanges()) {
+    final Object? owner = ticket.owner;
+    if (owner is Connection) {
+      owner._send(
+        type: 'queued',
+        data: <String, Object?>{
+          'ticket': ticket.id,
+          'position': ticket.toldPosition,
+        },
+        re: null,
+      );
+    }
+  }
+}
+
 /// One WebSocket connection and the seat it may or may not currently hold.
 /// A seat survives its socket (`docs/PROTOCOL.md` section 8): closing this
 /// connection never calls `leaveRoom`, only `setConnected(..., false)`.
@@ -390,6 +460,17 @@ class Connection {
   bool _closed = false;
 
   bool get _hasIdentity => roomCode != null && seatToken != null;
+
+  /// Section 33 item 3: this socket holds a live seat. An identity whose room
+  /// was reaped, or whose seat was freed or kicked, holds none.
+  bool get _holdsSeat {
+    if (!_hasIdentity) {
+      return false;
+    }
+    final Room? room = registry.lookup(roomCode!);
+    return room != null &&
+        room.seats.any((Seat s) => s.seatToken == seatToken && !s.tokenDead);
+  }
 
   /// Entry point for one raw frame off the wire, text or binary. Implements
   /// the first five ladder steps; hands a validated envelope to [_dispatch]
@@ -466,6 +547,19 @@ class Connection {
     }
 
     await _dispatch(envelope);
+
+    // Section 33 item 4: whatever this message changed (a room created or
+    // reopened, a seat freed, a host back, a ticket made or dropped), the
+    // line is served from its head. A pass that finds nothing to do changes
+    // nothing, so running it after every message is the same as running it
+    // after the ones that matter.
+    try {
+      serveWaitingLine(registry, hub);
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('room=- type=${envelope.type} id=${envelope.id} seat=- '
+          'outcome=line_pass_failed error=$error\n$stack');
+    }
   }
 
   /// Section 27 rule 4. Sends the one `UPDATE_REQUIRED` error, with no `re`
@@ -535,6 +629,10 @@ class Connection {
         _handleAnswerKnock(envelope);
       case 'set_guest_approval':
         _handleSetGuestApproval(envelope);
+      case 'find_game':
+        _handleFindGame(envelope);
+      case 'cancel_find':
+        _handleCancelFind(envelope);
       default:
         // Unreachable: parseEnvelope already rejected anything outside
         // knownMessageTypes as BAD_TYPE.
@@ -557,12 +655,15 @@ class Connection {
       return;
     }
     _withdrawOwnKnock();
+    // Section 33 item 4: a queued socket that creates a room leaves the line.
+    _dropOwnTicket();
 
     const Set<String> allowedKeys = <String>{
       'name',
       'players',
       'rules',
       'install',
+      'open',
     };
     if (!envelope.data.keys.every(allowedKeys.contains)) {
       _reject(envelope, ProtocolError.badField);
@@ -575,6 +676,14 @@ class Connection {
     if (envelope.data.containsKey('install') &&
         (rawCreateInstall is! String ||
             !_installPattern.hasMatch(rawCreateInstall))) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+
+    // Section 33 item 1: `open` is optional, absent means false, and
+    // anything but a bool is a malformed field.
+    final Object? rawOpen = envelope.data['open'];
+    if (envelope.data.containsKey('open') && rawOpen is! bool) {
       _reject(envelope, ProtocolError.badField);
       return;
     }
@@ -603,6 +712,7 @@ class Connection {
       rules: rules ?? const RulesConfig(),
       install: rawCreateInstall is String ? rawCreateInstall : null,
       ip: ip,
+      open: rawOpen == true,
     );
 
     if (result is CreateFailure) {
@@ -640,6 +750,8 @@ class Connection {
       _reject(envelope, ProtocolError.rateLimited);
       return;
     }
+    // Section 33 item 4: a queued socket that joins a room leaves the line.
+    _dropOwnTicket();
 
     // Section 31 item 2: the room is named by `code` or by `link`, never both
     // and never neither; `install` may ride on either.
@@ -795,6 +907,170 @@ class Connection {
     );
   }
 
+  /// Section 33 item 4: drops the ticket this socket holds, if any. Returns
+  /// whether it held one. The positions behind it are told by the pass that
+  /// follows the message.
+  bool _dropOwnTicket() {
+    final Ticket? ticket = registry.line.ticketOf(this);
+    if (ticket == null) {
+      return false;
+    }
+    registry.line.remove(ticket);
+    return true;
+  }
+
+  /// `find_game`, section 33 item 3. The ladder: the per-IP `join_room`
+  /// limit (`RATE_LIMITED`), a seat already held (`ALREADY_SEATED`), then,
+  /// after this socket's open knock is withdrawn and any ticket it holds is
+  /// dropped, the payload: `name` as section 4, `install` required with
+  /// section 31 item 2's shape, `ticket` an optional string, nothing else
+  /// (`BAD_FIELD`). No ban and no typed-code window apply.
+  ///
+  /// A matchable room that does not bar the device seats the caller at once,
+  /// `via: "public"` (`seat_assigned`, then `room` with `re`, `player_joined`
+  /// to the room). Otherwise the caller holds a ticket: the one it named, in
+  /// its old place, when that is still held for the same `install`, else a
+  /// new one at the tail; it is answered by `queued` with `re`.
+  void _handleFindGame(ParsedEnvelope envelope) {
+    if (!rateLimiter.recordJoinOrResume(ip)) {
+      _reject(envelope, ProtocolError.rateLimited);
+      return;
+    }
+    if (_holdsSeat) {
+      _reject(envelope, ProtocolError.alreadySeated);
+      return;
+    }
+    _withdrawOwnKnock();
+    _dropOwnTicket();
+
+    const Set<String> allowedKeys = <String>{'name', 'install', 'ticket'};
+    if (!envelope.data.keys.every(allowedKeys.contains)) {
+      _reject(envelope, ProtocolError.badField, room: '-');
+      return;
+    }
+    final Object? rawName = envelope.data['name'];
+    final String? name =
+        rawName is String ? registry.validDisplayName(rawName) : null;
+    if (name == null) {
+      _reject(envelope, ProtocolError.badField, room: '-');
+      return;
+    }
+    final Object? rawInstall = envelope.data['install'];
+    if (rawInstall is! String || !_installPattern.hasMatch(rawInstall)) {
+      _reject(envelope, ProtocolError.badField, room: '-');
+      return;
+    }
+    final Object? rawTicket = envelope.data['ticket'];
+    if (envelope.data.containsKey('ticket') && rawTicket is! String) {
+      _reject(envelope, ProtocolError.badField, room: '-');
+      return;
+    }
+
+    expireWaitingLine(registry);
+    // An unknown, expired or mismatched ticket is a fresh find_game: null
+    // here, and nothing in the line changed.
+    final Ticket? held = rawTicket is String
+        ? registry.line.reattach(
+            id: rawTicket,
+            install: rawInstall,
+            name: name,
+            ip: ip,
+            owner: this,
+          )
+        : null;
+
+    final Room? room = registry.matchableRoomFor(install: rawInstall, ip: ip);
+    if (room != null) {
+      final JoinResult result = registry.seatPublic(
+        room,
+        name: name,
+        install: rawInstall,
+        ip: ip,
+      );
+      if (result is JoinOk) {
+        if (held != null) {
+          registry.line.remove(held);
+        }
+        roomCode = result.room.code;
+        seatToken = result.seat.seatToken;
+        hub.attach(code: result.room.code, conn: this);
+        _send(
+          type: 'seat_assigned',
+          data: buildSeatAssigned(result.seat),
+          re: null,
+        );
+        _send(type: 'room', data: _snapshotFor(result.room), re: envelope.id);
+        hub.broadcast(
+          code: result.room.code,
+          type: 'player_joined',
+          data: buildPlayerJoined(result.seat, result.room.seq),
+          exceptConn: this,
+        );
+        _log(
+          type: envelope.type,
+          id: envelope.id,
+          outcome: 'ok seated via=public',
+          room: result.room.code,
+          seat: result.seat.seat,
+          seq: result.room.seq,
+        );
+        return;
+      }
+      // matchableRoomFor has just said this room takes this device; say that
+      // the two checks drifted apart and queue the caller instead.
+      _log(
+        type: envelope.type,
+        id: envelope.id,
+        outcome: 'seat_public_failed '
+            'error=${wireErrorCode((result as JoinFailure).error)}',
+        room: room.code,
+      );
+    }
+
+    final Ticket ticket = held ??
+        registry.line.enqueue(
+          name: name,
+          install: rawInstall,
+          ip: ip,
+          owner: this,
+        );
+    final int position = registry.line.positionOf(ticket);
+    ticket.toldPosition = position;
+    _send(
+      type: 'queued',
+      data: <String, Object?>{'ticket': ticket.id, 'position': position},
+      re: envelope.id,
+    );
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok queued position=$position '
+          '${held != null ? 'reattached' : 'new'}',
+      room: '-',
+    );
+  }
+
+  /// `cancel_find`, section 33 item 4: drops this socket's ticket and is
+  /// answered by `find_cancelled` with `re`, also when it held none. `d`
+  /// must be empty.
+  void _handleCancelFind(ParsedEnvelope envelope) {
+    if (envelope.data.isNotEmpty) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+    final bool held = _dropOwnTicket();
+    _send(
+      type: 'find_cancelled',
+      data: const <String, Object?>{},
+      re: envelope.id,
+    );
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: held ? 'ok ticket_dropped' : 'ok no_ticket',
+    );
+  }
+
   /// `answer_knock`, section 31 item 4. Identity first, like the other
   /// socket-identified messages; the registry runs the rest of the ladder.
   /// The host's own copy of each frame its answer caused carries `re`.
@@ -920,6 +1196,8 @@ class Connection {
       return;
     }
     _withdrawOwnKnock();
+    // Section 33 item 4: a queued socket that resumes a seat leaves the line.
+    _dropOwnTicket();
 
     const Set<String> allowedKeys = <String>{'code', 'seat_token'};
     if (!envelope.data.keys.every(allowedKeys.contains)) {
@@ -1510,10 +1788,11 @@ class Connection {
     _logRetire(envelope.type, envelope.id, retire);
   }
 
-  /// `kick`, `docs/PROTOCOL.md` section 28 rule 4 "kicked". Identity first,
-  /// like the other socket-identified messages; the registry runs the rest of
-  /// the ladder in the section's own order (`NOT_HOST`, `WRONG_PHASE`,
-  /// `BAD_FIELD`, `ILLEGAL_MOVE`, `NOT_ABSENT`). Answered on the host's socket
+  /// `kick`, `docs/PROTOCOL.md` section 33 item 8 (which replaces section 28
+  /// rule 4 "kicked"). Identity first, like the other socket-identified
+  /// messages; the registry runs the rest of the ladder in the section's own
+  /// order (`NOT_HOST`, `WRONG_PHASE`, `BAD_FIELD`, `ILLEGAL_MOVE`). Answered
+  /// on the host's socket
   /// by the `seat_retired` broadcast with `re`; the frames that follow it
   /// (a `turn`, or `game_over` and its `player_left`s) carry `re` on this
   /// socket's copy too, as every burst a request causes does.
@@ -1550,7 +1829,31 @@ class Connection {
       return;
     }
     final RetireOk ok = result as RetireOk;
-    for (final OutFrame frame in buildRetireFrames(ok)) {
+    final List<OutFrame> frames = buildRetireFrames(ok);
+    // Section 33 item 8: the kicked seat's socket, when it has one, is
+    // detached first; it gets the `seat_retired`, then `kicked` (with `ban`
+    // when the kick's strike fired one), and nothing that follows.
+    final Connection? kickedConn = hub.detachSeatToken(
+      code: ok.room.code,
+      seatToken: ok.seat.seatToken,
+    );
+    if (kickedConn != null) {
+      kickedConn.roomCode = null;
+      kickedConn.seatToken = null;
+      kickedConn._send(
+        type: frames.first.type,
+        data: frames.first.data,
+        re: null,
+      );
+      kickedConn._send(
+        type: 'kicked',
+        data: <String, Object?>{
+          if (ok.ban != null) 'ban': ok.ban!.toJson(),
+        },
+        re: null,
+      );
+    }
+    for (final OutFrame frame in frames) {
       _sendAndBroadcast(
         room: ok.room.code,
         type: frame.type,
@@ -2406,6 +2709,10 @@ class Connection {
       }
     }
     _closed = true;
+    // Section 33 item 4: a ticket outlives its socket, detached, for 30 s.
+    if (registry.line.detach(this) != null) {
+      _log(type: '-', id: '-', outcome: 'disconnect ticket_detached');
+    }
     // Section 31 item 4: a knock does not outlive its socket. Done after
     // `_closed`, so nothing is written to the socket that just went.
     final String? knockId = pendingKnockId;

@@ -85,6 +85,8 @@ String wireErrorCode(ProtocolError error) {
       return 'KICKED';
     case ProtocolError.codeBanned:
       return 'CODE_BANNED';
+    case ProtocolError.alreadySeated:
+      return 'ALREADY_SEATED';
   }
 }
 
@@ -151,6 +153,9 @@ const Set<String> knownMessageTypes = <String>{
   'decline_release',
   'answer_knock',
   'set_guest_approval',
+  // Section 33 items 3 and 4: the waiting line.
+  'find_game',
+  'cancel_find',
 };
 
 /// `docs/PROTOCOL.md` section 28 rule 4: `kick` exists only on a server that
@@ -305,6 +310,8 @@ String defaultErrorMessage(ProtocolError error) {
       return 'you were removed from this room';
     case ProtocolError.codeBanned:
       return 'joining by code is paused for this device or network';
+    case ProtocolError.alreadySeated:
+      return 'this connection already holds a seat';
   }
 }
 

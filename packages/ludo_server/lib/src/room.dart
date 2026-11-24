@@ -101,9 +101,15 @@ class Seat {
 
   /// `docs/PROTOCOL.md` section 31 item 1: how this seat was taken, `"host"`
   /// for the creating seat, `"link"` or `"code"` for a join, `"approved"` for
-  /// a seat a knock was accepted for. Fixed at seating; kept across a resume,
-  /// a reseat and a rematch.
+  /// a seat a knock was accepted for, and since section 33 item 5 `"public"`
+  /// for a seat given from the waiting line (`"bot"` is section 34's). Fixed
+  /// at seating; kept across a resume, a reseat and a rematch.
   final String via;
+
+  /// Section 33 item 8: the host kicked this seat in PLAYING. Its token is
+  /// dead from that moment, so no `resume` finds the seat again, though it
+  /// stays in `seats` as a retired seat until `game_over` frees it.
+  bool tokenDead = false;
 
   /// Section 31 item 7: the SHA-256 (hex) of the `install` this seat's socket
   /// sent, or of its IP when it sent none. Room state only; never logged,
@@ -215,6 +221,7 @@ class Room {
     this.seq = 0,
     this.rematch,
     this.ruleset = ruleset202610,
+    this.open = false,
     DateTime? lifetimeStartedAt,
     List<Map<String, Object?>>? gameLog,
   })  : lifetimeStartedAt = lifetimeStartedAt ?? createdAt,
@@ -232,6 +239,15 @@ class Room {
   /// Section 31 item 5: whether a typed-code join knocks instead of seating.
   /// False at creation, kept across a rematch.
   bool guestApproval = false;
+
+  /// Section 33 item 1: the server may seat strangers here from the waiting
+  /// line. Fixed at creation and kept across a rematch; only a computer seat
+  /// clears it (section 34), and a room that lost it is not open.
+  bool open;
+
+  /// Section 33 item 2: a matchable room holds no computer seat. Section 34
+  /// seats them with `via: "bot"`; until then no seat has that route.
+  bool get hasComputerSeat => seats.any((Seat s) => s.via == 'bot');
 
   /// Section 31 item 3: the open knocks, in arrival order.
   final List<Knock> knocks = <Knock>[];
