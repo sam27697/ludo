@@ -17,6 +17,8 @@
 // `homeBonus: true`. This split is flagged in the work order report as the
 // order's own ambiguity, not invented silently.
 
+import 'dart:math' show Random;
+
 import 'package:fair_dice/fair_dice.dart' show DiceChain;
 import 'package:ludo_engine/ludo_engine.dart' show GameState;
 
@@ -97,7 +99,12 @@ class Seat {
     this.seedOrigin,
     this.via = 'code',
     this.barKey,
+    this.bot,
   });
+
+  /// Section 34 item 1: which of the six characters this computer seat is,
+  /// 1 to 6. Null for a human seat, which has no `bot` key on the wire.
+  final int? bot;
 
   /// `docs/PROTOCOL.md` section 31 item 1: how this seat was taken, `"host"`
   /// for the creating seat, `"link"` or `"code"` for a join, `"approved"` for
@@ -246,8 +253,28 @@ class Room {
   bool open;
 
   /// Section 33 item 2: a matchable room holds no computer seat. Section 34
-  /// seats them with `via: "bot"`; until then no seat has that route.
-  bool get hasComputerSeat => seats.any((Seat s) => s.via == 'bot');
+  /// seats them with `via: "bot"` and a `bot` number.
+  bool get hasComputerSeat =>
+      seats.any((Seat s) => s.via == 'bot' || s.bot != null);
+
+  /// Section 34 item 4: the room's one non-secret random source, from which
+  /// the characters and the paces are drawn. Made by the registry from its
+  /// injected factory the first time a computer seat needs it; never the
+  /// source that feeds the dice.
+  Random? computerRandom;
+
+  /// Section 34 item 4: the pace of the decision now owed to a computer seat.
+  /// [computerBase] is the instant the pace counts from (the later of the
+  /// frame that left the seat to act, the end of a grace, and the last
+  /// moment a human socket came back to a room with none); [computerDueAt]
+  /// is that instant plus the drawn pace. Both are null while no decision is
+  /// scheduled. Room state only, never on the wire.
+  DateTime? computerBase;
+  DateTime? computerDueAt;
+
+  /// Section 34 item 4: when the first human socket returned to a room that
+  /// had none connected, so the pace restarts from it. Null until then.
+  DateTime? humanBackAt;
 
   /// Section 31 item 3: the open knocks, in arrival order.
   final List<Knock> knocks = <Knock>[];

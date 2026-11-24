@@ -633,6 +633,10 @@ class Connection {
         _handleFindGame(envelope);
       case 'cancel_find':
         _handleCancelFind(envelope);
+      case 'play_computer':
+        _handlePlayComputer(envelope);
+      case 'fill_computer':
+        _handleFillComputer(envelope);
       default:
         // Unreachable: parseEnvelope already rejected anything outside
         // knownMessageTypes as BAD_TYPE.
@@ -1050,6 +1054,154 @@ class Connection {
     );
   }
 
+  /// `play_computer`, section 34 item 2. The ladder: a seat already held
+  /// (`ALREADY_SEATED`), the per-IP creation limit (`RATE_LIMITED`, as
+  /// `create_room`), then the payload: `name` as section 4, `players` 2 or 4,
+  /// `install` as section 31 item 2, `client_seed` as `set_seed`, nothing
+  /// else (`BAD_FIELD`). A ticket or an open knock this socket holds is
+  /// dropped first. The caller gets `seat_assigned`, `room` (with `re`),
+  /// every `seat_seed`, then `game_started` and the first `turn`.
+  void _handlePlayComputer(ParsedEnvelope envelope) {
+    if (_holdsSeat) {
+      _reject(envelope, ProtocolError.alreadySeated);
+      return;
+    }
+    _dropOwnTicket();
+    if (!rateLimiter.recordCreateRoom(ip)) {
+      _reject(envelope, ProtocolError.rateLimited);
+      return;
+    }
+    _withdrawOwnKnock();
+
+    const Set<String> allowedKeys = <String>{
+      'name',
+      'players',
+      'install',
+      'client_seed',
+    };
+    if (!envelope.data.keys.every(allowedKeys.contains)) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+    final Object? rawInstall = envelope.data['install'];
+    if (envelope.data.containsKey('install') &&
+        (rawInstall is! String || !_installPattern.hasMatch(rawInstall))) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+    final Object? rawName = envelope.data['name'];
+    final Object? rawPlayers = envelope.data['players'];
+    if (rawName is! String || rawPlayers is! int) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+    final Object? rawSeed = envelope.data['client_seed'];
+    if (envelope.data.containsKey('client_seed') && rawSeed is! String) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+
+    final PlayComputerResult result = registry.playComputer(
+      name: rawName,
+      players: rawPlayers,
+      clientSeed: rawSeed,
+      install: rawInstall is String ? rawInstall : null,
+      ip: ip,
+    );
+    if (result is PlayComputerFailure) {
+      _reject(envelope, result.error);
+      return;
+    }
+    final PlayComputerOk ok = result as PlayComputerOk;
+
+    roomCode = ok.room.code;
+    seatToken = ok.seat.seatToken;
+    hub.attach(code: ok.room.code, conn: this);
+    _send(type: 'seat_assigned', data: buildSeatAssigned(ok.seat), re: null);
+    _send(type: 'room', data: ok.snapshot, re: envelope.id);
+    for (final SeededSeat seeded in ok.seeds) {
+      hub.broadcast(
+        code: ok.room.code,
+        type: 'seat_seed',
+        data: buildSeatSeed(
+          seat: seeded.seat.seat,
+          clientSeed: seeded.seat.clientSeed!,
+          origin: seeded.seat.seedOrigin!,
+          seq: seeded.seq,
+        ),
+      );
+    }
+    _publishStart(
+      envelope,
+      ok.start,
+      unsolicited: true,
+      logName: envelope.type,
+    );
+  }
+
+  /// `fill_computer`, section 34 item 3. Identity first, like the other
+  /// socket-identified messages; the registry runs the rest of the ladder.
+  /// The host's copy of the first frame it is sent carries `re`.
+  void _handleFillComputer(ParsedEnvelope envelope) {
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    final FillComputerResult result = registry.fillComputer(
+      code: roomCode!,
+      seatToken: seatToken!,
+      data: envelope.data,
+    );
+    if (result is FillComputerFailure) {
+      _reject(envelope, result.error, room: roomCode);
+      return;
+    }
+    final FillComputerOk ok = result as FillComputerOk;
+    final String code = ok.room.code;
+
+    publishKnockEvents(
+      hub,
+      ok.knockEvents,
+      requester: this,
+      requesterRe: envelope.id,
+    );
+    bool answered = ok.knockEvents.isNotEmpty;
+    for (final ComputerJoin join in ok.joins) {
+      final Map<String, Object?> joined =
+          buildPlayerJoined(join.seat, join.joinedSeq);
+      if (answered) {
+        hub.broadcast(code: code, type: 'player_joined', data: joined);
+      } else {
+        answered = true;
+        _sendAndBroadcast(
+          room: code,
+          type: 'player_joined',
+          data: joined,
+          re: envelope.id,
+        );
+      }
+      final SeededSeat? seeded = join.seeded;
+      if (seeded != null) {
+        hub.broadcast(
+          code: code,
+          type: 'seat_seed',
+          data: buildSeatSeed(
+            seat: seeded.seat.seat,
+            clientSeed: seeded.seat.clientSeed!,
+            origin: seeded.seat.seedOrigin!,
+            seq: seeded.seq,
+          ),
+        );
+      }
+    }
+    _publishStart(
+      envelope,
+      ok.start,
+      unsolicited: true,
+      logName: envelope.type,
+    );
+  }
+
   /// `cancel_find`, section 33 item 4: drops this socket's ticket and is
   /// answered by `find_cancelled` with `re`, also when it held none. `d`
   /// must be empty.
@@ -1392,13 +1544,15 @@ class Connection {
     ParsedEnvelope envelope,
     StartOk ok, {
     bool unsolicited = false,
+    String? logName,
   }) {
+    final String? re = unsolicited ? null : envelope.id;
     void emit(String type, Map<String, Object?> data) {
       if (unsolicited) {
         hub.broadcast(code: ok.room.code, type: type, data: data);
         return;
       }
-      _send(type: type, data: data, re: envelope.id);
+      _send(type: type, data: data, re: re);
       hub.broadcast(
         code: ok.room.code,
         type: type,
@@ -1418,7 +1572,7 @@ class Connection {
         room: ok.room.code,
         type: 'player_left',
         data: buildPlayerLeft(removed.seat.seat, ok.room.hostSeat, removed.seq),
-        re: envelope.id,
+        re: re,
       );
       // docs/PROTOCOL.md section 16.9 rule 1: that was the last thing this
       // removed seat's own socket, if it was connected, is owed from this
@@ -1447,7 +1601,7 @@ class Connection {
               type: 'seat_assigned', data: buildSeatAssigned(moved), re: null);
         }
       }
-      _send(type: 'room', data: reseatRoom, re: envelope.id);
+      _send(type: 'room', data: reseatRoom, re: re);
       for (final Seat moved in ok.movedSeats) {
         if (moved.seatToken == seatToken || !moved.connected) {
           continue;
@@ -1508,7 +1662,8 @@ class Connection {
     emit('turn', turnData);
     publishKnockEvents(hub, ok.knockEvents);
     _log(
-      type: unsolicited ? 'rematch_auto_start_${envelope.type}' : envelope.type,
+      type: logName ??
+          (unsolicited ? 'rematch_auto_start_${envelope.type}' : envelope.type),
       id: envelope.id,
       outcome: 'ok',
       room: ok.room.code,
@@ -1982,7 +2137,16 @@ class Connection {
     _send(type: 'room', data: data, re: envelope.id);
     _broadcastRoomToOthers(ok.room);
 
-    if (ok.autoStart) {
+    // Section 34 item 6: every computer seat accepts at once, in seat order,
+    // after the human's own frames. These carry no `re`: no request of theirs
+    // is being answered.
+    final List<ComputerAccept> accepts = registry.acceptComputerSeats(ok.room);
+    for (final ComputerAccept accept in accepts) {
+      hub.broadcast(code: ok.room.code, type: 'room', data: accept.snapshot);
+    }
+
+    if (ok.autoStart ||
+        (accepts.isNotEmpty && registry.rematchAutoStartHolds(ok.room))) {
       // docs/PROTOCOL.md section 16.4, "Everyone accepted": the room above
       // is the one that recorded the completing acceptance, already on the
       // wire to every socket -- only now does the server start the game
@@ -2503,7 +2667,7 @@ class Connection {
     required String room,
     required String type,
     required Map<String, Object?> data,
-    required String re,
+    required String? re,
   }) {
     _send(type: type, data: data, re: re);
     hub.broadcast(code: room, type: type, data: data, exceptConn: this);

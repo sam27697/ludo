@@ -9,6 +9,7 @@
 
 import 'package:ludo_engine/ludo_engine.dart' as engine;
 
+import 'computer_seat.dart' show fillMsLeft;
 import 'registry.dart';
 import 'room.dart';
 
@@ -65,6 +66,13 @@ Map<String, Object?> buildRoomSnapshot(
     'chain_index': room.chainIndex,
     'game_id': room.gameId,
     'client_seeds': room.clientSeeds,
+    // Section 34 item 3: the host's snapshot of an open LOBBY with a free
+    // seat says how long until `fill_computer` is allowed; nobody else's does.
+    if (forHost &&
+        room.open &&
+        room.state == RoomState.lobby &&
+        room.seats.length < room.players)
+      'fill_ms': fillMsLeft(room, now),
     'seats': <Object?>[
       for (final Seat seat in room.seats) _seatSnapshot(room, seat),
     ],
@@ -111,6 +119,9 @@ Map<String, Object?> _seatSnapshot(Room room, Seat seat) {
     'seat': seat.seat,
     'name': seat.name,
     'via': seat.via,
+    // Section 34 item 1: which of the six characters a computer seat is; a
+    // human seat has no such key.
+    if (seat.bot != null) 'bot': seat.bot,
     'connected': seat.connected,
     'tokens': tokens,
     // docs/PROTOCOL.md section 6: null until this seat's seed is fixed,
@@ -305,6 +316,8 @@ Map<String, Object?> buildPlayerJoined(Seat seat, int seq) {
   return <String, Object?>{
     'seat': seat.seat,
     'name': seat.name,
+    // Section 34 item 1: a computer seat's join carries its character.
+    if (seat.bot != null) 'bot': seat.bot,
     'seq': seq,
   };
 }

@@ -156,6 +156,9 @@ const Set<String> knownMessageTypes = <String>{
   // Section 33 items 3 and 4: the waiting line.
   'find_game',
   'cancel_find',
+  // Section 34 items 2 and 3: computer seats.
+  'play_computer',
+  'fill_computer',
 };
 
 /// `docs/PROTOCOL.md` section 28 rule 4: `kick` exists only on a server that

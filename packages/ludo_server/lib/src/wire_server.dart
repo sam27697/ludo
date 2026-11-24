@@ -183,6 +183,8 @@ class WireServer {
     // Section 31 item 12 (b): whoever calls reap(), the knockers of a reaped
     // room are told at once.
     registry.onKnocksReaped = failReapedKnocks;
+    // Section 34 item 4: what the computer sweep does is published here.
+    registry.onComputerAction = _publishComputerStep;
   }
 
   final RoomRegistry registry;
@@ -317,6 +319,39 @@ class WireServer {
   /// waiting out a real second. Never called by production code.
   @visibleForTesting
   void runTurnExpiryOnce() => _runTurnExpiry();
+
+  /// Runs one computer-seat sweep synchronously, exactly as the 100 ms timer
+  /// in `bin/server.dart` does: the registry's own
+  /// [RoomRegistry.runComputerSeatsOnce], whose steps this server publishes.
+  /// Exists so a test that moved its injected [Clock] can land every due
+  /// computer action at once.
+  @visibleForTesting
+  void runComputerSeatsOnce() {
+    registry.runComputerSeatsOnce();
+  }
+
+  /// Section 34 item 4: publishes one action taken for a computer seat to
+  /// every socket in its room, with no `re` (no request is answered) and no
+  /// `by` (section 22 marks the timer, and this is not the timer): the frames
+  /// are the ones a player's own `roll` or `move` makes.
+  void _publishComputerStep(ComputerStep step) {
+    final RollOk? rolled = step.roll;
+    final MoveOk? moved = step.move;
+    final List<OutFrame> frames =
+        rolled != null ? buildRollFrames(rolled) : buildMoveFrames(moved!);
+    for (final OutFrame frame in frames) {
+      _hub.broadcast(code: step.code, type: frame.type, data: frame.data);
+    }
+    if (moved != null) {
+      detachFreedSeats(_hub, step.code, moved.freed);
+    }
+    final Object? lastSeq = frames.isEmpty ? null : frames.last.data['seq'];
+    // ignore: avoid_print
+    print('room=${step.code} type=${rolled != null ? 'roll' : 'move'} '
+        'id=computer seat=${step.seat} bot=${step.bot} outcome=ok '
+        'frames=${frames.map((OutFrame f) => f.type).join('+')} '
+        'seq=${lastSeq is int ? lastSeq : '-'}');
+  }
 
   /// `docs/RULES.md` section 3.3. The registry decides and applies; this
   /// only publishes what it decided, to every socket in the room, with no

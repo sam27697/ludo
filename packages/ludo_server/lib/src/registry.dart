@@ -14,6 +14,7 @@ import 'package:fair_dice/fair_dice.dart' show DiceChain, drawDie, hexEncode;
 import 'package:ludo_engine/ludo_engine.dart' as engine;
 
 import 'clock.dart';
+import 'computer_seat.dart';
 import 'grace.dart';
 import 'link_id.dart';
 import 'room.dart';
@@ -669,6 +670,105 @@ class ExpiredTurn {
   final MoveOk? move;
 }
 
+/// Section 34 item 4: one action the server took for a computer seat. Carries
+/// what the matching client-driven path carries, so the wire layer builds the
+/// same frames from it, with no `by` key (section 22 marks the timer, and
+/// this is not the timer).
+class ComputerStep {
+  ComputerStep({
+    required this.code,
+    required this.seat,
+    required this.bot,
+    this.roll,
+    this.move,
+  });
+
+  final String code;
+
+  /// The engine seat the server acted for.
+  final int seat;
+
+  /// The character of that seat, 1..6.
+  final int bot;
+
+  final RollOk? roll;
+  final MoveOk? move;
+}
+
+sealed class PlayComputerResult {}
+
+/// `play_computer` accepted. [snapshot] is the `room` of the full LOBBY, taken
+/// before any seed is fixed; [seeds] are every seat's `seat_seed`, ascending,
+/// each at the `seq` of its own fix; [start] is the game start that follows.
+class PlayComputerOk extends PlayComputerResult {
+  PlayComputerOk({
+    required this.room,
+    required this.seat,
+    required this.snapshot,
+    required this.seeds,
+    required this.start,
+  });
+
+  final Room room;
+  final Seat seat;
+  final Map<String, Object?> snapshot;
+  final List<SeededSeat> seeds;
+  final StartOk start;
+}
+
+class PlayComputerFailure extends PlayComputerResult {
+  PlayComputerFailure(this.error);
+  final ProtocolError error;
+}
+
+/// One computer seat taken into a LOBBY: [joinedSeq] is the `seq` of its
+/// `player_joined`, [seeded] its server seed and the `seq` of that fix, which
+/// follows it at once.
+class ComputerJoin {
+  ComputerJoin({required this.seat, required this.joinedSeq, this.seeded});
+
+  final Seat seat;
+  final int joinedSeq;
+  final SeededSeat? seeded;
+}
+
+sealed class FillComputerResult {}
+
+/// `fill_computer` accepted: the knocks it closed `full` first, then each
+/// computer seat in turn, then the start of the game.
+class FillComputerOk extends FillComputerResult {
+  FillComputerOk({
+    required this.room,
+    required this.knockEvents,
+    required this.joins,
+    required this.start,
+  });
+
+  final Room room;
+  final List<KnockEvent> knockEvents;
+  final List<ComputerJoin> joins;
+  final StartOk start;
+}
+
+class FillComputerFailure extends FillComputerResult {
+  FillComputerFailure(this.error);
+  final ProtocolError error;
+}
+
+/// Section 34 item 6: a computer seat's acceptance of a rematch, the `room`
+/// it produced built at the `seq` the accept took.
+class ComputerAccept {
+  ComputerAccept({
+    required this.seat,
+    required this.seq,
+    required this.snapshot,
+  });
+
+  final Seat seat;
+  final int seq;
+  final Map<String, Object?> snapshot;
+}
+
 sealed class SetPlayersResult {}
 
 class SetPlayersOk extends SetPlayersResult {
@@ -916,7 +1016,9 @@ class RoomRegistry {
     String ruleset = ruleset202610,
     Random? linkRandom,
     StrikeStore? strikeStore,
+    Random Function()? computerRandom,
   })  : _clock = clock,
+        _computerRandomFactory = computerRandom ?? Random.new,
         strikes = strikeStore ?? StrikeStore(clock: clock),
         _secure = secure,
         _linkRandom = linkRandom ?? Random.secure(),
@@ -925,6 +1027,16 @@ class RoomRegistry {
         ruleset = _checkedRuleset(ruleset) {
     line = WaitingLine(clock: clock, random: _linkRandom);
   }
+
+  /// Section 34 items 1 and 4: makes the one non-secret random source of a
+  /// room, the first time that room needs one. A fresh `Random()` unless a
+  /// test hands in a seeded one. Never the CSPRNG that feeds the dice.
+  final Random Function() _computerRandomFactory;
+
+  /// Section 34 item 4: told of every action the sweep takes for a computer
+  /// seat, the moment it has taken it. Set by the wire layer, which builds and
+  /// sends the frames; unset, [runComputerSeatsOnce] still returns the steps.
+  void Function(ComputerStep step)? onComputerAction;
 
   /// Section 33 items 3 and 4: the one waiting line of this server. Ticket
   /// ids are drawn from the same CSPRNG as link ids, never from [_secure].
@@ -1700,7 +1812,12 @@ class RoomRegistry {
       return ResumeFailure(ProtocolError.badSeatToken);
     }
     final bool reconnected = !seat.connected;
+    final bool humanWasHere = _anyHumanConnected(room);
     seat.connected = true;
+    if (!humanWasHere && seat.bot == null) {
+      // Section 34 item 4: the pace of a waiting computer seat restarts here.
+      room.humanBackAt = _clock.now;
+    }
     // Section 28 rule 4: a resume that reconnects the seat ends the absence
     // count; a later drop starts a new one.
     seat.absentSince = null;
@@ -1856,6 +1973,7 @@ class RoomRegistry {
           seedOrigin: keep[i].seedOrigin,
           via: keep[i].via,
           barKey: keep[i].barKey,
+          bot: keep[i].bot,
         ),
     ];
     // docs/PROTOCOL.md section 15 rule 1, reused here per section 16.4.
@@ -2721,6 +2839,7 @@ class RoomRegistry {
           seedOrigin: ordered[i].seedOrigin,
           via: ordered[i].via,
           barKey: ordered[i].barKey,
+          bot: ordered[i].bot,
         ),
     ];
     // docs/PROTOCOL.md section 15 rule 1: compared index by index against
@@ -2764,6 +2883,7 @@ class RoomRegistry {
         if (retired is RetireFailure) {
           return LeaveFailure(retired.error);
         }
+        _reapIfOrphaned(room);
         return LeaveOk(
           room: room,
           seat: seat,
@@ -2802,6 +2922,7 @@ class RoomRegistry {
       _refreshIdleTracking(room);
     }
     room.seq++;
+    _reapIfOrphaned(room);
     return LeaveOk(room: room, seat: seat);
   }
 
@@ -2826,7 +2947,12 @@ class RoomRegistry {
     if (seat.connected == connected) {
       return false;
     }
+    final bool humanWasHere = _anyHumanConnected(room);
     seat.connected = connected;
+    if (connected && !humanWasHere && seat.bot == null) {
+      // Section 34 item 4: the pace of a waiting computer seat restarts here.
+      room.humanBackAt = _clock.now;
+    }
     // Section 28 rule 4: the absence count starts at the flip whose
     // `presence` the caller broadcasts next, and ends with the reconnect.
     seat.absentSince = connected ? null : _clock.now;
@@ -2891,6 +3017,7 @@ class RoomRegistry {
       room.kickBars.add(key);
     }
     final BanInfo? ban = _kickStrike(room, target);
+    _reapIfOrphaned(room);
     return RetireOk(
       room: retired.room,
       seat: retired.seat,
@@ -2979,6 +3106,7 @@ class RoomRegistry {
             break;
           }
         }
+        _reapIfOrphaned(room);
       } catch (error, stack) {
         onError(room.code, dueSeat, error, stack);
       }
@@ -3096,6 +3224,375 @@ class RoomRegistry {
     return connected.isEmpty ? -1 : connected.first;
   }
 
+  /// `play_computer`, section 34 item 2. [players] is 2 or 4 and [clientSeed],
+  /// when given, passes section 11.2's shape; anything else is `BAD_FIELD`
+  /// before a room exists. The room is made as `create_room` makes it (not
+  /// open, default rules), the caller seated as host, every other seat taken
+  /// by a computer seat, and the game started. Every seat's seed is fixed
+  /// after the `room` of the full LOBBY, in ascending seat order: the host's
+  /// own when it gave one, a server-drawn seed for every other seat.
+  PlayComputerResult playComputer({
+    required String name,
+    required int players,
+    required Object? clientSeed,
+    String? install,
+    String ip = '',
+  }) {
+    if (players != 2 && players != 4) {
+      return PlayComputerFailure(ProtocolError.badField);
+    }
+    String? hostSeed;
+    if (clientSeed != null) {
+      hostSeed = _validClientSeed(clientSeed);
+      if (hostSeed == null) {
+        return PlayComputerFailure(ProtocolError.badField);
+      }
+    }
+    final CreateResult created = createRoom(
+      name: name,
+      players: players,
+      rules: const RulesConfig(),
+      install: install,
+      ip: ip,
+    );
+    if (created is! CreateOk) {
+      return PlayComputerFailure((created as CreateFailure).error);
+    }
+    final Room room = created.room;
+    final Seat host = created.seat;
+    _seatComputers(room, seedAtOnce: false);
+    final Map<String, Object?> snapshot =
+        buildRoomSnapshot(room, now: _clock.now, forHost: true);
+    final List<SeededSeat> seeds = <SeededSeat>[];
+    for (final Seat seat in room.seats) {
+      if (seat.seat == host.seat && hostSeed != null) {
+        seat.clientSeed = hostSeed;
+        seat.seedOrigin = 'player';
+        room.seq++;
+        seeds.add(SeededSeat(seat: seat, seq: room.seq));
+      } else {
+        seeds.add(_seedFromServer(room, seat));
+      }
+    }
+    final StartOk start = _beginGame(room);
+    return PlayComputerOk(
+      room: room,
+      seat: host,
+      snapshot: snapshot,
+      seeds: seeds,
+      start: start,
+    );
+  }
+
+  /// `fill_computer`, section 34 item 3. [data] is the message's whole `d`.
+  /// The ladder: room, seat authorised, `NOT_HOST`, LOBBY (`WRONG_PHASE`), any
+  /// payload key (`BAD_FIELD`), then `WRONG_PHASE` unless the room is open,
+  /// has a free seat and [fillWaitMs] have passed. On acceptance the room is
+  /// no longer open, its open knocks close `full`, each free seat (lowest
+  /// first) takes a computer seat with its server seed, and the game starts
+  /// as `start_game` starts it.
+  FillComputerResult fillComputer({
+    required String code,
+    required String seatToken,
+    required Map<String, Object?> data,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return FillComputerFailure(ProtocolError.noSuchRoom);
+    }
+    final Seat? caller = _findSeat(room, seatToken);
+    if (caller == null) {
+      return FillComputerFailure(ProtocolError.badSeatToken);
+    }
+    if (caller.seat != room.hostSeat) {
+      return FillComputerFailure(ProtocolError.notHost);
+    }
+    if (room.state != RoomState.lobby) {
+      return FillComputerFailure(ProtocolError.wrongPhase);
+    }
+    if (data.isNotEmpty) {
+      return FillComputerFailure(ProtocolError.badField);
+    }
+    if (!room.open ||
+        _freeSeats(room).isEmpty ||
+        fillMsLeft(room, _clock.now) > 0) {
+      return FillComputerFailure(ProtocolError.wrongPhase);
+    }
+    room.open = false;
+    final List<KnockEvent> knockEvents = _closeAllKnocksFull(room);
+    final List<ComputerJoin> joins = _seatComputers(room, seedAtOnce: true);
+    final StartResult started = room.rematch != null
+        ? _startRematchFromHost(room, room.rematch!)
+        : _beginGame(room);
+    if (started is StartFailure) {
+      return FillComputerFailure(started.error);
+    }
+    return FillComputerOk(
+      room: room,
+      knockEvents: knockEvents,
+      joins: joins,
+      start: started as StartOk,
+    );
+  }
+
+  /// Takes a computer seat for every free seat of [room], lowest first, each
+  /// with a character drawn without replacement from the room's random source
+  /// among those not already in the room. With [seedAtOnce] each seat's
+  /// server seed is fixed right after its join (section 34 item 1); without,
+  /// the caller fixes the seeds later. A seat joining a rematch LOBBY has
+  /// accepted the rematch already.
+  List<ComputerJoin> _seatComputers(Room room, {required bool seedAtOnce}) {
+    final List<int> free = _freeSeats(room);
+    final Set<int> taken = <int>{
+      for (final Seat seat in room.seats)
+        if (seat.bot != null) seat.bot!,
+    };
+    final List<int> bots = drawComputerCharacters(
+        _computerRandomFor(room), free.length,
+        taken: taken);
+    final List<ComputerJoin> joins = <ComputerJoin>[];
+    for (int i = 0; i < free.length; i++) {
+      final Seat seat = Seat(
+        seat: free[i],
+        name: computerName(bots[i]),
+        seatToken: generateSeatToken(_secure),
+        connected: true,
+        via: 'bot',
+        bot: bots[i],
+      );
+      room.seats = <Seat>[...room.seats, seat]
+        ..sort((Seat a, Seat b) => a.seat.compareTo(b.seat));
+      room.seq++;
+      final int joinedSeq = room.seq;
+      final Rematch? current = room.rematch;
+      if (current != null) {
+        room.rematch = Rematch(
+          by: current.by,
+          ready: <int>[...current.ready, seat.seat]..sort(),
+        );
+      }
+      joins.add(
+        ComputerJoin(
+          seat: seat,
+          joinedSeq: joinedSeq,
+          seeded: seedAtOnce ? _seedFromServer(room, seat) : null,
+        ),
+      );
+    }
+    _refreshIdleTracking(room);
+    return joins;
+  }
+
+  /// Fixes [seat]'s seed with a server-drawn one, one `seq` step.
+  SeededSeat _seedFromServer(Room room, Seat seat) {
+    seat.clientSeed = hexEncode(_drawBytes(_serverSeedBytes));
+    seat.seedOrigin = 'server';
+    room.seq++;
+    return SeededSeat(seat: seat, seq: room.seq);
+  }
+
+  Random _computerRandomFor(Room room) =>
+      room.computerRandom ??= _computerRandomFactory();
+
+  bool _anyHumanConnected(Room room) =>
+      room.seats.any((Seat s) => s.bot == null && s.connected);
+
+  /// Section 34 item 6: every computer seat of the rematch LOBBY [room] that
+  /// has not accepted yet accepts now, in seat order, one `seq` step and one
+  /// `room` each. Called by the wire layer after it has sent the frames of the
+  /// human's own `rematch`, so those carry the state the human left. Empty
+  /// outside a rematch LOBBY.
+  List<ComputerAccept> acceptComputerSeats(Room room) {
+    final Rematch? current = room.rematch;
+    if (room.state != RoomState.lobby || current == null) {
+      return const <ComputerAccept>[];
+    }
+    final List<ComputerAccept> accepts = <ComputerAccept>[];
+    for (final Seat seat in room.seats) {
+      final Rematch now = room.rematch!;
+      if (seat.bot == null || now.ready.contains(seat.seat)) {
+        continue;
+      }
+      room.rematch = Rematch(
+        by: now.by,
+        ready: <int>[...now.ready, seat.seat]..sort(),
+      );
+      room.seq++;
+      accepts.add(
+        ComputerAccept(
+          seat: seat,
+          seq: room.seq,
+          snapshot: buildRoomSnapshot(room, now: _clock.now),
+        ),
+      );
+    }
+    return accepts;
+  }
+
+  /// Section 34 item 4, the sweep the binary runs every 100 ms on the real
+  /// clock and a test calls after moving a fake one. For each PLAYING room
+  /// whose seat on turn is a computer seat it schedules the decision owed (a
+  /// pace drawn from the room's random source, counted from the later of the
+  /// frame that left the seat to act, the end of a grace and the moment a
+  /// human socket last came back to a room with none), and takes the action
+  /// once the pace has run out on the injected clock. At most one action per
+  /// room per call; every room is looked at, in creation order. Computer seats
+  /// act only while a human socket is connected to the room. Each step is
+  /// handed to [onComputerAction] as it is taken, and returned.
+  List<ComputerStep> runComputerSeatsOnce() {
+    final List<ComputerStep> steps = <ComputerStep>[];
+    final DateTime now = _clock.now;
+    for (final Room room in _rooms.values.toList(growable: false)) {
+      ComputerStep? step;
+      try {
+        step = _computerStepFor(room, now);
+      } catch (error, stack) {
+        // ignore: avoid_print
+        print('room=${room.code} type=computer id=- seat=- '
+            'outcome=computer_step_failed error=$error\n$stack');
+        continue;
+      }
+      if (step == null) {
+        continue;
+      }
+      steps.add(step);
+      final void Function(ComputerStep step)? notify = onComputerAction;
+      if (notify == null) {
+        continue;
+      }
+      try {
+        notify(step);
+      } catch (error, stack) {
+        // ignore: avoid_print
+        print('room=${room.code} type=computer id=- seat=${step.seat} '
+            'outcome=computer_publish_failed error=$error\n$stack');
+      }
+    }
+    return steps;
+  }
+
+  ComputerStep? _computerStepFor(Room room, DateTime now) {
+    if (room.state != RoomState.playing || !room.hasComputerSeat) {
+      return null;
+    }
+    final engine.GameState? game = room.game;
+    if (game == null || game.phase == engine.GamePhase.finished) {
+      return null;
+    }
+    final Seat? seat = _seatAt(room, game.currentSeat);
+    final int? bot = seat?.bot;
+    if (seat == null || bot == null) {
+      room.computerBase = null;
+      room.computerDueAt = null;
+      return null;
+    }
+    // Waiting, not acting: with no human socket here the pace restarts from
+    // the reconnect, so nothing is scheduled meanwhile.
+    final DateTime? segmentStart = room.turnSegmentStartedAt;
+    if (segmentStart == null || !_anyHumanConnected(room)) {
+      room.computerBase = null;
+      room.computerDueAt = null;
+      return null;
+    }
+    DateTime base = segmentStart;
+    final DateTime? graceEnd = room.turnGraceEndsAt;
+    if (graceEnd != null && graceEnd.isAfter(base)) {
+      base = graceEnd;
+    }
+    final DateTime? back = room.humanBackAt;
+    if (back != null && back.isAfter(base)) {
+      base = back;
+    }
+    DateTime? due = room.computerDueAt;
+    if (due == null || room.computerBase != base) {
+      due = base.add(
+        Duration(milliseconds: drawComputerPaceMs(_computerRandomFor(room))),
+      );
+      room.computerBase = base;
+      room.computerDueAt = due;
+    }
+    if (now.isBefore(due)) {
+      return null;
+    }
+    final ComputerAction? action = decideComputerAction(game);
+    if (action == null) {
+      room.computerBase = null;
+      room.computerDueAt = null;
+      return null;
+    }
+    room.computerBase = null;
+    room.computerDueAt = null;
+    switch (action) {
+      case ComputerRoll():
+        final RollResult result =
+            roll(code: room.code, seatToken: seat.seatToken);
+        if (result is! RollOk) {
+          _logComputerRefused(
+              room, seat, 'roll', (result as RollFailure).error);
+          return null;
+        }
+        return ComputerStep(
+          code: room.code,
+          seat: seat.seat,
+          bot: bot,
+          roll: result,
+        );
+      case ComputerMove():
+        final MoveResult result = move(
+          code: room.code,
+          seatToken: seat.seatToken,
+          token: action.token,
+          face: action.face,
+        );
+        if (result is! MoveOk) {
+          _logComputerRefused(
+              room, seat, 'move', (result as MoveFailure).error);
+          return null;
+        }
+        return ComputerStep(
+          code: room.code,
+          seat: seat.seat,
+          bot: bot,
+          move: result,
+        );
+    }
+  }
+
+  void _logComputerRefused(
+    Room room,
+    Seat seat,
+    String type,
+    ProtocolError error,
+  ) {
+    // ignore: avoid_print
+    print('room=${room.code} type=$type id=computer seat=${seat.seat} '
+        'outcome=computer_refused error=${error.name}');
+  }
+
+  /// Section 34 item 6: a room with a computer seat and no human seat left
+  /// (every human left, was freed or was retired) is reaped at once. A human
+  /// seat whose socket is merely down still counts: a seat survives its
+  /// socket, and the idle rule reaps that room after ten minutes.
+  void _reapIfOrphaned(Room room) {
+    if (!room.hasComputerSeat || _hasLiveHuman(room)) {
+      return;
+    }
+    if (_rooms[room.code] == null) {
+      return;
+    }
+    _removeRoom(room.code, _clock.now);
+  }
+
+  bool _hasLiveHuman(Room room) {
+    final engine.GameState? game = room.game;
+    return room.seats.any(
+      (Seat s) =>
+          s.bot == null &&
+          !s.tokenDead &&
+          !(game != null && game.retired.contains(s.seat)),
+    );
+  }
+
   /// Removes every room one of whose state's rules says it is over, and
   /// returns how many were removed (`docs/PROTOCOL.md` section 3, as amended
   /// by C-451):
@@ -3142,17 +3639,7 @@ class RoomRegistry {
       }
     }
     for (final String code in toRemove) {
-      final Room? gone = _rooms.remove(code);
-      if (gone != null) {
-        _roomsByLink.remove(gone.linkId);
-        _reapedKnocks.addAll(gone.knocks);
-        gone.knocks.clear();
-      }
-      _idleSince.remove(code);
-      _finishedSince.remove(code);
-      _identities.remove(code);
-      _hostKeys.remove(code);
-      _resting[code] = now.add(_codeRest);
+      _removeRoom(code, now);
     }
     _resting.removeWhere(
       (String code, DateTime expiry) => !now.isBefore(expiry),
@@ -3166,6 +3653,23 @@ class RoomRegistry {
       notify(drainReapedKnocks());
     }
     return toRemove.length;
+  }
+
+  /// Drops the room [code] and everything the registry keeps about it, and
+  /// rests its code (section 32 item 3). Open knocks go to
+  /// [drainReapedKnocks].
+  void _removeRoom(String code, DateTime now) {
+    final Room? gone = _rooms.remove(code);
+    if (gone != null) {
+      _roomsByLink.remove(gone.linkId);
+      _reapedKnocks.addAll(gone.knocks);
+      gone.knocks.clear();
+    }
+    _idleSince.remove(code);
+    _finishedSince.remove(code);
+    _identities.remove(code);
+    _hostKeys.remove(code);
+    _resting[code] = now.add(_codeRest);
   }
 
   /// `docs/RULES.md` section 3.3: a seat that lets its segment run out does
@@ -3210,6 +3714,11 @@ class RoomRegistry {
       // nothing, once a second for as long as the room lives.
       final String phase = _turnExpiryPhaseToken(game.phase);
       final Seat? seat = _seatAt(room, game.currentSeat);
+      if (seat != null && seat.bot != null) {
+        // Section 34 item 4: the turn timer never acts for a computer seat;
+        // the computer sweep does, on its own pace.
+        continue;
+      }
       if (seat == null) {
         _declineExpiredSegment(
           room: room,
@@ -3344,7 +3853,10 @@ class RoomRegistry {
   int get roomCount => _rooms.length;
 
   void _refreshIdleTracking(Room room) {
-    final bool idle = room.seats.every((Seat s) => !s.connected);
+    // Section 34 item 4: a computer seat is always connected and holds no
+    // socket, so only the human seats say whether the room is idle.
+    final bool idle =
+        room.seats.every((Seat s) => s.bot != null || !s.connected);
     if (idle) {
       _idleSince.putIfAbsent(room.code, () => _clock.now);
     } else {
