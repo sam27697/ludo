@@ -154,6 +154,7 @@ class LobbyScreen extends StatefulWidget {
     this.resume,
     this.fromLink = false,
     this.shareText,
+    this.open = false,
   });
 
   final RoomController controller;
@@ -179,6 +180,11 @@ class LobbyScreen extends StatefulWidget {
   /// shows [AppLocalizations.lobbyErrorLinkRoomGone] with no retry, since no
   /// retry of a reaped room can succeed. Ignored on create and resume.
   final bool fromLink;
+
+  /// Section 33 item 1: whether a create asks for an open room. Sent with
+  /// every create this screen issues, its Retry included; ignored on join and
+  /// resume.
+  final bool open;
 
   /// The tap handler for `lobby-share-button`, in place of the real system
   /// share sheet. Null in production, where the screen calls
@@ -492,6 +498,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           name: widget.playerName,
           players: widget.players,
           toggles: widget.toggles,
+          open: widget.open,
         );
       case LobbyAction.join:
         widget.controller.joinRoom(code: widget.code!, name: widget.playerName);

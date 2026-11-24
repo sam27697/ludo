@@ -442,13 +442,15 @@ class RoomConnection {
 
   /// Sends `create_room`. `d` is always `{name, players}` plus, when given,
   /// a `rules` key: [rules] as-is, or [toggles] via [RoomToggles.toJson].
-  /// Passing both is a caller error, thrown before anything is sent.
+  /// Passing both is a caller error, thrown before anything is sent. [open]
+  /// (docs/PROTOCOL.md section 33 item 1) is carried only when given.
   Future<RoomSnapshot> createRoom({
     required String name,
     required int players,
     RulesConfig? rules,
     RoomToggles? toggles,
     String? install,
+    bool? open,
   }) async {
     if (rules != null && toggles != null) {
       throw ArgumentError('createRoom: pass rules or toggles, not both');
@@ -459,6 +461,7 @@ class RoomConnection {
       if (rules != null) 'rules': rules.toJson(),
       if (toggles != null) 'rules': toggles.toJson(),
       'install': ?install,
+      'open': ?open,
     };
     final Frame frame = await request('create_room', data);
     return _asRoomSnapshot(frame);
@@ -545,6 +548,52 @@ class RoomConnection {
   /// to this request's id; a refusal is a [ProtocolErrorException].
   Future<Frame> kick(int seat) {
     return request('kick', <String, Object?>{'seat': seat});
+  }
+
+  /// docs/PROTOCOL.md section 33 item 3: asks for a seat among strangers.
+  /// The answer is `room` (seated at once, after `seat_assigned`) or
+  /// `queued`; [ticket] re-attaches a ticket held from a dropped socket.
+  Future<Frame> findGame({
+    required String name,
+    required String install,
+    String? ticket,
+  }) {
+    return request('find_game', <String, Object?>{
+      'name': name,
+      'install': install,
+      'ticket': ?ticket,
+    });
+  }
+
+  /// docs/PROTOCOL.md section 33 item 4: leaves the waiting line. Answered by
+  /// `find_cancelled`, also when no ticket was held.
+  Future<Frame> cancelFind() {
+    return request('cancel_find', const <String, Object?>{});
+  }
+
+  /// docs/PROTOCOL.md section 34 item 2: a new room against computer seats.
+  /// Answered by `room` (after `seat_assigned`); the seeds, `game_started`
+  /// and the first `turn` follow as pushes.
+  Future<RoomSnapshot> playComputer({
+    required String name,
+    required int players,
+    String? install,
+    String? clientSeed,
+  }) async {
+    final Frame frame = await request('play_computer', <String, Object?>{
+      'name': name,
+      'players': players,
+      'install': ?install,
+      'client_seed': ?clientSeed,
+    });
+    return _asRoomSnapshot(frame);
+  }
+
+  /// docs/PROTOCOL.md section 34 item 3: host only, fills every free seat of
+  /// an open lobby with a computer seat and starts the game. The answer is
+  /// the first frame of the fill, the host's copy carrying `re`.
+  Future<Frame> fillComputer() {
+    return request('fill_computer', const <String, Object?>{});
   }
 
   Future<Frame> leaveRoom() {

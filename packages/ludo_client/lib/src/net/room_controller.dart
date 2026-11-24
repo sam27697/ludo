@@ -69,6 +69,15 @@ class KnockState {
   final int? expiresAtMs;
 }
 
+/// docs/PROTOCOL.md section 33 item 3: this phone's place in the waiting
+/// line, from the latest `queued`. [position] is 1 at the head of the line.
+class QueueState {
+  const QueueState({required this.ticket, required this.position});
+
+  final String ticket;
+  final int position;
+}
+
 /// docs/PROTOCOL.md section 5's "Carrying seq" list: every frame type this
 /// controller reduces. `error`, `pong` and `seat_assigned` are not on it.
 const Set<String> _stateChangingTypes = <String>{
@@ -244,6 +253,20 @@ class RoomController extends ChangeNotifier {
   /// `knock_failed` or a `kicked` frame carried, or null.
   CodeBan? _ban;
 
+  /// Section 33: the waiting line. [_queue] is the latest `queued`;
+  /// [_queueWanted] is true from [findGame] until a seat arrives, the line is
+  /// left, or the line fails for good. [_queueGeneration] moves on every time
+  /// the line ends, so an attempt that was opening a socket for an earlier
+  /// line drops it instead of attaching it.
+  QueueState? _queue;
+  bool _queueWanted = false;
+  String? _queueName;
+  int _queueGeneration = 0;
+  Timer? _queueRetryTimer;
+  int _queueRetryIndex = 0;
+  bool _cancelInFlight = false;
+  bool _computerInFlight = false;
+
   /// The last link join, kept so the lobby's own retry (which can only call
   /// [joinRoom]) repeats a link join as a link join. See [joinRoom].
   String? _retryLink;
@@ -362,6 +385,19 @@ class RoomController extends ChangeNotifier {
   String? get errorCode => _errorCode;
   String? get errorMessage => _errorMessage;
 
+  /// Section 33 item 3: this phone's place in the waiting line, or null when
+  /// it is not in the line. Every `queued` replaces it and notifies.
+  QueueState? get queueState => _queue;
+
+  /// True while this phone wants a seat from the line and has none yet:
+  /// from [findGame] until a seat arrives, [cancelFind] is answered,
+  /// [playComputer] is sent, or the line fails for good.
+  bool get inQueue => _queueWanted;
+
+  /// True while the line's socket is down and the next attempt to re-attach
+  /// the ticket waits on [autoReconnectDelays].
+  bool get queueReconnecting => _queueRetryTimer != null;
+
   /// True exactly while a sequence's timer is scheduled and has neither
   /// fired nor been cancelled (C9). False while an attempt is in flight, and
   /// false when there is no sequence at all.
@@ -398,10 +434,14 @@ class RoomController extends ChangeNotifier {
   /// Both rules toggles on by default, matching [RoomToggles]'s own
   /// defaults. Forwarded to [RoomConnection.createRoom] as `toggles`; never
   /// as `rules`, and never carrying a turn timer.
+  ///
+  /// [open] is section 33 item 1's flag, always sent: true lets the server
+  /// seat strangers from the waiting line.
   Future<void> createRoom({
     required String name,
     required int players,
     RoomToggles toggles = const RoomToggles(),
+    bool open = false,
   }) {
     return _openFresh(
       gate: _phase == RoomPhase.idle || _phase == RoomPhase.failed,
@@ -414,6 +454,7 @@ class RoomController extends ChangeNotifier {
           players: players,
           toggles: toggles,
           install: installIdIfReady(),
+          open: open,
         );
       },
     );
@@ -488,6 +529,283 @@ class RoomController extends ChangeNotifier {
       knockId: id,
       expiresAtMs: _clock().millisecondsSinceEpoch + expiresMs,
     );
+  }
+
+  /// Section 33 item 3: asks the server for a seat among strangers. The
+  /// answer is a seat at once (then [room] is set and [phase] is
+  /// [RoomPhase.connected], as after a join) or a place in the line
+  /// ([queueState]); while in the line [phase] stays [RoomPhase.connecting].
+  /// A seat from the line arrives later as `seat_assigned` and `room`.
+  ///
+  /// A socket that drops while in the line is reopened on
+  /// [autoReconnectDelays] and `find_game` is sent again with the held
+  /// `ticket`, so the server puts this phone back in its old place. When the
+  /// schedule is used up (or empty), the line fails as a transport failure
+  /// would. A refusal (`RATE_LIMITED`, `ALREADY_SEATED`, `BAD_FIELD`) ends the
+  /// line and lands in [RoomPhase.failed] with [errorCode] set.
+  ///
+  /// Accepted only from a controller that holds no room, from
+  /// [RoomPhase.idle] or [RoomPhase.failed], and not already in the line.
+  Future<void> findGame({required String name}) async {
+    if (_disposed ||
+        _room != null ||
+        _queueWanted ||
+        _computerInFlight ||
+        !(_phase == RoomPhase.idle || _phase == RoomPhase.failed)) {
+      return;
+    }
+    _queueWanted = true;
+    _queueName = name;
+    _queue = null;
+    _queueRetryIndex = 0;
+    _knock = const KnockState();
+    _wasKicked = false;
+    _ban = null;
+    _errorCode = null;
+    _errorMessage = null;
+    _phase = RoomPhase.connecting;
+    notifyListeners();
+    await _sendFindGame();
+  }
+
+  /// One attempt at the line: a fresh socket, then `find_game` with the held
+  /// ticket when there is one.
+  Future<void> _sendFindGame() async {
+    final int generation = _queueGeneration;
+    final RoomConnection connection = RoomConnection(
+      url: serverUrl,
+      connect: _connect,
+    );
+    try {
+      await connection.open();
+    } catch (_) {
+      // The connector rejected: the server is unreachable right now. The
+      // line's own backoff decides what follows.
+      if (!_disposed && generation == _queueGeneration) {
+        _onQueueSocketLost('transport');
+      }
+      return;
+    }
+    if (_disposed || generation != _queueGeneration) {
+      unawaited(connection.close());
+      return;
+    }
+    _attach(connection);
+    final String install = installIdIfReady() ?? await installId();
+    if (_disposed ||
+        generation != _queueGeneration ||
+        !identical(_connection, connection)) {
+      return;
+    }
+    try {
+      final Frame reply = await connection.findGame(
+        name: _queueName ?? '',
+        install: install,
+        ticket: _queue?.ticket,
+      );
+      if (_disposed || generation != _queueGeneration) {
+        return;
+      }
+      switch (reply.type) {
+        case 'room':
+          _seatFromLine(RoomSnapshot.fromJson(reply.data));
+        case 'queued':
+          // [_handleFrame] records every `queued` and notifies; an answer at
+          // all means the line is attached again, so the backoff restarts.
+          _queueRetryIndex = 0;
+        default:
+          throw FrameFormatException(
+            'expected room or queued, got ${reply.type}',
+          );
+      }
+    } on ProtocolErrorException catch (error) {
+      if (_disposed || generation != _queueGeneration) {
+        return;
+      }
+      _endQueue();
+      _failFromRequest(error);
+    } on RequestTimeoutException {
+      _onQueueRequestLost(generation, connection, 'timeout');
+    } on ConnectionClosedException {
+      _onQueueRequestLost(generation, connection, 'closed');
+    } on Object catch (error) {
+      // A reply that does not decode: not a verdict the line can retry.
+      if (_disposed || generation != _queueGeneration) {
+        return;
+      }
+      _endQueue();
+      _failFromRequest(error);
+    }
+  }
+
+  void _onQueueRequestLost(
+    int generation,
+    RoomConnection connection,
+    String code,
+  ) {
+    if (_disposed ||
+        generation != _queueGeneration ||
+        !identical(_connection, connection)) {
+      return;
+    }
+    _dropConnection();
+    _onQueueSocketLost(code);
+  }
+
+  /// The line's socket went (or would not open). The ticket stays held on
+  /// the server for 30 seconds, so the next attempt waits on the usual
+  /// schedule and re-sends it. With the schedule used up the line fails with
+  /// [code], so the window that shows it closes with a notice.
+  void _onQueueSocketLost(String code) {
+    if (_disposed || !_queueWanted || _cancelInFlight) {
+      return;
+    }
+    if (_queueRetryIndex >= autoReconnectDelays.length) {
+      _endQueue();
+      _fail(code, '');
+      return;
+    }
+    final Duration delay = autoReconnectDelays[_queueRetryIndex];
+    _queueRetryIndex++;
+    _phase = RoomPhase.connecting;
+    _queueRetryTimer?.cancel();
+    _queueRetryTimer = Timer(delay, () {
+      _queueRetryTimer = null;
+      if (_disposed || !_queueWanted) {
+        return;
+      }
+      unawaited(_sendFindGame());
+    });
+    notifyListeners();
+  }
+
+  /// Ends the line on this side: no ticket, no retry, and any attempt still
+  /// opening a socket for it drops that socket.
+  void _endQueue() {
+    _queueWanted = false;
+    _queue = null;
+    _queueGeneration++;
+    _queueRetryTimer?.cancel();
+    _queueRetryTimer = null;
+  }
+
+  /// A seat from the line, at once or later: the same landing as a join.
+  void _seatFromLine(RoomSnapshot snapshot) {
+    _endQueue();
+    _room = snapshot;
+    _clearLastFinished();
+    _lastRetirement = null;
+    _phase = RoomPhase.connected;
+    _blocked = false;
+    _seatTakenOver = false;
+    _errorCode = null;
+    _errorMessage = null;
+    _syncSeatCache();
+    notifyListeners();
+  }
+
+  /// Section 33 item 4: leaves the line. Completes once the server answered
+  /// `find_cancelled`; [phase] is then [RoomPhase.idle] again. A seat that
+  /// the server gave before it read the cancel stands: [room] is set and the
+  /// line is over all the same. With the line's socket down there is nothing
+  /// to send: the server never seats a detached ticket and drops it after
+  /// 30 seconds, so the line simply ends here.
+  Future<void> cancelFind() async {
+    if (_disposed || !_queueWanted || _cancelInFlight) {
+      return;
+    }
+    _queueRetryTimer?.cancel();
+    _queueRetryTimer = null;
+    final RoomConnection? connection = _connection;
+    if (connection != null && connection.isOpen) {
+      _cancelInFlight = true;
+      try {
+        await connection.cancelFind();
+      } on ProtocolErrorException {
+        // The socket is closed just below either way, which detaches the
+        // ticket; a detached ticket is never seated and expires on its own.
+      } on RequestTimeoutException {
+        // As above.
+      } on ConnectionClosedException {
+        // As above: the ticket is already detached.
+      } finally {
+        _cancelInFlight = false;
+      }
+      if (_disposed || _room != null) {
+        return;
+      }
+    }
+    _endQueue();
+    _dropConnection();
+    _phase = RoomPhase.idle;
+    _errorCode = null;
+    _errorMessage = null;
+    notifyListeners();
+  }
+
+  /// Section 34 item 2: a new room against computer seats, [players] 2 or 4,
+  /// with this phone as host. Sent on the line's socket when it is open (the
+  /// server drops the ticket itself, so no `cancel_find` goes first),
+  /// otherwise on a fresh one. The `room` answer lands as a create does; the
+  /// seeds, `game_started` and the first `turn` follow and are reduced as
+  /// any push. The `client_seed` is a fresh one of the `set_seed` shape.
+  Future<void> playComputer({
+    required String name,
+    required int players,
+  }) async {
+    if (_disposed || _room != null || _computerInFlight || _cancelInFlight) {
+      return;
+    }
+    if (!(_phase == RoomPhase.idle ||
+        _phase == RoomPhase.failed ||
+        (_phase == RoomPhase.connecting && _queueWanted))) {
+      return;
+    }
+    _computerInFlight = true;
+    _endQueue();
+    _errorCode = null;
+    _errorMessage = null;
+    _phase = RoomPhase.connecting;
+    notifyListeners();
+    try {
+      RoomConnection? connection = _connection;
+      if (connection == null || !connection.isOpen) {
+        final RoomConnection fresh = RoomConnection(
+          url: serverUrl,
+          connect: _connect,
+        );
+        if (!await _openAndAttach(fresh)) {
+          return;
+        }
+        connection = fresh;
+      }
+      try {
+        final String install = installIdIfReady() ?? await installId();
+        final RoomSnapshot snapshot = await connection.playComputer(
+          name: name,
+          players: players,
+          install: install,
+          clientSeed: newMessageId(),
+        );
+        if (_disposed) {
+          return;
+        }
+        _room = snapshot;
+        _clearLastFinished();
+        _lastRetirement = null;
+        _phase = RoomPhase.connected;
+        _blocked = false;
+        _seatTakenOver = false;
+        _errorCode = null;
+        _errorMessage = null;
+        _syncSeatCache();
+        notifyListeners();
+      } catch (error) {
+        _failFromRequest(error);
+      }
+    } finally {
+      _computerInFlight = false;
+    }
   }
 
   /// R: resumes a seat this controller never held, using a room code and
@@ -984,6 +1302,35 @@ class RoomController extends ChangeNotifier {
     }
   }
 
+  /// Section 34 item 3: host only, in an open LOBBY with a free seat once
+  /// its wait has run out ([RoomSnapshot.fillMs] 0). The fill arrives as
+  /// pushes (`knock_closed`, `player_joined`, `seat_seed`, `game_started`)
+  /// reduced like any other; a `room` answer is applied as [setGuestApproval]
+  /// applies its own. A refusal goes the way of every host request. A silent
+  /// no-op when not connected.
+  Future<void> fillComputer() async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return;
+    }
+    try {
+      final Frame frame = await connection.fillComputer();
+      if (_disposed) {
+        return;
+      }
+      final RoomSnapshot? room = _room;
+      if (room != null && frame.type == 'room') {
+        final int? seqValue = frame.seq;
+        if (seqValue != null && seqValue <= room.seq) {
+          return;
+        }
+        _applyRoomFrame(frame, room);
+      }
+    } catch (error) {
+      _failFromHostRequest(error);
+    }
+  }
+
   /// A host request refused for a race or a rights reason does not end the
   /// connection: the code lands in [errorCode] and listeners are told. Any
   /// other failure is an in-room failure as for every other request.
@@ -1218,6 +1565,7 @@ class RoomController extends ChangeNotifier {
     }
     _leftCalled = true;
     _sendRematchOnResume = false;
+    _endQueue();
     _cancelAutoReconnect();
     _clearLastFinished();
     _knock = const KnockState();
@@ -1255,6 +1603,8 @@ class RoomController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _sendRematchOnResume = false;
+    _queueRetryTimer?.cancel();
+    _queueRetryTimer = null;
     final Completer<void>? resyncWait = _resyncSettled;
     if (resyncWait != null && !resyncWait.isCompleted) {
       resyncWait.complete();
@@ -1287,7 +1637,13 @@ class RoomController extends ChangeNotifier {
       unawaited(connection.close());
       return false;
     }
+    _attach(connection);
+    return true;
+  }
 
+  /// Makes an open [connection] the current one: forwards its frames and
+  /// watches for it ending on its own.
+  void _attach(RoomConnection connection) {
     unawaited(_frameSub?.cancel());
     final RoomConnection? previous = _connection;
     _connection = connection;
@@ -1312,6 +1668,15 @@ class RoomController extends ChangeNotifier {
           // the phase; this is that close arriving, nothing left to change.
           return;
         }
+        if (_queueWanted && _room == null) {
+          // Section 33 item 4: the ticket waits 30 seconds for this phone
+          // to come back with it; the line's own backoff does that.
+          _connection = null;
+          unawaited(_frameSub?.cancel());
+          _frameSub = null;
+          _onQueueSocketLost('closed');
+          return;
+        }
         if (_knock.phase == KnockPhase.pending) {
           // The socket went while a knock was open: the server closes that
           // knock as withdrawn, and this phone holds no seat to resume.
@@ -1330,7 +1695,6 @@ class RoomController extends ChangeNotifier {
       }),
     );
     _syncSeatCache();
-    return true;
   }
 
   /// Rule 5: seat and seat token are read through from the live connection
@@ -1481,9 +1845,43 @@ class RoomController extends ChangeNotifier {
       _onKnockAccepted(frame);
       return;
     }
+    if (frame.type == 'queued') {
+      _onQueued(frame);
+      return;
+    }
+    if (frame.type == 'room' &&
+        frame.re == null &&
+        _room == null &&
+        _queueWanted) {
+      // Section 33 item 4: a seat from the line, `seat_assigned` (already
+      // recorded by the connection) then this `room`.
+      final RoomSnapshot decoded;
+      try {
+        decoded = RoomSnapshot.fromJson(frame.data);
+      } on SnapshotFormatException {
+        return;
+      }
+      _seatFromLine(decoded);
+      return;
+    }
     if (_stateChangingTypes.contains(frame.type)) {
       _reduce(frame);
     }
+  }
+
+  /// Section 33 items 3 and 4: the answer to `find_game` and every later
+  /// change of place. Ignored once the line is over.
+  void _onQueued(Frame frame) {
+    if (!_queueWanted || _room != null) {
+      return;
+    }
+    final String? ticket = _asString(frame.data, 'ticket');
+    final int? position = _asInt(frame.data, 'position');
+    if (ticket == null || ticket.isEmpty || position == null || position < 1) {
+      return;
+    }
+    _queue = QueueState(ticket: ticket, position: position);
+    notifyListeners();
   }
 
   /// Section 31 item 4 and ruling (d): the knocker's seat arrives as
@@ -1727,6 +2125,11 @@ class RoomController extends ChangeNotifier {
     if (seatValue == null || nameValue == null || seqValue == null) {
       return;
     }
+    // Section 34 item 1: a computer seat's join names its character.
+    final int? botValue = _asInt(frame.data, 'bot');
+    final int? bot = botValue != null && botValue >= 1 && botValue <= 6
+        ? botValue
+        : null;
 
     if (seqValue != room.seq + 1) {
       _beginResync(room);
@@ -1746,6 +2149,8 @@ class RoomController extends ChangeNotifier {
           tokens: const <int>[-1, -1, -1, -1],
           clientSeed: null,
           seedOrigin: null,
+          via: bot != null ? SeatVia.bot : SeatVia.unknown,
+          bot: bot,
         ),
       );
       seats.sort((SeatState a, SeatState b) => a.seat.compareTo(b.seat));
