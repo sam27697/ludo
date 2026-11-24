@@ -389,6 +389,16 @@ class Room {
   /// carrying the same `k` -- a rejected roll leaves this untouched.
   int rollCount = 0;
 
+  /// `docs/PROTOCOL.md` section 35 item 3: the last `pre` handed to a socket,
+  /// as the game ([gameId]), the seat and the roll number `k` it was for.
+  /// Written only by `RoomRegistry.preRollFor`. A seat holds a `pre` while
+  /// these name the current game, that seat, and `rollCount + 1`, and the
+  /// game still awaits that seat's roll. Never on the wire, in a snapshot or
+  /// in the verify record.
+  String? preGameId;
+  int preSeat = -1;
+  int preK = 0;
+
   /// The seat that rolled each roll of this game, ascending `k`: index `0`
   /// is roll `k = 1`, and so on, so `rollSeats.length == rollCount` always
   /// holds. `docs/VERIFY.md` section 1.2: `RoomRegistry.roll()` appends to

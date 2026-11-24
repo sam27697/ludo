@@ -1935,7 +1935,11 @@ class Connection {
     seatToken = null;
 
     final List<OutFrame> frames = buildRetireFrames(retire);
-    _send(type: frames.first.type, data: frames.first.data, re: envelope.id);
+    // Section 35 item 3: a roll the leaver was shown goes out ahead of
+    // `seat_retired`; the leaver's own answer is still that one frame.
+    final OutFrame retired =
+        frames.firstWhere((OutFrame frame) => frame.type == 'seat_retired');
+    _send(type: retired.type, data: retired.data, re: envelope.id);
     for (final OutFrame frame in frames) {
       hub.broadcast(code: code, type: frame.type, data: frame.data);
     }
@@ -1995,9 +1999,13 @@ class Connection {
     if (kickedConn != null) {
       kickedConn.roomCode = null;
       kickedConn.seatToken = null;
+      // Section 35 item 3: a roll the kicked seat was shown is published
+      // ahead of `seat_retired`; the kicked socket is sent `seat_retired`.
+      final OutFrame retired =
+          frames.firstWhere((OutFrame frame) => frame.type == 'seat_retired');
       kickedConn._send(
-        type: frames.first.type,
-        data: frames.first.data,
+        type: retired.type,
+        data: retired.data,
         re: null,
       );
       kickedConn._send(
@@ -2776,10 +2784,68 @@ class Connection {
     if (_closed) {
       return;
     }
+    final Map<String, Object?> out = _withPre(type, data) ?? data;
     final String id = generateMessageId(random);
     channel.sink.add(
-      encodeEnvelope(type: type, id: id, data: data, re: re),
+      encodeEnvelope(type: type, id: id, data: out, re: re),
     );
+  }
+
+  /// `docs/PROTOCOL.md` section 35 item 1: this socket's own copy of a `turn`
+  /// frame, or of a `room` snapshot whose `turn` object, says the game awaits
+  /// this socket's seat's roll gets `pre`, the payload of the `rolled` that
+  /// roll would produce now. The registry decides from the live room whether
+  /// it is owed (a human seat on turn, `await_roll`); the frame's own `seat`
+  /// and `phase`, and a snapshot's `code` and `k`, must say the same, so a
+  /// copy describing an earlier moment gets none. [data] is never changed:
+  /// it is the map every other socket and `room.gameLog` hold. Null when
+  /// this copy carries no `pre`.
+  Map<String, Object?>? _withPre(String type, Map<String, Object?> data) {
+    final String? code = roomCode;
+    final String? token = seatToken;
+    if (code == null || token == null) {
+      return null;
+    }
+    final Map<String, Object?>? turn;
+    if (type == 'turn') {
+      turn = data;
+    } else if (type == 'room') {
+      final Object? snapshotTurn = data['turn'];
+      turn = snapshotTurn is Map<String, Object?> ? snapshotTurn : null;
+    } else {
+      return null;
+    }
+    if (turn == null || turn['phase'] != 'await_roll') {
+      return null;
+    }
+    final Room? room = registry.lookup(code);
+    final engine.GameState? game = room?.game;
+    if (room == null || game == null || turn['seat'] != game.currentSeat) {
+      return null;
+    }
+    if (type == 'room' &&
+        (data['code'] != code || turn['k'] != room.rollCount)) {
+      return null;
+    }
+    final Seat? own = _ownSeat(room, token);
+    if (own == null || own.seat != turn['seat']) {
+      return null;
+    }
+    final Map<String, Object?>? pre =
+        registry.preRollFor(code: code, seatToken: token);
+    if (pre == null) {
+      return null;
+    }
+    return withRollerPre(type: type, data: data, pre: pre);
+  }
+
+  Seat? _ownSeat(Room room, String token) {
+    for (final Seat seat in room.seats) {
+      if (seat.seatToken == token && !seat.tokenDead) {
+        return seat;
+      }
+    }
+    return null;
   }
 
   /// One structured line per event to stdout. Never a seat token, never a

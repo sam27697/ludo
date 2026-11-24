@@ -329,3 +329,11 @@ String generateMessageId(Random random) {
   final int padStart = encoded.indexOf('=');
   return padStart == -1 ? encoded : encoded.substring(0, padStart);
 }
+
+/// How an error caught on the roll and sweep paths is written to a log line.
+/// A `FormatException`'s message carries its whole input, which on those
+/// paths can be a dice-chain link (`hexDecode` runs on a reveal inside
+/// `drawDie`), so for one of those only its `runtimeType` is printed. Every
+/// other error prints as its own `toString`.
+String logSafeError(Object error) =>
+    error is FormatException ? '${error.runtimeType}' : '$error';
