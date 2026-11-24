@@ -60,7 +60,7 @@ const String _rerun = 'cd packages/ludo_server && flock /tmp/ludo-suite.lock '
 /// to the socket of the seat on turn may carry `pre`. Off on the base: any
 /// `pre` anywhere is a leak. Turning this on is the one change section 35
 /// makes to this file.
-const bool rollerOwnPreAllowed = false;
+const bool rollerOwnPreAllowed = true;
 
 /// Whether [socketSeat]'s copy of a frame may carry a `pre` object, given the
 /// turn object it sits in. Section 35 item 1 and item 4.
@@ -905,6 +905,170 @@ Future<void> _drive(_Watch w) async {
       '${w.framesByType}, ${w.timerRolls} timer rolls, errors ${w.errors}';
 }
 
+/// Section 35 item 4 with [rollerOwnPreAllowed] on: the roller's own `pre`
+/// is the one unpublished face allowed on any device. This watch adds, on top
+/// of every check of [_Watch], that each `pre` is on the socket of the seat it
+/// names, is the next roll of the chain (k = published + 1, and its value is
+/// the face s[k] draws), that no frame to any other socket holds a `pre` (or
+/// that roll's `k`) before its `rolled`, and that every shown roll is
+/// published with exactly the shown fields.
+class _PreWatch extends _Watch {
+  _PreWatch(super.ruleset);
+
+  /// k -> the shown `pre`, canonical, and the seat it was shown to.
+  final Map<int, String> shown = <int, String>{};
+  final Map<int, int> shownSeat = <int, int>{};
+  final Set<int> matched = <int>{};
+  int presSeen = 0;
+
+  static List<String> _preKeys(Object? node, String at) {
+    final List<String> out = <String>[];
+    if (node is Map) {
+      for (final MapEntry<Object?, Object?> e in node.entries) {
+        if (e.key == 'pre') {
+          out.add('$at.pre');
+        }
+        out.addAll(_preKeys(e.value, '$at.${e.key}'));
+      }
+    } else if (node is List) {
+      for (int i = 0; i < node.length; i++) {
+        out.addAll(_preKeys(node[i], '$at[$i]'));
+      }
+    }
+    return out;
+  }
+
+  @override
+  Future<(String, Frame)> pump() async {
+    final (String label, Frame frame) = await super.pump();
+    final _Socket socket = sockets.firstWhere((_Socket s) => s.label == label);
+    final String t = frame['t']! as String;
+    final Frame d = (frame['d'] as Frame?) ?? <String, Object?>{};
+    Frame? pre;
+    if (t == 'turn' && d['pre'] is Frame) {
+      pre = d['pre']! as Frame;
+    } else if (t == 'room' &&
+        d['turn'] is Frame &&
+        (d['turn']! as Frame)['pre'] is Frame) {
+      pre = (d['turn']! as Frame)['pre']! as Frame;
+    }
+    // Any socket other than the one of the seat a roll was shown to: no
+    // `pre` and no `k` of that roll before its `rolled`.
+    for (final MapEntry<int, int> e in shownSeat.entries) {
+      if (e.key <= published || socket.seat == e.value) {
+        continue;
+      }
+      final List<String> at = _preKeys(d, 'd');
+      if (at.isNotEmpty) {
+        fail('roll k=${e.key} was shown to seat ${e.value} and is not yet '
+            'published; frame "$t" to ${socket.label} (seat ${socket.seat}) '
+            'carries "pre" at $at (expected the face on no other socket '
+            'before its rolled, section 35 item 4)');
+      }
+      if (d['k'] == e.key && t != 'rolled') {
+        fail('roll k=${e.key} was shown to seat ${e.value}; frame "$t" to '
+            '${socket.label} (seat ${socket.seat}) carries k=${e.key} before '
+            'its rolled');
+      }
+    }
+    if (pre != null) {
+      presSeen++;
+      final Object? k = pre['k'];
+      if (k is! int) {
+        fail('pre to ${socket.label} has no integer k: ${jsonEncode(pre)}');
+      }
+      if (pre['seat'] != socket.seat) {
+        fail('pre for seat ${pre['seat']} arrived on ${socket.label}, the '
+            'socket of seat ${socket.seat} (expected only the seat on turn\'s '
+            'own socket, section 35 item 1)');
+      }
+      if (k != published + 1) {
+        fail('pre to ${socket.label} has k=$k while the last published roll '
+            'is k=$published (expected k=${published + 1}: never ahead, '
+            'section 35 item 4)');
+      }
+      final int face = drawDie(_links[k], gameId!, clientSeeds!, k, 0);
+      if (pre['value'] != face) {
+        fail('pre to ${socket.label} has value=${pre['value']} for k=$k; the '
+            'chain the test rooted gives $face (expected the face of the '
+            'roll that will be published, section 35 item 1)');
+      }
+      final String c = _canonJson(pre);
+      if (shown[k] != null && shown[k] != c) {
+        fail('two different pre for k=$k: ${shown[k]} then $c to '
+            '${socket.label} (expected k not to advance and the face not to '
+            'change, section 35 item 1)');
+      }
+      shown[k] = c;
+      shownSeat[k] = socket.seat!;
+    }
+    if (t == 'rolled') {
+      final int k = d['k']! as int;
+      final String? p = shown[k];
+      if (p != null) {
+        final Frame rest = Map<String, Object?>.of(d)
+          ..remove('seq')
+          ..remove('reveal')
+          ..remove('deadline_ms')
+          ..remove('by');
+        if (_canonJson(rest) != p) {
+          fail('rolled k=$k to ${socket.label} is ${_canonJson(rest)} less '
+              'seq, reveal, deadline_ms and by; the pre shown was $p '
+              '(expected equal field for field, section 35 item 2)');
+        }
+        matched.add(k);
+      }
+    }
+    return (label, frame);
+  }
+}
+
+Future<void> _playAndWatchPre(String ruleset) async {
+  final _PreWatch w = _PreWatch(ruleset);
+  await IOOverrides.runZoned(
+    () => runZoned(
+      () async {
+        await w.start();
+        try {
+          await _drive(w);
+        } finally {
+          await w.stop();
+        }
+      },
+      zoneSpecification: ZoneSpecification(
+        print: (Zone self, ZoneDelegate parent, Zone zone, String line) {
+          w.logs.add('print: $line');
+        },
+      ),
+    ),
+    stdout: () => _CapturedStream('stdout', w.logs.add),
+    stderr: () => _CapturedStream('stderr', w.logs.add),
+  );
+  if (w.presSeen == 0) {
+    w.fail('no pre arrived on any socket in a whole game of ${w.published} '
+        'rolls (expected one on the roller\'s own copy of every await_roll '
+        'turn, section 35 item 1); without it this row proves nothing');
+  }
+  final List<int> unpublished = <int>[
+    for (final int k in w.shown.keys)
+      if (k > w.published) k,
+  ];
+  if (unpublished.isNotEmpty) {
+    w.fail('rolls $unpublished were shown in a pre and never published by '
+        'game_over (expected every shown roll published, section 35 item 3)');
+  }
+  final List<int> unmatched = <int>[
+    for (final int k in w.shown.keys)
+      if (!w.matched.contains(k)) k,
+  ];
+  if (unmatched.isNotEmpty) {
+    w.fail('shown rolls $unmatched were never compared with their rolled');
+  }
+  // ignore: avoid_print
+  print('${w.summary}; pre seen ${w.presSeen}, rolls shown '
+      '${w.shown.length}, matched ${w.matched.length}');
+}
+
 void main() {
   test('the leak scanner finds a link in each encoding it claims to cover', () {
     final int j = 7;
@@ -933,6 +1097,15 @@ void main() {
       'ruleset $ruleset: no chain link, no face and not the seed reaches a '
       'frame, a log line, the verify dir, /health or /v/<game> before its roll',
       () => _playAndWatch(ruleset),
+      timeout: const Timeout(Duration(minutes: 6)),
+    );
+  }
+
+  for (final String ruleset in <String>['2026-10', '2026-11', '2026-12']) {
+    test(
+      'ruleset $ruleset, roller exception on: the face shown in pre is in no '
+      'frame to any other socket before its rolled',
+      () => _playAndWatchPre(ruleset),
       timeout: const Timeout(Duration(minutes: 6)),
     );
   }

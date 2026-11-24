@@ -57,6 +57,7 @@ import 'support/dice_oracle.dart';
 import 'support/engine_search.dart';
 import 'support/scripted_bytes.dart';
 import 'support/wire_harness.dart';
+import 'support/pre_copies.dart';
 
 /// The fixed 2-player seat mapping (host=0, guest=2,
 /// `lib/src/registry.dart:967-978`) this file's steering assumes, checked
@@ -226,9 +227,17 @@ void main() {
           'same frame type (docs/PROTOCOL.md section 12.3); one socket saw '
           '"${mine['t']}", the other saw "${theirs['t']}" instead',
     );
+    expectPreOnRollerOnly(
+        mine['t']! as String,
+        <(int?, Map<String, Object?>)>[
+          (null, mine['d']! as Map<String, Object?>),
+          (null, theirs['d']! as Map<String, Object?>),
+        ],
+        because,
+        seatKnown: false);
     expect(
-      theirs['d'],
-      mine['d'],
+      dWithoutPre(theirs),
+      dWithoutPre(mine),
       reason: '$because: a broadcast push must reach every socket with the '
           'identical payload; one socket saw ${mine['d']}, the other saw '
           '${theirs['d']}',

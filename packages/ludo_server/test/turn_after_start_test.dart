@@ -18,6 +18,7 @@
 import 'package:test/test.dart';
 
 import 'support/wire_harness.dart';
+import 'support/pre_copies.dart';
 
 void main() {
   late ServerHarness harness;
@@ -227,9 +228,16 @@ void main() {
           hostTurnFrame['d']! as Map<String, Object?>;
       final Map<String, Object?> guestTurnData =
           guestTurnFrame['d']! as Map<String, Object?>;
+      expectPreOnRollerOnly(
+          'turn',
+          <(int?, Map<String, Object?>)>[
+            (lobby.host.seat, hostTurnData),
+            (lobby.guest.seat, guestTurnData),
+          ],
+          'room ${lobby.code}: the opening turn');
       expect(
-        guestTurnData,
-        hostTurnData,
+        withoutPre(guestTurnData),
+        withoutPre(hostTurnData),
         reason: 'room ${lobby.code}: a broadcast push must reach every '
             'socket with the identical payload (section 12.3); host saw '
             '$hostTurnData, guest saw $guestTurnData',
