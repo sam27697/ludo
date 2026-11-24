@@ -302,7 +302,8 @@ Future<void> _joinThenReturnHome(
   expect(
     find.byKey(joinGameButtonKey),
     findsOneWidget,
-    reason: 'backing out of the lobby must return to Home with join-game-button',
+    reason:
+        'backing out of the lobby must return to Home with join-game-button',
   );
 }
 

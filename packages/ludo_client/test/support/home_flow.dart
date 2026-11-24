@@ -127,9 +127,8 @@ Future<void> enterOldDefaultName(WidgetTester t) async {
     findsOneWidget,
     reason: 'home_flow.enterOldDefaultName: expected one home-name-field',
   );
-  final String languageCode = Localizations.localeOf(
-    t.element(field),
-  ).languageCode;
+  final String languageCode = Localizations.localeOf(t.element(field))
+      .languageCode;
   await enterName(t, oldDefaultName(languageCode));
 }
 
@@ -146,7 +145,9 @@ Future<void> tapCreateRoom(WidgetTester t, {bool open = false}) async {
   );
   await t.tap(button);
   await t.pump();
-  final Finder tile = find.byKey(open ? createOpenTileKey : createFriendsTileKey);
+  final Finder tile = find.byKey(
+    open ? createOpenTileKey : createFriendsTileKey,
+  );
   await pumpUntilAtRest(
     t,
     tile,

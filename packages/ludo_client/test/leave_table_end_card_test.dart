@@ -995,7 +995,9 @@ void main() {
               '"$_enHomeRemovedNotice"; blob was "$blob"',
         );
 
-        await tester.tap(find.byKey(const Key('create-room-button')));
+        // Order 701: a name, then the sheet's friends-only tile creates.
+        await flow.enterOldDefaultName(tester);
+        await flow.tapCreateRoom(tester);
         await tester.pump();
         expect(
           find.byKey(const Key('home-removed-notice')),

@@ -323,6 +323,16 @@ class _Join {
       find.byKey(const Key('knock-waiting')).evaluate().isEmpty &&
       find.byType(LobbyScreen, skipOffstage: false).evaluate().isEmpty;
 
+  /// Order 701: the notice shows where the code was typed, in the join
+  /// sheet, not on the home behind it.
+  bool get noticeInSheet => find
+      .descendant(
+        of: find.byKey(joinSheetKey),
+        matching: find.byKey(_noticeKey),
+      )
+      .evaluate()
+      .isNotEmpty;
+
   bool? get joinEnabled {
     final Finder join = find.byKey(_joinKey);
     if (join.evaluate().isEmpty) {
@@ -376,6 +386,38 @@ Future<_Join> _banned(
 }
 
 void main() {
+  group('CODE_BANNED shows where the code was typed', () {
+    for (final Locale locale in <Locale>[
+      const Locale('en'),
+      const Locale('ar'),
+    ]) {
+      testWidgets('${locale.languageCode}: the ban notice shows IN the join '
+          'sheet, not on the home behind it', (tester) async {
+        final _Join j = await _banned(
+          tester,
+          'sheet.${locale.languageCode}',
+          _ban('device', level: 1, nextMs: 7 * _day),
+          locale: locale,
+        );
+        expect(
+          find.byKey(joinSheetKey),
+          findsOneWidget,
+          reason: 'expected the join sheet to still be up. ${j.why}',
+        );
+        expect(
+          j.noticeInSheet,
+          isTrue,
+          reason:
+              'expected the ban notice to show IN the join sheet (join '
+              'sheet up: ${find.byKey(joinSheetKey).evaluate().isNotEmpty}, '
+              'notice on screen: ${j.noticeShown}), not on the home behind '
+              'it. ${j.why}',
+        );
+        await j.finish();
+      });
+    }
+  });
+
   group('CODE_BANNED, device scope', () {
     testWidgets('en: until date and time, the next step in days, a link line', (
       tester,

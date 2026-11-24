@@ -306,13 +306,6 @@ String _fieldText(WidgetTester tester, Key key, {bool skipOffstage = true}) {
   return field.controller!.text;
 }
 
-String? _codeFieldError(WidgetTester tester, {bool skipOffstage = true}) {
-  return tester
-      .widget<TextField>(find.byKey(_codeKey, skipOffstage: skipOffstage))
-      .decoration
-      ?.errorText;
-}
-
 LobbyScreen _lobby(WidgetTester tester) {
   final Finder finder = find.byType(LobbyScreen);
   expect(
@@ -657,9 +650,10 @@ void main() {
       await tester.pumpWidget(_plainHomeApp(factory.call));
       await tester.pumpAndSettle();
 
-      // No enterText on home-name-field: the player never typed a name, so
-      // whatever Home's own localised default already shows is what Join
-      // resolves and sends.
+      // Order 701 (X226): a blank name sends nothing, so the player types
+      // the localised default the old home used to fill in; what the frame
+      // carried is what must be stored.
+      await enterOldDefaultName(tester);
       final String sentName = await _completeSuccessfulJoin(
         tester,
         factory,
@@ -699,6 +693,8 @@ void main() {
         'ar',
         reason: 'fixture is broken: this case must be in Arabic',
       );
+      // Order 701 (X226): type the localised default the old home filled in.
+      await enterOldDefaultName(tester);
 
       final String sentName = await _completeSuccessfulJoin(
         tester,
@@ -1044,19 +1040,14 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(
-        _fieldText(tester, _codeKey),
-        isEmpty,
-        reason:
-            'decision 5: an invalid code must never land in room-code-field, '
-            'even for a stored-name-only player',
-      );
       final AppLocalizations loc = AppLocalizations.of(
         tester.element(find.byType(HomeScreen)),
       );
+      // Order 701: the field is in the join sheet; the line a link raises is
+      // painted on home, and the code entry opened afterwards stays empty.
       expect(
-        _codeFieldError(tester),
-        loc.homeRoomCodeInvalid,
+        find.text(loc.homeRoomCodeInvalid),
+        findsOneWidget,
         reason:
             'decision 5: an invalid code link must show the invalid-code '
             'error',
@@ -1067,6 +1058,14 @@ void main() {
         reason:
             'decision 5: an invalid code link must push nothing '
             '(pushCount ${mount.observer.pushCount}, before $pushesBefore)',
+      );
+      await openCodeEntry(tester);
+      expect(
+        _fieldText(tester, _codeKey),
+        isEmpty,
+        reason:
+            'decision 5: an invalid code must never land in room-code-field, '
+            'even for a stored-name-only player',
       );
       expect(find.byType(LobbyScreen), findsNothing);
       expect(mount.factory.controllers, isEmpty);

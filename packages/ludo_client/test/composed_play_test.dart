@@ -305,6 +305,7 @@ void main() {
             // Order 202: Home's rule toggles, untouched, reach the wire as
             // defaults.
             'rules': <String, Object?>{'capture_bonus': true},
+            'open': false,
           },
           reason:
               'the name typed on the home screen and the fixed player count '

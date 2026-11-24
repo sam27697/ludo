@@ -240,9 +240,15 @@ class _InstrumentedController extends RoomController {
     required String name,
     required int players,
     RoomToggles toggles = const RoomToggles(),
+    bool open = false,
   }) {
     createRoomCalls += 1;
-    return super.createRoom(name: name, players: players, toggles: toggles);
+    return super.createRoom(
+      name: name,
+      players: players,
+      toggles: toggles,
+      open: open,
+    );
   }
 
   @override

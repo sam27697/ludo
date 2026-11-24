@@ -1299,7 +1299,10 @@ void main() {
             findsOneWidget,
             reason: '$scenario: fixture: the notice shows a second time',
           );
-          await _tap(tester, _createKey);
+          // Order 701: Create opens the sheet; the tile creates the room.
+          await enterOldDefaultName(tester);
+          await tapCreateRoom(tester);
+          await _pumpBounded(tester, frames: 3);
           expect(
             find.byKey(_closedNoticeKey, skipOffstage: false),
             findsNothing,

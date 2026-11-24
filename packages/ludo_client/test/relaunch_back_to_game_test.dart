@@ -1240,7 +1240,7 @@ void main() {
     // not the tap this case watches; type the old default name first.
     await enterOldDefaultName(tester);
     await tester.ensureVisible(find.byKey(_createKey));
-    await tester.tap(find.byKey(_createKey));
+    await tapCreateRoom(tester);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 

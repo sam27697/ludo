@@ -828,10 +828,10 @@ void main() {
         reason: '$scenario: home-notice is absent, so there is no card to hide',
       );
 
-      // Order 701: Create now opens the create sheet; the tap itself is
-      // what this case watches, so the sheet is left up.
+      // Order 701: Create now opens the create sheet and the tile creates
+      // the room; the card must be gone once the room is being created.
       await tester.ensureVisible(find.byKey(_createKey));
-      await tester.tap(find.byKey(_createKey));
+      await tapCreateRoom(tester);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
@@ -865,7 +865,7 @@ void main() {
       // not the tap this case watches; type the old default name first.
       await enterOldDefaultName(tester);
       await tester.ensureVisible(find.byKey(_createKey));
-      await tester.tap(find.byKey(_createKey));
+      await tapCreateRoom(tester);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 

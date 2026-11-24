@@ -300,13 +300,6 @@ String _fieldText(WidgetTester tester, Key key, {bool skipOffstage = true}) {
   return field.controller!.text;
 }
 
-String? _codeFieldError(WidgetTester tester, {bool skipOffstage = true}) {
-  return tester
-      .widget<TextField>(find.byKey(_codeKey, skipOffstage: skipOffstage))
-      .decoration
-      ?.errorText;
-}
-
 /// Order 701: home has no room code field; it lives in the join sheet. A
 /// link fills no field because there is none on home to fill.
 void _expectNoCodeFieldOnHome(WidgetTester tester, String why) {
@@ -842,11 +835,17 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(_fieldText(tester, _codeKey), isEmpty);
     final AppLocalizations loc = AppLocalizations.of(
       tester.element(find.byType(HomeScreen)),
     );
-    expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
+    // Order 701: the field is in the join sheet; the invalid-code line a
+    // link raises is painted on home, and the code entry opened afterwards
+    // holds nothing.
+    expect(
+      find.text(loc.homeRoomCodeInvalid),
+      findsOneWidget,
+      reason: 'an invalid code link must show the invalid-code line',
+    );
     _expectNavigation(
       observer: mount.observer,
       pushesBefore: pushesBefore,
@@ -855,6 +854,12 @@ void main() {
       removesBefore: removesBefore,
       pushDelta: 0,
       reason: 'known player, invalid code link',
+    );
+    await openCodeEntry(tester);
+    expect(
+      _fieldText(tester, _codeKey),
+      isEmpty,
+      reason: 'an invalid code must never land in room-code-field',
     );
     expect(find.byType(LobbyScreen), findsNothing);
     expect(mount.factory.controllers, isEmpty);

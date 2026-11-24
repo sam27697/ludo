@@ -74,43 +74,6 @@ void _useInsetSurface(WidgetTester tester, {required double bottomInset}) {
 /// A link id (shape [0-9a-z]{4,10}-[0-9a-z]{6}) that names no code.
 const String _linkId = 't5k2q9a-x7m3pd';
 
-/// The code typed before the link arrives, so Join is in the tree.
-const String _typedCode = 'K7M2QP';
-
-/// A link id fills no field, and on a Home that is the current route it joins
-/// at once, so the scroll under test now belongs to a link that arrives
-/// while a route sits above Home. This types a full code (Join is in the
-/// tree), puts the scroll back at the top with no focus, pushes a probe
-/// route, runs [deliver] (the link), settles, and pops the probe.
-Future<void> _linkUnderRoute(
-  WidgetTester tester, {
-  required void Function() deliver,
-  required Future<void> Function() settle,
-  required void Function() fixtureCheck,
-}) async {
-  await tester.enterText(find.byKey(const Key('room-code-field')), _typedCode);
-  await tester.pump();
-  FocusManager.instance.primaryFocus?.unfocus();
-  await settle();
-  final BuildContext field = tester.element(
-    find.byKey(const Key('room-code-field')),
-  );
-  Scrollable.of(field).position.jumpTo(0);
-  await tester.pump();
-  fixtureCheck();
-
-  Navigator.of(tester.element(find.byType(HomeScreen))).push(
-    MaterialPageRoute<void>(
-      builder: (_) => const Scaffold(key: Key('above-home-probe')),
-    ),
-  );
-  await tester.pumpAndSettle();
-  deliver();
-  await settle();
-  Navigator.of(tester.element(find.byKey(const Key('above-home-probe')))).pop();
-  await tester.pumpAndSettle();
-}
-
 double _viewHeight(WidgetTester tester) =>
     tester.view.physicalSize.height / tester.view.devicePixelRatio;
 
@@ -167,13 +130,6 @@ Widget _homeScreenApp({
     home: HomeScreen(onToggleLocale: () {}, linkStream: linkStream),
   );
 }
-
-TextField _codeField(WidgetTester tester) {
-  return tester.widget<TextField>(find.byKey(const Key('room-code-field')));
-}
-
-String _codeFieldText(WidgetTester tester) =>
-    _codeField(tester).controller!.text;
 
 /// A well-formed link on this app's own host, shaped `/r/<code>`.
 Uri _roomLink(String code) => Uri.parse('https://$kAppLinkHost/r/$code');
@@ -249,7 +205,7 @@ void _expectBottomWithinInset(
 
 void main() {
   testWidgets(
-    'IN-LINK: a warm valid link keeps join-room-button out of a 48px bottom '
+    'IN-LINK: a warm valid link keeps home-name-required out of a 48px bottom '
     'inset',
     (tester) async {
       _useInsetSurface(tester, bottomInset: _kBottomInset);
@@ -260,26 +216,16 @@ void main() {
 
       _expectInsetInEffect(tester, 'IN-LINK', _kBottomInset);
 
-      await _linkUnderRoute(
-        tester,
-        deliver: () => opener.add(_roomLink(_linkId)),
-        settle: () => _settle(tester),
-        fixtureCheck: () {},
-      );
+      // Order 701: with no saved name the link waits on home and shows
+      // `home-name-required`; that line is the last thing the link adds.
+      opener.add(_roomLink(_linkId));
+      await _settle(tester);
 
-      expect(
-        _codeFieldText(tester),
-        _typedCode,
-        reason:
-            'IN-LINK fixture: a link id fills no field, so the typed code '
-            'must still be the field text before this case can measure '
-            'whether join-room-button stayed within the inset',
-      );
       _expectBottomWithinInset(
         tester,
-        key: const Key('join-room-button'),
+        key: homeNameRequiredKey,
         caseId: 'IN-LINK',
-        elementLabel: 'join-room-button',
+        elementLabel: 'home-name-required',
         bottomInset: _kBottomInset,
       );
     },
@@ -344,7 +290,7 @@ void main() {
   );
 
   testWidgets(
-    "IN-ZERO: a warm valid link keeps join-room-button in view with no "
+    "IN-ZERO: a warm valid link keeps home-name-required in view with no "
     "inset (today's behaviour)",
     (tester) async {
       _useInsetSurface(tester, bottomInset: 0);
@@ -353,26 +299,16 @@ void main() {
       await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
       await tester.pump();
 
-      await _linkUnderRoute(
-        tester,
-        deliver: () => opener.add(_roomLink(_linkId)),
-        settle: () => _settle(tester),
-        fixtureCheck: () {},
-      );
+      // Order 701: with no saved name the link waits on home and shows
+      // `home-name-required`; that line is the last thing the link adds.
+      opener.add(_roomLink(_linkId));
+      await _settle(tester);
 
-      expect(
-        _codeFieldText(tester),
-        _typedCode,
-        reason:
-            'IN-ZERO fixture: a link id fills no field, so the typed code '
-            'must still be the field text before this case can measure '
-            'whether join-room-button stayed within the inset',
-      );
       _expectBottomWithinInset(
         tester,
-        key: const Key('join-room-button'),
+        key: homeNameRequiredKey,
         caseId: 'IN-ZERO',
-        elementLabel: 'join-room-button',
+        elementLabel: 'home-name-required',
         bottomInset: 0,
       );
     },
@@ -389,26 +325,16 @@ void main() {
 
     _expectInsetInEffect(tester, 'IN-AR', _kBottomInset);
 
-    await _linkUnderRoute(
-      tester,
-      deliver: () => opener.add(_roomLink(_linkId)),
-      settle: () => _settle(tester),
-      fixtureCheck: () {},
-    );
+    // Order 701: with no saved name the link waits on home and shows
+    // `home-name-required`; that line is the last thing the link adds.
+    opener.add(_roomLink(_linkId));
+    await _settle(tester);
 
-    expect(
-      _codeFieldText(tester),
-      _typedCode,
-      reason:
-          'IN-AR fixture: a link id fills no field, so the typed code '
-          'must still be the field text before this case can measure '
-          'whether join-room-button stayed within the inset',
-    );
     _expectBottomWithinInset(
       tester,
-      key: const Key('join-room-button'),
+      key: homeNameRequiredKey,
       caseId: 'IN-AR',
-      elementLabel: 'join-room-button',
+      elementLabel: 'home-name-required',
       bottomInset: _kBottomInset,
     );
   });

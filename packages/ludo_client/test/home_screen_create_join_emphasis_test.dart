@@ -213,22 +213,23 @@ void main() {
     },
   );
 
-  testWidgets('short code ABC is a code: elevated Join; Create stays elevated', (
-    tester,
-  ) async {
-    await tester.pumpWidget(_homeScreenApp());
-    await tester.pumpAndSettle();
+  testWidgets(
+    'short code ABC is a code: elevated Join; Create stays elevated',
+    (tester) async {
+      await tester.pumpWidget(_homeScreenApp());
+      await tester.pumpAndSettle();
 
-    await _openEntry(tester);
-    await tester.enterText(find.byKey(_codeKey), 'ABC');
-    await tester.pump();
+      await _openEntry(tester);
+      await tester.enterText(find.byKey(_codeKey), 'ABC');
+      await tester.pump();
 
-    expect(
-      tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
-      'ABC',
-    );
-    _expectJoinElevatedCreateStaysElevated(tester);
-  });
+      expect(
+        tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
+        'ABC',
+      );
+      _expectJoinElevatedCreateStaysElevated(tester);
+    },
+  );
 
   testWidgets('invalid code AB02#C uses elevated Create and outlined Join', (
     tester,

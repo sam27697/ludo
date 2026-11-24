@@ -48,6 +48,7 @@ import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _playersButtonKey = Key('home-players-button');
 const Key _createKey = Key('create-room-button');
@@ -230,6 +231,30 @@ Future<void> _mount(
   await tester.pumpAndSettle();
 }
 
+/// [_mount], then a name and the join sheet's code entry: the room code
+/// field and Join live there since order 701.
+Future<void> _mountEntry(
+  WidgetTester tester, {
+  required Locale locale,
+  RoomControllerFactory? controllerFactory,
+  InitialLinkReader initialLinkReader = noInitialLink,
+  LinkStreamOpener linkStream = noLinkStream,
+  NavigatorObserver? observer,
+  bool disableAnimations = false,
+}) async {
+  await _mount(
+    tester,
+    locale: locale,
+    controllerFactory: controllerFactory,
+    initialLinkReader: initialLinkReader,
+    linkStream: linkStream,
+    observer: observer,
+    disableAnimations: disableAnimations,
+  );
+  await enterOldDefaultName(tester);
+  await openCodeEntry(tester);
+}
+
 AppLocalizations _loc(WidgetTester tester) {
   return AppLocalizations.of(tester.element(find.byType(Scaffold).first));
 }
@@ -266,7 +291,7 @@ List<String> _paintedStrings() {
 
 Future<void> _scrollToEnd(WidgetTester tester) async {
   final ScrollPosition position = Scrollable.of(
-    tester.element(find.byKey(_codeKey)),
+    tester.element(find.byKey(homeNameFieldKey)),
   ).position;
   position.jumpTo(position.maxScrollExtent);
   await tester.pump();
@@ -311,8 +336,14 @@ void _expectNoOldStrings(List<String> painted, Locale locale, String repro) {
 // --- create frame -----------------------------------------------------------
 
 Future<void> _tapCreate(WidgetTester tester) async {
+  // Order 701 (X226): a name first, then Create opens the sheet and the
+  // friends-only tile creates the room (`open: false`).
+  final TextField name = tester.widget<TextField>(find.byKey(homeNameFieldKey));
+  if (name.controller!.text.trim().isEmpty) {
+    await enterOldDefaultName(tester);
+  }
   await tester.ensureVisible(find.byKey(_createKey));
-  await tester.tap(find.byKey(_createKey));
+  await tapCreateRoom(tester);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
 }
@@ -494,6 +525,13 @@ void main() {
               '${data['players']}. $repro',
         );
         expect(
+          data['open'],
+          false,
+          reason:
+              'expected the friends-only tile to send "open": false; the '
+              'frame carried ${data['open']}. $repro',
+        );
+        expect(
           data['rules'],
           <String, Object?>{'capture_bonus': true},
           reason:
@@ -595,7 +633,7 @@ void main() {
           'after clearing', (tester) async {
         const String name = 'join appears at six';
         final String repro = _repro(name, locale);
-        await _mount(tester, locale: locale);
+        await _mountEntry(tester, locale: locale);
         final Finder field = find.byKey(_codeKey);
 
         void expectAbsent(String when) {
@@ -703,7 +741,7 @@ void main() {
         const String name = 'remembered code, no chip';
         final String repro = _repro(name, locale);
         await SessionMemory.recordSuccessfulJoin('AB23CD');
-        await _mount(tester, locale: locale);
+        await _mountEntry(tester, locale: locale);
         expect(
           find.byKey(const Key('home-recent-code-AB23CD'), skipOffstage: false),
           findsNothing,
@@ -722,7 +760,7 @@ void main() {
       ) async {
         const String name = 'paste brings join';
         final String repro = _repro(name, locale);
-        await _mount(tester, locale: locale);
+        await _mountEntry(tester, locale: locale);
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           SystemChannels.platform,
           (MethodCall call) async {
@@ -770,6 +808,11 @@ void main() {
           'join by link id, fill no field and bring no Join', (tester) async {
         const String name = 'link brings join';
         final String repro = _repro(name, locale);
+        // Order 701 (X226): a link joins in one tap only with a saved name.
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'session.lastName': oldDefaultName(lc),
+          'session.lastSeats': 4,
+        });
         final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
         final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
         final _PushProbe observer = _PushProbe();
@@ -794,11 +837,18 @@ void main() {
           pushesBefore + 1,
           reason: 'expected the cold link id to join under one route. $repro',
         );
+        Navigator.of(
+          tester.element(find.byType(HomeScreen, skipOffstage: false)),
+        ).pop();
+        await _drainRequestTimeout(tester);
+        await tester.pumpAndSettle();
+
+        // The field lives in the join sheet now: that is where a link must
+        // be shown to have filled nothing, and where Join comes only from a
+        // typed full-length code.
+        await openCodeEntry(tester);
         expect(
-          tester
-              .widget<TextField>(find.byKey(_codeKey, skipOffstage: false))
-              .controller!
-              .text,
+          _codeText(tester),
           isEmpty,
           reason: 'expected the cold link id to fill no field. $repro',
         );
@@ -807,12 +857,6 @@ void main() {
           findsNothing,
           reason: 'expected no Join after a cold-start link id. $repro',
         );
-        Navigator.of(
-          tester.element(find.byType(HomeScreen, skipOffstage: false)),
-        ).pop();
-        await _drainRequestTimeout(tester);
-        await tester.pumpAndSettle();
-
         await tester.enterText(find.byKey(_codeKey), 'K7M2QP');
         await tester.pumpAndSettle();
         expect(
@@ -827,19 +871,24 @@ void main() {
           findsNothing,
           reason: 'expected Join gone once the typed code is cleared. $repro',
         );
+        await backOutOfSheet(tester, joinSheetKey);
 
+        final int pushesBeforeWarm = observer.pushCount;
         opener.add(Uri.parse('https://$kAppLinkHost/r/w8n4b6c2-q3z9rt'));
         await _settleLink(tester);
         expect(
           observer.pushCount,
-          pushesBefore + 2,
+          pushesBeforeWarm + 1,
           reason: 'expected the warm link id to join under one route. $repro',
         );
+        Navigator.of(
+          tester.element(find.byType(HomeScreen, skipOffstage: false)),
+        ).pop();
+        await _drainRequestTimeout(tester);
+        await tester.pumpAndSettle();
+        await openCodeEntry(tester);
         expect(
-          tester
-              .widget<TextField>(find.byKey(_codeKey, skipOffstage: false))
-              .controller!
-              .text,
+          _codeText(tester),
           isEmpty,
           reason: 'expected the warm link id to fill no field. $repro',
         );
@@ -848,10 +897,6 @@ void main() {
           findsNothing,
           reason: 'expected no Join after a warm-start link id. $repro',
         );
-        Navigator.of(
-          tester.element(find.byType(HomeScreen, skipOffstage: false)),
-        ).pop();
-        await _drainRequestTimeout(tester);
       });
 
       // Red on 7501227: the Join button is unconditional, so a tap path
@@ -864,7 +909,7 @@ void main() {
         const String name = 'invalid full code';
         final String repro = _repro(name, locale);
         final _PushProbe observer = _PushProbe();
-        await _mount(tester, locale: locale, observer: observer);
+        await _mountEntry(tester, locale: locale, observer: observer);
         final AppLocalizations loc = _loc(tester);
         // Section 32 item 1: 0 is a symbol now; the symbol outside the
         // alphabet that stays invalid is a punctuation mark.
@@ -917,7 +962,7 @@ void main() {
           'stays', (tester) async {
         const String name = 'no helper text';
         final String repro = _repro(name, locale);
-        await _mount(tester, locale: locale);
+        await _mountEntry(tester, locale: locale);
         final AppLocalizations loc = _loc(tester);
 
         final InputDecoration decoration = tester
@@ -952,7 +997,7 @@ void main() {
           'animations disabled it is final on the first frame', (tester) async {
         const String name = 'join entry timing';
         final String repro = _repro(name, locale);
-        await _mount(tester, locale: locale);
+        await _mountEntry(tester, locale: locale);
         await tester.enterText(find.byKey(_codeKey), 'ABC234');
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 200));
@@ -973,7 +1018,7 @@ void main() {
           'the first frame', (tester) async {
         const String name = 'join entry timing, animations off';
         final String repro = _repro(name, locale);
-        await _mount(tester, locale: locale, disableAnimations: true);
+        await _mountEntry(tester, locale: locale, disableAnimations: true);
         await tester.enterText(find.byKey(_codeKey), 'ABC234');
         await tester.pump();
         final Rect first = tester.getRect(find.byKey(_joinKey));

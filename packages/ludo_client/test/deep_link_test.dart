@@ -765,7 +765,9 @@ void main() {
         );
         final BuildContext context = tester.element(find.byType(HomeScreen));
         final AppLocalizations loc = AppLocalizations.of(context);
-        expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
+        // Order 701: the line a link raises is painted on home, outside the
+        // sheet's field.
+        expect(find.text(loc.homeRoomCodeInvalid), findsOneWidget);
         expect(observer.pushCount, pushesBefore);
         expect(observer.popCount, popsBefore);
       },
@@ -919,7 +921,9 @@ void main() {
         expect(_codeFieldText(tester), 'KEEPME');
         final BuildContext context = tester.element(find.byType(HomeScreen));
         final AppLocalizations loc = AppLocalizations.of(context);
-        expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
+        // Order 701: the line a link raises is painted on home, outside the
+        // sheet's field.
+        expect(find.text(loc.homeRoomCodeInvalid), findsOneWidget);
       },
     );
 

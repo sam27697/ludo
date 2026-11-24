@@ -194,7 +194,8 @@ void _expectNoCodeFieldOnHome(WidgetTester tester, String why) {
 }
 
 Finder _invalidCodeLine(WidgetTester tester) => find.text(
-  AppLocalizations.of(tester.element(find.byType(HomeScreen))).homeRoomCodeInvalid,
+  AppLocalizations.of(tester.element(find.byType(HomeScreen)))
+      .homeRoomCodeInvalid,
 );
 
 /// Runs [drive] with [FlutterError.onError] swapped for a collector, then
@@ -624,7 +625,10 @@ void main() {
           },
         );
 
-        _expectNoCodeFieldOnHome(tester, 'an initial link with an invalid code');
+        _expectNoCodeFieldOnHome(
+          tester,
+          'an initial link with an invalid code',
+        );
         expect(_invalidCodeLine(tester), findsOneWidget);
         expect(captured, isEmpty);
       },

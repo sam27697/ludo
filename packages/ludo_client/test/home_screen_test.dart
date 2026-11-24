@@ -481,30 +481,27 @@ void main() {
     // Order 701 (X226): the localised default name is no longer a silent
     // fallback. An empty or blank name opens no sheet and pushes no lobby;
     // the field asks for a name with home-name-required.
-    testWidgets(
-      'an empty name field opens nothing, pushes no lobby, and shows '
-      'home-name-required',
-      (tester) async {
-        await tester.pumpWidget(_homeScreenApp());
-        await tester.pumpAndSettle();
+    testWidgets('an empty name field opens nothing, pushes no lobby, and shows '
+        'home-name-required', (tester) async {
+      await tester.pumpWidget(_homeScreenApp());
+      await tester.pumpAndSettle();
 
-        await tester.tap(find.byKey(createRoomButtonKey));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(createRoomButtonKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
-        expect(
-          find.byKey(createRoomSheetKey),
-          findsNothing,
-          reason: 'X226: Create with an empty name must not open the sheet',
-        );
-        expect(
-          find.byType(LobbyScreen),
-          findsNothing,
-          reason: 'X226: an empty name must never reach a pushed LobbyScreen',
-        );
-        expect(find.byKey(homeNameRequiredKey), findsOneWidget);
-      },
-    );
+      expect(
+        find.byKey(createRoomSheetKey),
+        findsNothing,
+        reason: 'X226: Create with an empty name must not open the sheet',
+      );
+      expect(
+        find.byType(LobbyScreen),
+        findsNothing,
+        reason: 'X226: an empty name must never reach a pushed LobbyScreen',
+      );
+      expect(find.byKey(homeNameRequiredKey), findsOneWidget);
+    });
 
     testWidgets(
       'a name field containing only whitespace is empty after trim: nothing '

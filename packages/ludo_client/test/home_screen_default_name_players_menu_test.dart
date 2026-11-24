@@ -79,9 +79,8 @@ Future<void> _createAndAwaitPushedRoute(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
-/// X226: the empty field carries its label as the hint. Read either the
-/// decoration's hint or its label: the design names the text, not which slot
-/// of the decoration carries it.
+/// X226: the empty field carries its label as the hint: the decoration's
+/// `hintText`, as the order says.
 void _expectEmptyWithLabelHint(WidgetTester tester, String locale) {
   final AppLocalizations loc = _loc(tester);
   expect(
@@ -95,12 +94,11 @@ void _expectEmptyWithLabelHint(WidgetTester tester, String locale) {
       .widget<TextField>(find.byKey(_nameKey))
       .decoration;
   expect(
-    decoration?.hintText == loc.homeNameFieldLabel ||
-        decoration?.labelText == loc.homeNameFieldLabel,
-    isTrue,
+    decoration?.hintText,
+    loc.homeNameFieldLabel,
     reason:
         'X226 ($locale): the empty field shows its label '
-        '"${loc.homeNameFieldLabel}" as the hint; hintText '
+        '"${loc.homeNameFieldLabel}" as its hint; hintText '
         '"${decoration?.hintText}", labelText "${decoration?.labelText}"',
   );
 }
@@ -188,33 +186,30 @@ void main() {
 
   // X226: a blank field is no longer filled with a default name, so a locale
   // toggle leaves it blank.
-  testWidgets(
-    'locale toggle leaves a blank name field blank',
-    (tester) async {
-      await tester.pumpWidget(const LudoApp());
-      await tester.pumpAndSettle();
+  testWidgets('locale toggle leaves a blank name field blank', (tester) async {
+    await tester.pumpWidget(const LudoApp());
+    await tester.pumpAndSettle();
 
-      await tester.enterText(find.byKey(_nameKey), '');
-      await tester.pump();
-      expect(_nameFieldText(tester), isEmpty);
+    await tester.enterText(find.byKey(_nameKey), '');
+    await tester.pump();
+    expect(_nameFieldText(tester), isEmpty);
 
-      await tester.tap(find.byKey(_localeKey));
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(_localeKey));
+    await tester.pumpAndSettle();
 
-      expect(
-        find.text('إنشاء غرفة'),
-        findsOneWidget,
-        reason: 'fixture is broken: locale toggle must have switched to Arabic',
-      );
-      expect(
-        _nameFieldText(tester),
-        isEmpty,
-        reason:
-            'X226: a blank name field must stay blank across a locale '
-            'toggle; got "${_nameFieldText(tester)}"',
-      );
-    },
-  );
+    expect(
+      find.text('إنشاء غرفة'),
+      findsOneWidget,
+      reason: 'fixture is broken: locale toggle must have switched to Arabic',
+    );
+    expect(
+      _nameFieldText(tester),
+      isEmpty,
+      reason:
+          'X226: a blank name field must stay blank across a locale '
+          'toggle; got "${_nameFieldText(tester)}"',
+    );
+  });
 
   testWidgets(
     'locale toggle rewrites a name field that still equals the previous '

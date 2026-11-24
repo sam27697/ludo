@@ -189,6 +189,7 @@ Future<void> _completeSuccessfulCreate(
       'players': seats,
       // Order 202: Home's rule toggles, untouched, reach the wire as defaults.
       'rules': <String, Object?>{'capture_bonus': true},
+      'open': false,
     },
     reason:
         'the typed name and chosen seat count must reach the wire before '
@@ -355,14 +356,6 @@ void main() {
           'must not show a widget keyed home-last-table-chip',
     );
 
-    // Order 701: home has no room-code-field; the empty-code case is the
-    // only case home can show.
-    expect(
-      find.byKey(_codeKey, skipOffstage: false),
-      findsNothing,
-      reason: 'order 701: room-code-field is not on Home',
-    );
-
     expect(
       _keyedButton(tester, _createKey),
       isA<ElevatedButton>(),
@@ -370,6 +363,17 @@ void main() {
           'with last-table memory and an empty code field, '
           'create-room-button must still be an ElevatedButton; found '
           '${_keyedButton(tester, _createKey).runtimeType}',
+    );
+    // Order 701: the code field lives in the join sheet. The remembered
+    // name is already in the name field, so the code entry opens at once; it
+    // must hold no remembered code and bring no Join (C-523 D3).
+    await openCodeEntry(tester);
+    expect(
+      tester.widget<TextField>(find.byKey(_codeKey)).controller!.text,
+      isEmpty,
+      reason:
+          'with last-table memory the code entry must open empty, not '
+          'prefilled with a remembered code',
     );
     expect(
       find.byKey(_joinKey, skipOffstage: false),

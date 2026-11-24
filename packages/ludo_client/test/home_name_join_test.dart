@@ -303,18 +303,17 @@ void main() {
     },
   );
 
-  testWidgets(
-    'ar: home-join-divider ("أو انضم برمز") is gone from home',
-    (WidgetTester tester) async {
-      await _pumpHome(tester, locale: const Locale('ar'));
-      expect(
-        _loc(tester).localeName,
-        'ar',
-        reason: 'fixture: this case is Arabic',
-      );
-      _expectNoDivider(tester, _dividerAr);
-    },
-  );
+  testWidgets('ar: home-join-divider ("أو انضم برمز") is gone from home', (
+    WidgetTester tester,
+  ) async {
+    await _pumpHome(tester, locale: const Locale('ar'));
+    expect(
+      _loc(tester).localeName,
+      'ar',
+      reason: 'fixture: this case is Arabic',
+    );
+    _expectNoDivider(tester, _dividerAr);
+  });
 
   testWidgets(
     'code slot has no floating label, hints "Room code", has no helper '
