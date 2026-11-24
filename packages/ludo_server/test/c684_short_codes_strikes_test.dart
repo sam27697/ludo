@@ -1288,11 +1288,14 @@ void main() {
     });
 
     _scenario(
-        'N6 the PLAYING kick of section 28 is not a strike (2026-11 ruleset)',
+        'N6 the PLAYING kick of a link seat is not a strike (2026-11 ruleset)',
         (_Rig r) async {
+      // Section 33 item 6 replaces section 32 item 7: the PLAYING kick of a
+      // "code" seat in a room that is not open is now a strike; a "link"
+      // seat's is not.
       await nonStrike(r, 'playing kick', (_Dev d) async {
         final _Host h = await r.host(players: 2);
-        final _Joined j = await r.seatVia(h, d, 'code');
+        final _Joined j = await r.seatVia(h, d, 'link');
         await h.c.sync();
         h.c.send('start_game', <String, Object?>{});
         await h.c.untilType('game_started');

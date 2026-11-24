@@ -2511,14 +2511,12 @@ void main() {
         fx.send(t.c(0), 'kick', <String, Object?>{'seat': 3});
         _expectError(fx, await _flush(fx, t.c(0)), 'ILLEGAL_MOVE',
             'kick of a seat that is not a playing seat');
-        // A playing seat whose socket is up.
-        for (final int seat in <int>[1, 0]) {
-          fx.send(t.c(0), 'kick', <String, Object?>{'seat': seat});
-          _expectError(fx, await _flush(fx, t.c(0)), 'NOT_ABSENT',
-              'kick of seat $seat whose socket is up');
-        }
-        // A retired seat whose socket is still up is not a playing seat:
-        // ILLEGAL_MOVE comes before NOT_ABSENT.
+        // Section 33 item 8: the host's own seat is ILLEGAL_MOVE (NOT_ABSENT
+        // is no longer sent).
+        fx.send(t.c(0), 'kick', <String, Object?>{'seat': 0});
+        _expectError(fx, await _flush(fx, t.c(0)), 'ILLEGAL_MOVE',
+            'kick of the host\'s own seat');
+        // A retired seat whose socket is still up is not a playing seat.
         fx.send(t.c(2), 'leave_room', <String, Object?>{});
         await t.c(2).next();
         t.seats[2]!.up = false;
@@ -2529,6 +2527,18 @@ void main() {
         final Map<int, List<Frame>> quiet = await t.syncAll();
         fx.eq(<Frame>[for (final List<Frame> l in quiet.values) ...l],
             <Frame>[], 'no rejected kick changed or announced anything');
+        // Section 33 item 8: a playing seat whose socket is up is kicked.
+        final String id = fx.send(t.c(0), 'kick', <String, Object?>{'seat': 1});
+        final List<Frame> host = await _flush(fx, t.c(0));
+        fx.eq(host.first['t'], 'seat_retired',
+            'kick of connected seat 1 is accepted');
+        fx.eq(_d(host.first)['seat'], 1, 'seat_retired.seat');
+        fx.eq(_d(host.first)['reason'], 'kicked', 'seat_retired.reason');
+        fx.eq(host.first['re'], id, 'the host\'s copy carries re');
+        fx.eq(
+            _types(await _flush(fx, t.c(1))),
+            <String>['seat_retired', 'kicked'],
+            'the kicked socket gets seat_retired then kicked');
       });
     });
 
@@ -2581,7 +2591,7 @@ void main() {
         }
         fx.eq(
             <Object?>[for (final Frame f in seen.take(30)) _d(f)['code']],
-            List<String>.filled(30, 'NOT_ABSENT'),
+            List<String>.filled(30, 'ILLEGAL_MOVE'),
             'the first 30 kicks in the second reach the handler');
         fx.eq(_d(seen.last)['code'], 'RATE_LIMITED',
             'the 31st message in one second');
