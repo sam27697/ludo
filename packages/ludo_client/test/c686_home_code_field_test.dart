@@ -16,6 +16,10 @@
 // Names assumed (none are new keys: all exist on the tree today):
 // room-code-field, join-room-button, home-name-field.
 //
+// Order 701: the field and Join live in the join sheet's code entry, which
+// opens only with a name; every case types the old default name and opens
+// the code entry before it types a code.
+//
 // Replay: flutter test test/c686_home_code_field_test.dart --plain-name '<id>'
 
 import 'dart:convert';
@@ -31,6 +35,7 @@ import 'package:ludo_client/src/net/transport.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _codeKey = Key('room-code-field');
 const Key _joinKey = Key('join-room-button');
@@ -92,6 +97,8 @@ class _Rig {
     );
     await tester.pump();
     await tester.pump();
+    await enterName(tester, oldDefaultName(locale.languageCode));
+    await openCodeEntry(tester);
     return rig;
   }
 
@@ -136,6 +143,8 @@ class _Rig {
     nav.popUntil((Route<dynamic> route) => route.isFirst);
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
+    // Order 701: back on Home the code entry is closed; open it again.
+    await openCodeEntry(tester);
     expect(
       find.byKey(_codeKey),
       findsOneWidget,

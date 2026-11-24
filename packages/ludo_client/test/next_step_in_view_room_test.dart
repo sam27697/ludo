@@ -12,6 +12,11 @@
 // The s1 scale 2.0 focus case is the exception. It focuses room-code-field
 // with showKeyboard, then sets a 260 dp bottom viewInset and reads
 // join-room-button against height - max(padding.bottom, that inset).
+//
+// Order 701: home's two steps are create-room-button and join-game-button;
+// the code field and join-room-button live in the join sheet's code entry,
+// which the focus case opens (a name first, X226) before it focuses the
+// field.
 
 import 'dart:convert';
 import 'dart:io';
@@ -36,6 +41,7 @@ import 'package:ludo_client/src/theme.dart' show buildAppTheme;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://probe-shapes-room.invalid/ws';
 
@@ -677,20 +683,18 @@ Future<void> _mountHome(
         'decision 3, $where: HomeScreen is the mounted screen. Catches a '
         'mount that painted a different route.',
   );
-  // Join is in the tree only with a full-length code (C-523 D3), and every
-  // fit claim in this file is about Join, so each mount types one. The home
-  // with the longest content is the one measured.
+  // Order 701: home holds no code field and no join-room-button; its join
+  // step is join-game-button.
   expect(
-    find.byKey(_joinKey),
+    find.byKey(_codeKey, skipOffstage: false),
     findsNothing,
-    reason:
-        'decision 3, $where: join-room-button is absent while the code '
-        'field is empty (C-523 D3).',
+    reason: 'decision 3, $where: room-code-field is not on home (order 701).',
   );
-  await tester.enterText(find.byKey(_codeKey), 'K7M2QP');
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 250));
-  await tester.pumpAndSettle();
+  expect(
+    find.byKey(_joinKey, skipOffstage: false),
+    findsNothing,
+    reason: 'decision 3, $where: join-room-button is not on home (order 701).',
+  );
   expect(
     find.byKey(_createKey),
     findsOneWidget,
@@ -699,10 +703,10 @@ Future<void> _mountHome(
         'home screen that drops the create step.',
   );
   expect(
-    find.byKey(_joinKey),
+    find.byKey(joinGameButtonKey),
     findsOneWidget,
     reason:
-        'decision 3, $where: join-room-button is in the tree. Catches a '
+        'decision 3, $where: join-game-button is in the tree. Catches a '
         'home screen that drops the join step.',
   );
   expect(
@@ -861,7 +865,7 @@ Future<void> _runHomeAtRest(
 }) async {
   final String where = _where(shape, scale, locale);
   await _mountHome(tester, locale: locale, where: where);
-  const List<Key> keys = <Key>[_createKey, _codeKey, _joinKey];
+  const List<Key> keys = <Key>[_createKey, joinGameButtonKey];
   final List<String> visProblems = <String>[];
   final String? moved = _scrollNotAtStart(tester);
   if (moved != null) {
@@ -877,7 +881,7 @@ Future<void> _runHomeAtRest(
       key: key,
       shape: shape,
       why:
-          'decision 3, $where: create, the code field and join must all '
+          'decision 3, $where: create and join must both '
           'sit wholly inside the safe area at scroll start on 1.0 and 1.3. '
           'Catches a home screen that leaves ${_keyName(key)} below the '
           'fold, so joining needs a scroll the screen never asks for.',
@@ -908,8 +912,8 @@ Future<void> _runHomeAtRest(
     visProblems,
     isEmpty,
     reason:
-        'decision 3, $where: create-room-button, room-code-field and '
-        'join-room-button must lie wholly inside the safe area at scroll '
+        'decision 3, $where: create-room-button and join-game-button '
+        'must lie wholly inside the safe area at scroll '
         'start. Catches a home screen that drops the join step below the '
         'fold at 1.0 or 1.3. ${visProblems.join(' ')}',
   );
@@ -931,6 +935,13 @@ Future<void> _runHomeFocus(
 }) async {
   final String where = _where(shape, scale, locale);
   await _mountHome(tester, locale: locale, where: where);
+  // Order 701: the field is in the join sheet's code entry. Join is in the
+  // tree only with a full-length code (C-523 D3), so the case types one.
+  await enterOldDefaultName(tester);
+  await openCodeEntry(tester);
+  await tester.enterText(find.byKey(_codeKey), 'K7M2QP');
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 250));
   // showKeyboard focuses the field even when its center sits below the
   // root. A tap at that offset misses, so the field never takes focus.
   await tester.showKeyboard(find.byKey(const Key('room-code-field')));
@@ -1031,10 +1042,10 @@ Future<void> _runHomeOverflow(
   final String where = _where(shape, scale, locale);
   await _mountHome(tester, locale: locale, where: where);
   expect(
-    find.byKey(_codeKey),
+    find.byKey(joinGameButtonKey),
     findsOneWidget,
     reason:
-        'decision 5, $where: room-code-field is in the tree so the '
+        'decision 5, $where: join-game-button is in the tree so the '
         'overflow check is about home. Catches a mount that never built '
         'the join step.',
   );

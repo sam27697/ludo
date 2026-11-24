@@ -26,6 +26,7 @@ import 'package:ludo_client/src/server_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _nameKey = Key('home-name-field');
 const Key _createKey = Key('create-room-button');
@@ -131,9 +132,11 @@ Widget _homeScreenApp(RoomControllerFactory controllerFactory, {Key? key}) {
   );
 }
 
-Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
-  await tester.ensureVisible(find.byKey(buttonKey));
-  await tester.tap(find.byKey(buttonKey));
+/// Order 701: Create opens the sheet and the friends-only tile creates the
+/// room; the same bounded pumps follow as for any pushed route.
+Future<void> _createAndAwaitPushedRoute(WidgetTester tester) async {
+  await tester.ensureVisible(find.byKey(_createKey));
+  await tapCreateRoom(tester);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
 }
@@ -186,6 +189,7 @@ Future<void> _completeSuccessfulCreate(
       'players': seats,
       // Order 202: Home's rule toggles, untouched, reach the wire as defaults.
       'rules': <String, Object?>{'capture_bonus': true},
+      'open': false,
     },
     reason:
         'the typed name and chosen seat count must reach the wire before '
@@ -242,7 +246,7 @@ Future<void> _hostThenRelaunchHome(
 
   await tester.enterText(find.byKey(_nameKey), name);
   await tester.pump();
-  await _tapAndAwaitPushedRoute(tester, _createKey);
+  await _createAndAwaitPushedRoute(tester);
 
   expect(
     factory.transports,
@@ -315,7 +319,7 @@ void main() {
           'got "${_nameFieldText(tester)}"',
     );
 
-    await _tapAndAwaitPushedRoute(tester, _createKey);
+    await _createAndAwaitPushedRoute(tester);
     final LobbyScreen pushed = _pushedLobbyScreen(tester);
     expect(
       pushed.playerName,
@@ -353,25 +357,23 @@ void main() {
     );
 
     expect(
-      find.byKey(_codeKey),
-      findsOneWidget,
-      reason: 'fixture is broken: room-code-field must be on Home',
-    );
-    expect(
-      tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
-      '',
-      reason:
-          'this emphasis check is the empty-code case; the relaunch must '
-          'leave room-code-field empty',
-    );
-
-    expect(
       _keyedButton(tester, _createKey),
       isA<ElevatedButton>(),
       reason:
           'with last-table memory and an empty code field, '
           'create-room-button must still be an ElevatedButton; found '
           '${_keyedButton(tester, _createKey).runtimeType}',
+    );
+    // Order 701: the code field lives in the join sheet. The remembered
+    // name is already in the name field, so the code entry opens at once; it
+    // must hold no remembered code and bring no Join (C-523 D3).
+    await openCodeEntry(tester);
+    expect(
+      tester.widget<TextField>(find.byKey(_codeKey)).controller!.text,
+      isEmpty,
+      reason:
+          'with last-table memory the code entry must open empty, not '
+          'prefilled with a remembered code',
     );
     expect(
       find.byKey(_joinKey, skipOffstage: false),
@@ -421,7 +423,7 @@ void main() {
         reason: 'a stored count of $legacy must not bring the control back',
       );
 
-      await _tapAndAwaitPushedRoute(tester, _createKey);
+      await _createAndAwaitPushedRoute(tester);
       expect(
         _pushedLobbyScreen(tester).players,
         4,

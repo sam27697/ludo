@@ -26,6 +26,7 @@ import 'package:ludo_client/src/net/transport.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _noticeKey = Key('code-ban-notice');
 const Key _codeKey = Key('room-code-field');
@@ -122,6 +123,9 @@ Future<String> _noticeText(
   );
   await tester.pump();
   await tester.pump();
+  // Order 701: a name first (X226), then the code entry in the join sheet.
+  await enterName(tester, oldDefaultName(locale.languageCode));
+  await openCodeEntry(tester);
   await tester.enterText(find.byKey(_codeKey), _code);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));

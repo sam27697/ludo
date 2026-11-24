@@ -25,6 +25,8 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/home_flow.dart';
+
 const Key _nameKey = Key('home-name-field');
 const Key _codeKey = Key('room-code-field');
 const Key _createKey = Key('create-room-button');
@@ -107,11 +109,13 @@ void main() {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
+      // Order 701: home has no room-code-field, so nothing can make Join
+      // the primary action on home.
       expect(
-        tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
-        '',
+        find.byKey(_codeKey, skipOffstage: false),
+        findsNothing,
         reason:
-            'fixture is broken: an empty room-code-field is required so '
+            'fixture is broken: no room-code-field may be on home, so '
             'Create is the enabled primary action',
       );
       expect(
@@ -154,6 +158,9 @@ void main() {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
+      // Order 701: a name (X226), then the code entry in the join sheet.
+      await enterName(tester, 'Player');
+      await openCodeEntry(tester);
       await tester.enterText(find.byKey(_codeKey), 'AB23CD');
       await tester.pump();
 

@@ -48,6 +48,7 @@ import 'package:ludo_client/src/server_config.dart' show RoomControllerFactory;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _rejoinKey = Key('home-rejoin-button');
 const Key _nameKey = Key('home-name-field');
@@ -1235,8 +1236,11 @@ void main() {
     await _pumpWatchingLobbyError(tester);
     _expectGoneNotice(tester, expected: _enGone, scenario: scenario);
 
+    // Order 701 (X226): with an empty name Create opens nothing, which is
+    // not the tap this case watches; type the old default name first.
+    await enterOldDefaultName(tester);
     await tester.ensureVisible(find.byKey(_createKey));
-    await tester.tap(find.byKey(_createKey));
+    await tapCreateRoom(tester);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
@@ -1262,6 +1266,9 @@ void main() {
       await _pumpWatchingLobbyError(tester);
       _expectGoneNotice(tester, expected: _enGone, scenario: scenario);
 
+      // Order 701: a name (X226), then the code entry in the join sheet.
+      await enterOldDefaultName(tester);
+      await openCodeEntry(tester);
       await tester.enterText(find.byKey(_codeKey), _otherCode);
       // Join enters with a full code (C-523 D3), through a 200 ms
       // AnimatedSize at most: let it reach its final rect before the tap.
@@ -1498,6 +1505,8 @@ void main() {
         final _Factory factory = _Factory();
         await _mount(tester, _app(factory.call, locale: variant.locale));
 
+        // Order 701: the code field is behind the join sheet's code tile.
+        await openCodeEntry(tester);
         await tester.enterText(find.byKey(_codeKey), _otherCode);
         // Join enters with a full code (C-523 D3), through a 200 ms
         // AnimatedSize at most: let it reach its final rect before the tap.

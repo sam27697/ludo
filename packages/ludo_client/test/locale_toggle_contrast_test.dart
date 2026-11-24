@@ -32,6 +32,8 @@ import 'package:ludo_client/src/app.dart';
 import 'package:ludo_client/src/home_style.dart';
 import 'package:ludo_client/src/theme.dart';
 
+import 'support/home_flow.dart';
+
 /// WCAG 2.1 relative luminance of an sRGB colour. Each channel is
 /// gamma-decoded before the weighted sum; this is the formula the 4.5:1 / 3:1
 /// AA thresholds are defined against, not an approximation of it.
@@ -213,6 +215,10 @@ void main() {
       final context = tester.element(find.byType(Scaffold));
       final loc = AppLocalizations.of(context);
 
+      // Order 701: a name first (X226), then the code entry in the join
+      // sheet, where the invalid code line now shows.
+      await enterName(tester, 'لاعب');
+      await openCodeEntry(tester);
       await tester.enterText(
         find.byKey(const Key('room-code-field')),
         'inval#',

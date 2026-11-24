@@ -49,6 +49,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../integration_test/fixtures/real_games_fixture.dart'
     show realGamesJson;
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const double _boardSide = 360;
 const double _tolerance = 0.6;
@@ -855,6 +856,8 @@ Future<_Run> _playRecorded(WidgetTester tester) async {
     find.byKey(const Key('home-name-field')),
     (game['names']! as Map<String, Object?>)['$_recordedViewer']! as String,
   );
+  // Order 701: the code field is behind the join sheet's code tile.
+  await openCodeEntry(tester);
   await tester.enterText(
     find.byKey(const Key('room-code-field')),
     roomData['code']! as String,

@@ -6,6 +6,9 @@
 // C-278 replaces the sectionGap SizedBox between Create and the code
 // field with home-join-divider. Those two cases no longer measure that
 // gap as a kSpace token. afterBrand and afterDie are unchanged.
+//
+// Order 701 removes the divider and the code field from home: those two
+// cases now pin that both are gone and Join sits under Create.
 
 import 'dart:io';
 import 'dart:math' as math;
@@ -202,35 +205,29 @@ void _expectGapIn(double gap, Set<double> allowed, String label) {
   );
 }
 
-/// home-join-divider occupies the slot sectionGap used to: its rect sits
-/// between create-room-button's bottom and room-code-field's top.
-void _expectJoinDividerBetween(WidgetTester tester, String label) {
-  final Finder divider = find.byKey(const Key('home-join-divider'));
+/// Order 701: home-join-divider and room-code-field are gone from home, and
+/// join-game-button is stacked under create-room-button.
+void _expectNoJoinDivider(WidgetTester tester, String label) {
   expect(
-    divider,
-    findsOneWidget,
-    reason:
-        '$label: home-join-divider must sit between Create and the '
-        'code field',
+    find.byKey(const Key('home-join-divider'), skipOffstage: false),
+    findsNothing,
+    reason: '$label: home-join-divider must be gone from home (order 701)',
+  );
+  expect(
+    find.byKey(const Key('room-code-field'), skipOffstage: false),
+    findsNothing,
+    reason: '$label: room-code-field must be gone from home (order 701)',
   );
   final Rect create = tester.getRect(
     find.byKey(const Key('create-room-button')),
   );
-  final Rect code = tester.getRect(find.byKey(const Key('room-code-field')));
-  final Rect gap = tester.getRect(divider);
+  final Rect join = tester.getRect(find.byKey(const Key('join-game-button')));
   expect(
-    gap.top,
+    join.top,
     greaterThanOrEqualTo(create.bottom),
     reason:
-        '$label: home-join-divider must start at or below Create; '
-        'divider top ${gap.top}, Create bottom ${create.bottom}',
-  );
-  expect(
-    gap.bottom,
-    lessThanOrEqualTo(code.top),
-    reason:
-        '$label: home-join-divider must end at or above the code field; '
-        'divider bottom ${gap.bottom}, code top ${code.top}',
+        '$label: join-game-button must be stacked under Create; join top '
+        '${join.top}, Create bottom ${create.bottom}',
   );
 }
 
@@ -314,7 +311,7 @@ void main() {
 
   testWidgets(
     'tall home tagline-to-die gap is kSpace6 or kSpace7, die-to-name is '
-    'kSpace7, and the join divider sits between Create and the code field',
+    'kSpace7, and the join divider is gone with the code field (order 701)',
     (WidgetTester tester) async {
       await _pumpHome(tester, size: const Size(390, 844));
 
@@ -334,13 +331,13 @@ void main() {
       _expectGapIn(name.top - _heroBottom(tester, loc), <double>{
         kSpace7,
       }, 'tall HomeScreen die-to-name gap (afterDie)');
-      _expectJoinDividerBetween(tester, 'tall HomeScreen');
+      _expectNoJoinDivider(tester, 'tall HomeScreen');
     },
   );
 
   testWidgets(
-    'compact home hero-to-name gap is kSpace4 and the join divider sits '
-    'between Create and the code field',
+    'compact home hero-to-name gap is kSpace4 and the join divider is gone '
+    'with the code field (order 701)',
     (WidgetTester tester) async {
       await _pumpHome(tester, size: const Size(390, 600));
 
@@ -354,7 +351,7 @@ void main() {
       _expectGapIn(name.top - _heroBottom(tester, loc), <double>{
         kSpace4,
       }, 'compact HomeScreen hero-to-name gap (afterDie)');
-      _expectJoinDividerBetween(tester, 'compact HomeScreen');
+      _expectNoJoinDivider(tester, 'compact HomeScreen');
     },
   );
 }
