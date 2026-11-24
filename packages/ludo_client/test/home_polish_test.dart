@@ -661,8 +661,43 @@ void main() {
         // own; take focus away so the tap below is what gives it back.
         await enterOldDefaultName(tester);
         await openCodeEntry(tester);
+
+        // The border cross-fades on a focus change. Its duration is private
+        // to InputDecorator, so the wait is on the condition it stands for:
+        // the frame that starts the fade, then frames until no ticker is
+        // left running. Each picture below is of a border at rest.
+        Future<void> settleBorder(String after) async {
+          await tester.pump();
+          for (int i = 0; i < 60; i++) {
+            if (tester.binding.transientCallbackCount == 0) return;
+            await tester.pump(const Duration(milliseconds: 50));
+          }
+          fail(
+            'expected the code field border to come to rest within 3 s of '
+            'fake time after $after; '
+            '${tester.binding.transientCallbackCount} tickers still run. $r',
+          );
+        }
+
+        bool codeFocused() => tester
+            .widget<EditableText>(
+              find.descendant(
+                of: find.byKey(_codeKey),
+                matching: find.byType(EditableText),
+              ),
+            )
+            .focusNode
+            .hasFocus;
+
         FocusManager.instance.primaryFocus?.unfocus();
-        await tester.pump(const Duration(milliseconds: 500));
+        await settleBorder('unfocus');
+        expect(
+          codeFocused(),
+          isFalse,
+          reason:
+              'expected room-code-field unfocused for the first '
+              'picture. $r',
+        );
 
         Future<ByteData> shot() async {
           final RenderRepaintBoundary b = tester.renderObject(
@@ -678,11 +713,31 @@ void main() {
         final Rect field = tester.getRect(find.byKey(_codeKey));
         final ByteData before = await shot();
         await tester.tap(find.byKey(_codeKey));
-        await tester.pump(const Duration(milliseconds: 500));
-        await tester.pump(const Duration(milliseconds: 500));
+        await settleBorder('the tap on room-code-field');
+        expect(
+          codeFocused(),
+          isTrue,
+          reason:
+              'expected the tap to focus room-code-field for the second '
+              'picture. $r',
+        );
         final ByteData after = await shot();
 
         final int w = size.width.toInt();
+        // The colour on the top edge of the field, midway, in each picture:
+        // named in the failure message.
+        String edge(ByteData img) {
+          final int o =
+              ((field.top + 1).floor() * w + field.center.dx.floor()) * 4;
+          final String hex = <int>[
+            img.getUint8(o),
+            img.getUint8(o + 1),
+            img.getUint8(o + 2),
+            img.getUint8(o + 3),
+          ].map((int c) => c.toRadixString(16).padLeft(2, '0')).join();
+          return 'rgba #$hex';
+        }
+
         final Rect outer = field.inflate(2);
         final Rect inner = field.deflate(4);
         int differing = 0;
@@ -703,7 +758,8 @@ void main() {
           greaterThan(0),
           reason:
               'expected focusing room-code-field to repaint its border '
-              'band ($outer minus $inner); 0 pixels differ. $r',
+              'band ($outer minus $inner); 0 pixels differ (top edge '
+              'unfocused ${edge(before)}, focused ${edge(after)}). $r',
         );
       });
     }
