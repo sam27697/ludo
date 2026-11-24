@@ -114,6 +114,11 @@ _Args _parse(List<String> argv) {
   return a;
 }
 
+/// The server's per-socket limit is 30 messages in a second; one send every
+/// 50 ms is 20 a second at most.
+const int _serverMessageWarnPerSecond = 30;
+const double _minSendGapMs = 50;
+
 final Stopwatch _watch = Stopwatch()..start();
 double _nowMs() => _watch.elapsedMicroseconds / 1000.0;
 
@@ -179,10 +184,35 @@ class _Player {
   final bool host;
   int? seat;
   int _ids = 0;
-  final Completer<void> over = Completer<void>();
+  final Completer<void> over = Completer<void>()..future.ignore();
   final Set<String> pendingIds = <String>{};
 
-  String send(String type, Map<String, Object?> d) {
+  /// The server limits one socket to [_serverMessageWarnPerSecond] messages
+  /// in any second (lib/src/rate_limit.dart `_messageWarnLimit`, enforced in
+  /// lib/src/connection.dart) and answers the rest with RATE_LIMITED, closing
+  /// at twice that. A scripted client that acts the moment it may, on a line
+  /// with no delay, sends far faster than any person does, so every send is
+  /// held until [_minSendGapMs] after this client's previous one. The gap is
+  /// applied before the stopwatch of a sample starts: a sample runs from the
+  /// moment the frame is written to the socket, so pacing never enters it.
+  double _nextSendAtMs = 0;
+
+  void send(String type, Map<String, Object?> d) {
+    final double now = _nowMs();
+    final double at = now < _nextSendAtMs ? _nextSendAtMs : now;
+    _nextSendAtMs = at + _minSendGapMs;
+    if (at <= now) {
+      _sendNow(type, d);
+      return;
+    }
+    Timer(Duration(microseconds: ((at - now) * 1000).ceil()), () {
+      if (!over.isCompleted) {
+        _sendNow(type, d);
+      }
+    });
+  }
+
+  String _sendNow(String type, Map<String, Object?> d) {
     final String id =
         'g${game.index}-$label-${(++_ids).toString().padLeft(5, '0')}';
     final String raw =
@@ -533,6 +563,11 @@ Future<void> main(List<String> argv) async {
   }
   final LineProfile profile =
       LineProfile.named(args.profile, rtoMs: args.rtoMs);
+  if (1000 / _minSendGapMs >= _serverMessageWarnPerSecond) {
+    throw StateError('send gap $_minSendGapMs ms allows '
+        '${1000 / _minSendGapMs} messages a second, the server warns above '
+        '$_serverMessageWarnPerSecond');
+  }
 
   _LocalServer? local;
   String host;

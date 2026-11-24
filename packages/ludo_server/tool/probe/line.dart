@@ -284,13 +284,54 @@ class LinePipe {
       return;
     }
     _queue.add((deliverAt, segment));
-    clock.at(deliverAt, _flush);
+    _arm();
+  }
+
+  /// True while a timer for the head of the queue is pending.
+  bool _armed = false;
+  final List<void Function()> _drainWaiters = <void Function()>[];
+
+  /// Schedules one wake-up for the segment at the head of the queue. A real
+  /// timer can fire a fraction of a millisecond before the stopwatch reads
+  /// the due time, so [_flush] re-arms for whatever is still queued; without
+  /// that a segment due a hair later than its timer would sit until the next
+  /// send, which on a quiet line is never.
+  void _arm() {
+    if (_armed || _queue.isEmpty) {
+      return;
+    }
+    _armed = true;
+    clock.at(_queue.first.$1, () {
+      _armed = false;
+      _flush();
+    });
   }
 
   void _flush() {
     final Duration now = clock.now;
     while (_queue.isNotEmpty && _queue.first.$1 <= now) {
       deliver(_queue.removeFirst().$2);
+    }
+    _arm();
+    if (_queue.isEmpty && _drainWaiters.isNotEmpty) {
+      final List<void Function()> waiters =
+          List<void Function()>.of(_drainWaiters);
+      _drainWaiters.clear();
+      for (final void Function() w in waiters) {
+        w();
+      }
+    }
+  }
+
+  /// True when no segment is waiting for its delivery time.
+  bool get isDrained => _queue.isEmpty;
+
+  /// Runs [callback] once nothing is queued; at once when that is already so.
+  void whenDrained(void Function() callback) {
+    if (_queue.isEmpty) {
+      callback();
+    } else {
+      _drainWaiters.add(callback);
     }
   }
 
@@ -357,12 +398,12 @@ class LineRelay {
       );
       client.listen(
         relay.up!.send,
-        onDone: () => relay.close(),
+        onDone: relay._closeAfterDrain,
         onError: (Object _) => relay.close(),
       );
       upstream.listen(
         relay.down!.send,
-        onDone: () => relay.close(),
+        onDone: relay._closeAfterDrain,
         onError: (Object _) => relay.close(),
       );
     });
@@ -375,6 +416,19 @@ class LineRelay {
     } on Object {
       // The other side already went away; the relay is closing.
     }
+  }
+
+  /// One end hung up. Whatever the line still holds in flight, in either
+  /// direction, is delivered first, as it would be on a real link; closing at
+  /// once would cut the last frames of a game short.
+  void _closeAfterDrain() {
+    final LinePipe? u = up;
+    final LinePipe? d = down;
+    if (u == null || d == null) {
+      close();
+      return;
+    }
+    u.whenDrained(() => d.whenDrained(close));
   }
 
   Future<void> close() async {
