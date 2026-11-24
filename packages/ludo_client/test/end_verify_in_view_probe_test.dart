@@ -142,6 +142,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/fair_check.dart' show debugFairSourceOverride;
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
@@ -1512,6 +1513,13 @@ const List<_Variant> _assertedAtLargeText = <_Variant>[
 ];
 
 void main() {
+  // Scripted dice are not a chain: no fair check runs here, so the row
+  // shows the fairness line as before C-704. The verdict states are in
+  // c704_*_test.dart.
+  setUp(
+    () => debugFairSourceOverride = (String gameId, String chainCommit) => null,
+  );
+  tearDown(() => debugFairSourceOverride = null);
   setUpAll(() async {
     await _loadAppFonts();
   });
