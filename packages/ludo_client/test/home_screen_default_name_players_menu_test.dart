@@ -23,6 +23,7 @@ import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/home_flow.dart';
 
@@ -69,6 +70,17 @@ String _nameFieldText(WidgetTester tester) {
 
 AppLocalizations _loc(WidgetTester tester) {
   return AppLocalizations.of(tester.element(find.byType(Scaffold)));
+}
+
+void _expectLocale(WidgetTester tester, String languageCode, String what) {
+  final String shown = Localizations.localeOf(
+    tester.element(find.byKey(_nameKey)),
+  ).languageCode;
+  expect(
+    shown,
+    languageCode,
+    reason: '$what: expected home in $languageCode, it is in $shown',
+  );
 }
 
 /// Order 701: Create opens a sheet; the friends-only tile creates the room.
@@ -211,41 +223,99 @@ void main() {
     );
   });
 
-  testWidgets(
-    'locale toggle rewrites a name field that still equals the previous '
-    'locale default',
-    (tester) async {
-      await tester.pumpWidget(const LudoApp());
-      await tester.pumpAndSettle();
+  // X226 removed the default-name fallback this case used to pin (a field
+  // still holding the old locale's default was rewritten to the new
+  // locale's). Now a field nobody typed in starts empty and stays empty
+  // across toggles in both directions, and a typed name, even one that
+  // equals the old default, is the player's and is never rewritten.
+  for (final (String from, String to) in const <(String, String)>[
+    ('en', 'ar'),
+    ('ar', 'en'),
+  ]) {
+    testWidgets(
+      'locale toggle $from to $to and back never fills an empty name field '
+      'and never rewrites a typed one',
+      (tester) async {
+        final String scenario = 'start $from, toggle to $to and back';
+        SharedPreferences.setMockInitialValues(<String, Object>{});
+        await tester.pumpWidget(LudoApp(initialLocale: Locale(from)));
+        await tester.pumpAndSettle();
+        _expectLocale(tester, from, '$scenario: fixture: first paint');
 
-      final String previousDefault = _loc(tester).homeDefaultPlayerName;
-      expect(previousDefault, isNotEmpty);
+        expect(
+          _nameFieldText(tester),
+          isEmpty,
+          reason:
+              'X226 ($scenario): the untouched field must start empty; got '
+              '"${_nameFieldText(tester)}"',
+        );
 
-      await tester.enterText(find.byKey(_nameKey), previousDefault);
-      await tester.pump();
-      expect(_nameFieldText(tester), previousDefault);
+        await tester.tap(find.byKey(_localeKey));
+        await tester.pumpAndSettle();
+        _expectLocale(tester, to, '$scenario: fixture: after one toggle');
+        expect(
+          _nameFieldText(tester),
+          isEmpty,
+          reason:
+              'X226 ($scenario): an empty field must not be filled by the '
+              'toggle to $to; it reads "${_nameFieldText(tester)}" (the $to '
+              'default would be "${_loc(tester).homeDefaultPlayerName}")',
+        );
 
-      await tester.tap(find.byKey(_localeKey));
-      await tester.pumpAndSettle();
+        await tester.tap(find.byKey(_localeKey));
+        await tester.pumpAndSettle();
+        _expectLocale(tester, from, '$scenario: fixture: after two toggles');
+        expect(
+          _nameFieldText(tester),
+          isEmpty,
+          reason:
+              'X226 ($scenario): an empty field must not be filled by the '
+              'toggle back to $from; it reads "${_nameFieldText(tester)}"',
+        );
 
-      final AppLocalizations loc = _loc(tester);
-      expect(
-        loc.homeDefaultPlayerName,
-        isNot(previousDefault),
-        reason:
-            'fixture is broken: English and Arabic default names must differ',
-      );
-      expect(
-        _nameFieldText(tester),
-        loc.homeDefaultPlayerName,
-        reason:
-            'a name field still equal to the previous locale default '
-            '("$previousDefault") must be rewritten to the new locale\'s '
-            'homeDefaultPlayerName ("${loc.homeDefaultPlayerName}"); got '
-            '"${_nameFieldText(tester)}"',
-      );
-    },
-  );
+        // The name the old fallback would have rewritten: the current
+        // locale's default, typed by the player.
+        final String typed = _loc(tester).homeDefaultPlayerName;
+        expect(
+          typed,
+          isNotEmpty,
+          reason: '$scenario: fixture: the $from default name is a string',
+        );
+        await tester.enterText(find.byKey(_nameKey), typed);
+        await tester.pump();
+        expect(_nameFieldText(tester), typed);
+
+        await tester.tap(find.byKey(_localeKey));
+        await tester.pumpAndSettle();
+        _expectLocale(tester, to, '$scenario: fixture: toggle with a name');
+        expect(
+          _loc(tester).homeDefaultPlayerName,
+          isNot(typed),
+          reason:
+              '$scenario: fixture: the $from and $to default names must '
+              'differ, or this case proves nothing',
+        );
+        expect(
+          _nameFieldText(tester),
+          typed,
+          reason:
+              'X226 ($scenario): the typed name "$typed" must survive the '
+              'toggle to $to unchanged; got "${_nameFieldText(tester)}"',
+        );
+
+        await tester.tap(find.byKey(_localeKey));
+        await tester.pumpAndSettle();
+        _expectLocale(tester, from, '$scenario: fixture: toggle back');
+        expect(
+          _nameFieldText(tester),
+          typed,
+          reason:
+              'X226 ($scenario): the typed name "$typed" must survive the '
+              'toggle back to $from; got "${_nameFieldText(tester)}"',
+        );
+      },
+    );
+  }
 
   testWidgets('Create forwards players 4', (tester) async {
     await tester.pumpWidget(_homeScreenApp());
