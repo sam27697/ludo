@@ -38,6 +38,7 @@ import 'package:test/test.dart';
 
 import 'support/scripted_bytes.dart';
 import 'support/wire_harness.dart';
+import 'support/pre_copies.dart';
 
 /// docs/PROTOCOL.md section 1, which section 17 applies to every part.
 const int _maxFrameBytes = 8192;
@@ -225,9 +226,10 @@ void _remember(List<Map<String, Object?>> record, Map<String, Object?> frame) {
       'log is allowed to carry: ${frame['d']}',
     );
   }
+  _data(frame);
   record.add(<String, Object?>{
     't': type,
-    'd': _data(frame),
+    'd': dWithoutPre(frame),
   });
 }
 
@@ -576,9 +578,16 @@ void main() {
       mine.frame['t'],
       reason: 'a broadcast push reaches both sockets with the same type',
     );
+    expectPreOnRollerOnly(
+        mine.frame['t']! as String,
+        <(int?, Map<String, Object?>)>[
+          (actorSeat, mine.frame['d']! as Map<String, Object?>),
+          (other.seat, theirs.frame['d']! as Map<String, Object?>),
+        ],
+        'game_log readBroadcast');
     expect(
-      theirs.frame['d'],
-      mine.frame['d'],
+      dWithoutPre(theirs.frame),
+      dWithoutPre(mine.frame),
       reason: 'a broadcast push reaches both sockets with the same d',
     );
     final _Incoming guestCopy =

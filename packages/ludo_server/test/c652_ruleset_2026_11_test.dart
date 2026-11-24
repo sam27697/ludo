@@ -44,6 +44,7 @@ import 'package:test/test.dart';
 import 'support/dice_oracle.dart';
 import 'support/scripted_bytes.dart';
 import 'support/wire_harness.dart';
+import 'support/pre_copies.dart';
 
 typedef Frame = Map<String, Object?>;
 
@@ -727,10 +728,24 @@ void _expectSameOnEverySeat(
   Map<int, List<Frame>> frames,
   String what,
 ) {
+  final List<int> seatsRead = frames.keys.toList();
+  final int n = frames[seatsRead.first]!.length;
+  for (int i = 0; i < n; i++) {
+    if (frames.values.any((List<Frame> l) => l.length != n)) {
+      break;
+    }
+    final Frame f0 = frames[seatsRead.first]![i];
+    expectPreOnRollerOnly(
+        f0['t']! as String,
+        <(int?, Map<String, Object?>)>[
+          for (final int seat in seatsRead) (seat, _d(frames[seat]![i])),
+        ],
+        '$what, frame $i');
+  }
   List<Object?>? first;
   frames.forEach((int seat, List<Frame> list) {
     final List<Object?> shape = <Object?>[
-      for (final Frame f in list) <Object?>[f['t'], _d(f)],
+      for (final Frame f in list) <Object?>[f['t'], dWithoutPre(f)],
     ];
     if (first == null) {
       first = shape;
@@ -812,6 +827,44 @@ Future<Map<int, List<Frame>>> _playToRelease(_Table t) async {
   }
   fx.send(t.c(0), 'roll', <String, Object?>{});
   return t.syncAll(first: 0);
+}
+
+/// docs/PROTOCOL.md section 35 item 3: [seat] was on turn in await_roll and
+/// had been sent a `pre`. Before its retire the server publishes that roll as
+/// the timer would: one or more `rolled` for [seat] with `by: "timer"` (a six
+/// owes another roll on the same seat), then the frames of each step. Returns
+/// the index of `seat_retired` for [seat] in [got]. The face is not steered,
+/// so the step frames between are checked by kind, not by count.
+int _expectForcedRollFirst(
+    _Fixture fx, List<Frame> got, int seat, String reason, String what) {
+  final List<String> seen = <String>[
+    for (final Frame f in got) '${f['t']}:${_d(f)['seat']}',
+  ];
+  fx.ok(got.isNotEmpty && got.first['t'] == 'rolled',
+      '$what: section 35 item 3: the shown roll is published first', seen);
+  final int r = got.indexWhere(
+      (Frame f) => f['t'] == 'seat_retired' && _d(f)['seat'] == seat);
+  fx.ok(
+      r > 0, '$what: seat_retired for seat $seat after the forced roll', seen);
+  fx.eq(_d(got[r])['reason'], reason, '$what: seat_retired.reason');
+  for (final Frame f in got.sublist(0, r)) {
+    final String t = '${f['t']}';
+    fx.ok(
+        <String>{'rolled', 'turn_passed', 'turn'}.contains(t),
+        '$what: only the frames of the forced step come before the retire',
+        seen);
+    if (t == 'rolled') {
+      fx.eq(_d(f)['seat'], seat, '$what: the forced roll is seat $seat\'s');
+      fx.eq(_d(f)['by'], 'timer',
+          '$what: section 35 item 3: taken as the timer would, by "timer"');
+    }
+  }
+  final int seq0 = _d(got.first)['seq']! as int;
+  fx.eq(
+      <Object?>[for (final Frame f in got) _d(f)['seq']],
+      <Object?>[for (int i = 0; i < got.length; i++) seq0 + i],
+      '$what: seq strictly +1 each');
+  return r;
 }
 
 void main() {
@@ -1955,9 +2008,13 @@ void main() {
       await _withFixture('L2 host leaves on turn', (_Fixture fx) async {
         final _Table t = await _openTable(fx, players: 3);
         await _startGame(t);
+        // Seat 0 holds the pre of its opening turn (section 35 item 1), so
+        // its leave publishes that roll first (item 3).
         final String id = fx.send(t.c(0), 'leave_room', <String, Object?>{});
-        final Frame own = await t.c(0).next();
-        fx.eq(own['t'], 'seat_retired', 'leaver answered by seat_retired');
+        final List<Frame> mine = await _flush(fx, t.c(0));
+        final Frame own = mine.firstWhere((Frame f) => f['t'] == 'seat_retired',
+            orElse: () => fx.fail('leaver answered by seat_retired',
+                actual: _types(mine)));
         fx.eq(own['re'], id, 're');
         fx.eq(_d(own)['reason'], 'left', 'reason');
         fx.eq(_d(own)['host_seat'], 1,
@@ -1965,17 +2022,20 @@ void main() {
         t.seats[0]!.up = false;
         for (final int seat in <int>[1, 2]) {
           final List<Frame> got = await _flush(fx, t.c(seat));
-          fx.eq(
-              _types(got),
-              <String>['seat_retired', 'turn'],
-              'seat $seat: the retired seat was to act, so the next playing '
-              'seat gets the turn');
-          fx.eq(_d(got.last)['seat'], 1, 'turn.seat');
-          fx.eq(_d(got.last)['phase'], 'await_roll', 'turn.phase');
-          fx.eq(_d(got.last)['deadline_ms'], 45000, 'turn.deadline_ms');
-          fx.eq(_d(got.last)['seq'], (_d(got.first)['seq']! as int) + 1,
-              'turn.seq follows seat_retired.seq');
+          final int r =
+              _expectForcedRollFirst(fx, got, 0, 'left', 'L2 seat $seat');
+          fx.eq(_d(got[r])['host_seat'], 1, 'seat_retired.host_seat');
+          final Frame last = got.lastWhere((Frame f) => f['t'] == 'turn',
+              orElse: () => fx.fail('seat $seat: a turn for seat 1',
+                  actual: _types(got)));
+          fx.eq(_d(last)['seat'], 1, 'turn.seat');
+          fx.eq(_d(last)['phase'], 'await_roll', 'turn.phase');
+          fx.eq(_d(last)['deadline_ms'], 45000, 'turn.deadline_ms');
+          fx.ok(got.length - r <= 2,
+              'after the retire at most the turn for seat 1', _types(got));
         }
+        fx.eq(_types(mine).where((Object? x) => x == 'seat_retired').length, 1,
+            'the leaver gets one seat_retired');
         final Map<String, Object?> snap = await _resume(t, 2);
         fx.eq(snap['host_seat'], 1, 'snapshot host_seat');
       });
@@ -2209,12 +2269,21 @@ void main() {
         _freshSegment(t);
         fx.server.runTurnExpiryOnce();
         final Map<int, List<Frame>> due = await t.syncAll();
+        // Seat 0 was sent the pre of its opening turn before it dropped
+        // (section 35 items 3 and 7(a)): that roll is published first.
         for (final int seat in <int>[1, 2]) {
-          fx.eq(_types(due[seat]!), <String>['seat_retired', 'turn'],
-              'seat $seat');
-          fx.eq(_d(due[seat]!.first)['host_seat'], 1,
+          final List<Frame> got = due[seat]!;
+          final int r =
+              _expectForcedRollFirst(fx, got, 0, 'absent', 'A3 seat $seat');
+          fx.eq(_d(got[r])['host_seat'], 1,
               'seat_retired.host_seat after the change');
-          fx.eq(_d(due[seat]!.last)['seat'], 1, 'turn.seat');
+          final Frame last = got.lastWhere((Frame f) => f['t'] == 'turn',
+              orElse: () => fx.fail('seat $seat: a turn for seat 1',
+                  actual: _types(got)));
+          fx.eq(_d(last)['seat'], 1, 'turn.seat');
+          fx.eq(_d(last)['phase'], 'await_roll', 'turn.phase');
+          fx.ok(got.length - r <= 2,
+              'after the retire at most the turn for seat 1', _types(got));
         }
       });
     });
@@ -2380,28 +2449,31 @@ void main() {
         final Map<int, List<Frame>> due = await t.syncAll();
         for (final int seat in <int>[2, 3]) {
           final List<Frame> got = due[seat]!;
-          fx.eq(
-              <String>[for (final Frame f in got) '${f['t']}:${_d(f)['seat']}'],
-              <String>['seat_retired:0', 'turn:1', 'seat_retired:1', 'turn:2'],
-              'seat $seat: retire 0 (it was to act, so the turn goes to the '
-              'next playing seat after 0 in config.seats order, 1, which is '
-              'still playing, ENGINE_API 12.4 step 2), retire 1, then the '
-              'turn goes to seat 2');
-          fx.eq(_d(got[0])['seat'], 0, 'first seat_retired.seat');
-          fx.eq(_d(got[0])['reason'], 'absent', 'first reason');
-          fx.eq(_d(got[0])['host_seat'], 1,
+          final List<String> seen = <String>[
+            for (final Frame f in got) '${f['t']}:${_d(f)['seat']}',
+          ];
+          // Seat 0 was sent its opening pre before it dropped: that roll is
+          // published first (section 35 item 3). Seat 1's socket was down for
+          // the whole of any turn it got here, so it was never sent a pre and
+          // is retired with no roll taken (item 7(a)).
+          final int r0 =
+              _expectForcedRollFirst(fx, got, 0, 'absent', 'A9 seat $seat');
+          fx.eq(_d(got[r0])['host_seat'], 1,
               'the host was retired: the lowest seat still playing');
-          fx.eq(_d(got[1])['seat'], 1, 'the turn after retiring seat 0');
-          fx.eq(_d(got[1])['phase'], 'await_roll', 'its phase');
-          fx.eq(_d(got[2])['seat'], 1, 'second seat_retired.seat');
-          fx.eq(_d(got[2])['reason'], 'absent', 'second reason');
-          fx.eq(_d(got[2])['host_seat'], 2, 'the host again: seat 2');
-          fx.eq(_d(got[3])['seat'], 2, 'the last turn');
-          fx.eq(_d(got[3])['phase'], 'await_roll', 'its phase');
-          fx.eq(_d(got[3])['deadline_ms'], 45000, 'a connected seat, 45 s');
-          final int seq = _d(got[0])['seq']! as int;
-          fx.eq(<Object?>[for (final Frame f in got) _d(f)['seq']],
-              <int>[seq, seq + 1, seq + 2, seq + 3], 'seq strictly +1 each');
+          final int r1 = got.indexWhere(
+              (Frame f) => f['t'] == 'seat_retired' && _d(f)['seat'] == 1);
+          fx.ok(r1 > r0, 'seat $seat: seat 1 is retired after seat 0', seen);
+          fx.eq(_d(got[r1])['reason'], 'absent', 'second reason');
+          fx.eq(_d(got[r1])['host_seat'], 2, 'the host again: seat 2');
+          fx.ok(
+              !got.any((Frame f) => f['t'] == 'rolled' && _d(f)['seat'] == 1),
+              'seat $seat: no roll is taken for seat 1, never sent a pre',
+              seen);
+          fx.eq(got.last['t'], 'turn', 'seat $seat: the last frame');
+          fx.eq(_d(got.last)['seat'], 2, 'the last turn');
+          fx.eq(_d(got.last)['phase'], 'await_roll', 'its phase');
+          fx.eq(_d(got.last)['deadline_ms'], 45000, 'a connected seat, 45 s');
+          fx.eq(got.length, r1 + 2, 'seat $seat: the turn follows at once');
         }
         fx.eq(t.room.game!.retired, <int>[0, 1], 'retirement order');
       });
@@ -2427,29 +2499,24 @@ void main() {
             if (_d(f)['phase'] == 'finished') _d(f),
         ], <Object?>[],
             'a game that has ended never gets a turn in phase finished');
+        // Seat 0's shown roll is published first (section 35 item 3); seat
+        // 1 was never sent a pre and gets no roll (item 7(a)).
+        final int r0 = _expectForcedRollFirst(fx, got, 0, 'absent', 'A10');
+        final int n = got.length;
         fx.eq(
-            _types(got),
-            <String>[
-              'seat_retired',
-              'turn',
-              'seat_retired',
-              'game_over',
-              'player_left',
-              'player_left',
-            ],
-            'retire 0, the turn for seat 1, retire 1 (one playing seat '
-            'left), game_over, both retired seats freed');
-        fx.eq(_d(got[1])['seat'], 1, 'the turn after retiring seat 0');
-        fx.eq(_d(got[3])['placings'], <int>[2], 'placings');
-        fx.eq(_d(got[3])['retired'], <int>[0, 1], 'retired');
-        fx.eq(_d(got[3])['winner'], 2, 'winner');
-        fx.eq(<Object?>[_d(got[4])['seat'], _d(got[5])['seat']], <int>[0, 1],
-            'player_left in retirement order');
-        final int seq = _d(got[0])['seq']! as int;
-        fx.eq(
-            <Object?>[for (final Frame f in got) _d(f)['seq']],
-            <int>[seq, seq + 1, seq + 2, seq + 3, seq + 4, seq + 5],
-            'seq strictly +1 each');
+            _types(got).sublist(n - 4),
+            <String>['seat_retired', 'game_over', 'player_left', 'player_left'],
+            'retire 1 (one playing seat left), game_over, both retired seats '
+            'freed');
+        fx.eq(_d(got[n - 4])['seat'], 1, 'the second retire is seat 1');
+        fx.ok(r0 < n - 4, 'seat 0 is retired before seat 1', _types(got));
+        fx.ok(!got.any((Frame f) => f['t'] == 'rolled' && _d(f)['seat'] == 1),
+            'no roll is taken for seat 1, never sent a pre', _types(got));
+        fx.eq(_d(got[n - 3])['placings'], <int>[2], 'placings');
+        fx.eq(_d(got[n - 3])['retired'], <int>[0, 1], 'retired');
+        fx.eq(_d(got[n - 3])['winner'], 2, 'winner');
+        fx.eq(<Object?>[_d(got[n - 2])['seat'], _d(got[n - 1])['seat']],
+            <int>[0, 1], 'player_left in retirement order');
       });
     });
   });
