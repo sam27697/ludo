@@ -152,6 +152,7 @@ import 'package:ludo_client/src/code_ban_notice.dart'
     show RefusalNoticeMark, kRefusalNoticeFrame, kRefusalNoticeFrameWidth;
 import 'package:ludo_client/src/die_cube.dart' show BoardThrownDie;
 import 'package:ludo_client/src/end_card.dart' show EndCard;
+import 'package:ludo_client/src/fair_check.dart' show debugFairSourceOverride;
 import 'package:ludo_client/src/feedback.dart'
     show FeedbackCue, FeedbackScope, FeedbackService, FeedbackSettings;
 import 'package:ludo_client/src/game_screen.dart';
@@ -166,6 +167,7 @@ import 'package:ludo_client/src/net/snapshot.dart'
 import 'package:ludo_client/src/room_code.dart'
     show isValidRoomCode, normalizeRoomCode, roomCodeLength;
 import 'package:ludo_client/src/seat_mark.dart' show SeatMark;
+import 'package:ludo_client/src/seat_names.dart' show botCharacterName;
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart'
     show LastGame, SeatRecord, SessionMemory;
@@ -7191,6 +7193,154 @@ void main() {
       textScale: 2.0,
     );
   });
+
+  // ==========================================================================
+  // 180-193: order 712t (C-712t), the surfaces of the open-rooms release
+  // (orders 701, 704, 706; docs/PROTOCOL.md sections 33 and 34). 180 home on
+  // a fresh install; 181 Create tapped with no name; 182 the create sheet;
+  // 183 the join sheet; 184 its code entry with the keyboard up; 185 the ban
+  // notice after CODE_BANNED; 186 and 187 the waiting window at positions 1
+  // and 3; 188 the vs-computer choice; 189 an open host lobby with the fill
+  // control; 190 the same after a refused fill; 191 a lobby with two
+  // computer seats; 192 and 193 the end card's failed and unavailable
+  // fairness row. Bodies live at the bottom of the file.
+  // ==========================================================================
+  for (final String lang in <String>['en', 'ar']) {
+    final Locale locale = Locale(lang);
+
+    testWidgets('capture 180-home-fresh-install-$lang', (tester) async {
+      await _shootC712HomeFresh(
+        tester,
+        binding,
+        shotName: '180-home-fresh-install-$lang',
+        locale: locale,
+      );
+    });
+
+    testWidgets('capture 181-home-name-required-$lang', (tester) async {
+      await _shootC712NameRequired(
+        tester,
+        binding,
+        shotName: '181-home-name-required-$lang',
+        locale: locale,
+      );
+    });
+
+    testWidgets('capture 182-create-sheet-$lang', (tester) async {
+      await _shootC712Sheet(
+        tester,
+        binding,
+        shotName: '182-create-sheet-$lang',
+        locale: locale,
+        create: true,
+      );
+    });
+
+    testWidgets('capture 183-join-sheet-$lang', (tester) async {
+      await _shootC712Sheet(
+        tester,
+        binding,
+        shotName: '183-join-sheet-$lang',
+        locale: locale,
+        create: false,
+      );
+    });
+
+    testWidgets('capture 184-join-code-entry-keyboard-$lang', (tester) async {
+      await _shootC712CodeEntry(
+        tester,
+        binding,
+        shotName: '184-join-code-entry-keyboard-$lang',
+        locale: locale,
+      );
+    });
+
+    testWidgets('capture 185-join-code-ban-$lang', (tester) async {
+      await _shootC712CodeBan(
+        tester,
+        binding,
+        shotName: '185-join-code-ban-$lang',
+        locale: locale,
+      );
+    });
+
+    testWidgets('capture 186-queue-first-$lang', (tester) async {
+      await _shootC712Queue(
+        tester,
+        binding,
+        shotName: '186-queue-first-$lang',
+        locale: locale,
+        position: 1,
+      );
+    });
+
+    testWidgets('capture 187-queue-third-$lang', (tester) async {
+      await _shootC712Queue(
+        tester,
+        binding,
+        shotName: '187-queue-third-$lang',
+        locale: locale,
+        position: 3,
+      );
+    });
+
+    testWidgets('capture 188-vs-computer-choice-$lang', (tester) async {
+      await _shootC712VsComputer(
+        tester,
+        binding,
+        shotName: '188-vs-computer-choice-$lang',
+        locale: locale,
+      );
+    });
+
+    testWidgets('capture 189-lobby-open-fill-$lang', (tester) async {
+      await _shootC712Lobby(
+        tester,
+        binding,
+        shotName: '189-lobby-open-fill-$lang',
+        locale: locale,
+        shape: _C712Lobby.fillShown,
+      );
+    });
+
+    testWidgets('capture 190-lobby-fill-refused-$lang', (tester) async {
+      await _shootC712Lobby(
+        tester,
+        binding,
+        shotName: '190-lobby-fill-refused-$lang',
+        locale: locale,
+        shape: _C712Lobby.fillRefused,
+      );
+    });
+
+    testWidgets('capture 191-lobby-computer-seats-$lang', (tester) async {
+      await _shootC712Lobby(
+        tester,
+        binding,
+        shotName: '191-lobby-computer-seats-$lang',
+        locale: locale,
+        shape: _C712Lobby.computerSeats,
+      );
+    });
+
+    testWidgets('capture 192-end-fair-failed-$lang', (tester) async {
+      await _shootC712EndFairFailed(
+        tester,
+        binding,
+        shotName: '192-end-fair-failed-$lang',
+        locale: locale,
+      );
+    });
+
+    testWidgets('capture 193-end-fair-unavailable-$lang', (tester) async {
+      await _shootC712EndFairUnavailable(
+        tester,
+        binding,
+        shotName: '193-end-fair-unavailable-$lang',
+        locale: locale,
+      );
+    });
+  }
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -26911,4 +27061,1942 @@ Future<void> _shootLobbyKickedCard(
     context: 'before capture $shotName ($scenario)',
   );
   await _capture(binding, tester, shotName);
+}
+
+// --- order 712t: the open-rooms release (orders 701, 704, 706). Frames follow
+// --- docs/PROTOCOL.md sections 33 and 34: snapshots gain `open` and, for the
+// --- host of an open LOBBY with a free seat, `fill_ms`; a seat's `via` may be
+// --- `public` or `bot`, and a computer seat carries `bot`.
+
+const Key _c712Create = Key('create-room-button');
+const Key _c712Join = Key('join-game-button');
+const Key _c712NameField = Key('home-name-field');
+const Key _c712CodeField = Key('room-code-field');
+const Key _c712JoinRoom = Key('join-room-button');
+const Key _c712Queue = Key('queue-sheet');
+const Key _c712QueueAhead = Key('queue-ahead');
+const Key _c712VsComputer = Key('queue-vs-computer');
+const Key _c712QueueCancel = Key('queue-cancel');
+const Key _c712Fill = Key('lobby-fill-computer');
+const Key _c712FillError = Key('lobby-fill-computer-error');
+const Key _c712FairFailed = Key('end-fair-failed');
+const Key _c712FairUnavailable = Key('end-fair-unavailable');
+const List<Key> _c712FairStates = <Key>[
+  Key('end-fair-checking'),
+  Key('end-fair-unavailable'),
+  Key('end-fair-ok'),
+  Key('end-fair-failed'),
+];
+
+/// 22 characters of base64url, the shape section 33 item 3 gives a ticket.
+const String _c712Ticket = 'Qx7_k2Lm9-Pa4Zt8Rw3Ny6';
+
+/// Section 34 item 1: the English name the wire carries for each character.
+const Map<int, String> _c712WireBotNames = <int, String>{
+  1: 'Zuzu',
+  2: 'Nono',
+  3: 'Kiko',
+  4: 'Bobo',
+  5: 'Tutu',
+  6: 'Mimi',
+};
+
+String _c712Name(Locale locale) => locale.languageCode == 'ar' ? 'سام' : 'Sam';
+
+/// [rect] as (left, top, right, bottom), one decimal each: the device build
+/// strips Rect's own toString (see _expectRectInsideView).
+String _c712Rect(Rect rect) =>
+    '(${rect.left.toStringAsFixed(1)}, ${rect.top.toStringAsFixed(1)}, '
+    '${rect.right.toStringAsFixed(1)}, ${rect.bottom.toStringAsFixed(1)})';
+
+/// Every non-empty text on screen, for a failure message.
+String _c712Texts(WidgetTester tester) {
+  final List<String> texts = <String>[
+    for (final Element e in find.byType(Text).evaluate())
+      (e.widget as Text).data ??
+          (e.widget as Text).textSpan?.toPlainText() ??
+          '',
+  ].where((String s) => s.trim().isNotEmpty).toList();
+  return texts.isEmpty ? 'no text' : texts.join(' | ');
+}
+
+/// Every key in [keys] is on screen exactly once.
+void _c712ExpectKeys(
+  WidgetTester tester,
+  List<Key> keys, {
+  required String shotName,
+  required String scenario,
+  required String repro,
+}) {
+  for (final Key key in keys) {
+    final int found = find.byKey(key).evaluate().length;
+    expect(
+      found,
+      1,
+      reason:
+          'capture $shotName ($scenario): expected one $key on screen, found '
+          '$found; texts on screen: ${_c712Texts(tester)}. Reproduce: $repro',
+    );
+  }
+}
+
+/// No key in [keys] is in the tree, offstage included.
+void _c712ExpectNoKeys(
+  WidgetTester tester,
+  List<Key> keys, {
+  required String shotName,
+  required String scenario,
+  required String repro,
+}) {
+  for (final Key key in keys) {
+    final int found = find.byKey(key, skipOffstage: false).evaluate().length;
+    expect(
+      found,
+      0,
+      reason:
+          'capture $shotName ($scenario): expected no $key in the tree, found '
+          '$found; texts on screen: ${_c712Texts(tester)}. Reproduce: $repro',
+    );
+  }
+}
+
+/// Nothing was reported during layout. In a build with asserts a RenderFlex
+/// overflow is reported this way; the headless run is where it shows.
+void _c712ExpectNoLayoutError(
+  WidgetTester tester, {
+  required String shotName,
+  required String scenario,
+  required String repro,
+}) {
+  final Object? error = tester.takeException();
+  expect(
+    error,
+    isNull,
+    reason:
+        'capture $shotName ($scenario): expected no overflow or layout error '
+        'before the shot, got: $error; view ${_viewText(tester)}; texts on '
+        'screen: ${_c712Texts(tester)}. Reproduce: $repro',
+  );
+}
+
+/// The one measured line of a capture: the rect of its main control, then
+/// whatever else it measured.
+void _c712Print(
+  String shotName,
+  String main,
+  Rect rect,
+  String extra,
+  String scenario,
+) {
+  // ignore: avoid_print
+  print(
+    'C-712t $shotName $main=${_c712Rect(rect)}'
+    '${extra.isEmpty ? '' : ' $extra'} | $scenario',
+  );
+}
+
+/// The [EditableText] inside the text field keyed [key].
+EditableText _c712Editable(WidgetTester tester, Key key) =>
+    tester.widget<EditableText>(
+      find.descendant(of: find.byKey(key), matching: find.byType(EditableText)),
+    );
+
+/// Home in [locale] on a clean store (no name, no seat record, the install
+/// id ready), at text scale 1.0, its controllers built by the returned
+/// factory. Home only, so the pumpAndSettle calls here are safe.
+Future<_ShotFactory> _c712MountHome(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  await installId();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+  final _ShotFactory factory = _ShotFactory();
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+      locale: locale,
+    ),
+  );
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(HomeScreen)),
+  );
+  await _settleForScreenshot(
+    tester,
+    find.text(loc.homeCreateRoomButton),
+    'capture $shotName: the ${locale.languageCode} Create Room button label '
+    '("${loc.homeCreateRoomButton}") laid out on the home screen',
+  );
+  expect(
+    find.byKey(const Key('home-rejoin-button')),
+    findsNothing,
+    reason:
+        'capture $shotName: expected no home-rejoin-button on a home mounted '
+        'after clearing SharedPreferences; a seat record survived the clear',
+  );
+  return factory;
+}
+
+/// Types the player's name into home and drops the focus, so the sheet a
+/// button opens is photographed without the name field's caret.
+Future<void> _c712TypeName(
+  WidgetTester tester,
+  Locale locale, {
+  required String shotName,
+  required String repro,
+}) async {
+  final String name = _c712Name(locale);
+  await enterName(tester, name);
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pump();
+  final String shown = _c712Editable(tester, _c712NameField).controller.text;
+  expect(
+    shown,
+    name,
+    reason:
+        'capture $shotName: typed "$name" into home-name-field, it holds '
+        '"$shown" (a dropped enterText). Reproduce: $repro',
+  );
+}
+
+Future<void> _c712TapHomeButton(WidgetTester tester, Key key) async {
+  await tester.ensureVisible(find.byKey(key));
+  await tester.pump();
+  await tester.tap(find.byKey(key));
+  await tester.pump();
+}
+
+/// 180: home on a fresh install. No name typed, the two buttons of the same
+/// size stacked, and nothing under them: no notice, no last-game card (no
+/// sign-in yet), no code field.
+Future<void> _shootC712HomeFresh(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  final String repro = _x203Repro(shotName);
+  final String scenario =
+      'locale ${locale.languageCode}, fresh install: empty store, no name '
+      'typed, not signed in';
+  final _ShotFactory factory = await _c712MountHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+  );
+  try {
+    expect(
+      googleSignedIn,
+      isFalse,
+      reason:
+          'capture $shotName ($scenario): fixture broken, googleSignedIn must '
+          'be false on a fresh install (account.dart). Reproduce: $repro',
+    );
+    _c712ExpectKeys(
+      tester,
+      const <Key>[_c712NameField, _c712Create, _c712Join],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final String typed = _c712Editable(tester, _c712NameField).controller.text;
+    expect(
+      typed,
+      isEmpty,
+      reason:
+          'capture $shotName ($scenario): expected the name field empty on a '
+          'fresh install (X226, no default name), it holds "$typed". '
+          'Reproduce: $repro',
+    );
+    _c712ExpectNoKeys(
+      tester,
+      const <Key>[
+        Key('home-name-required'),
+        Key('home-notice'),
+        Key('home-code-ban'),
+        Key('code-ban-notice'),
+        Key('home-rejoin-button'),
+        Key('home-last-game'),
+        Key('home-join-divider'),
+        _c712CodeField,
+        _c712JoinRoom,
+        Key('create-room-sheet'),
+        Key('join-sheet'),
+        _c712Queue,
+      ],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final Size createSize = tester.getSize(find.byKey(_c712Create));
+    final Size joinSize = tester.getSize(find.byKey(_c712Join));
+    expect(
+      (createSize.width - joinSize.width).abs() <= 0.5 &&
+          (createSize.height - joinSize.height).abs() <= 0.5,
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): expected the two buttons of equal '
+          'width and height (order 701), create-room-button is '
+          '${createSize.width.toStringAsFixed(1)} x '
+          '${createSize.height.toStringAsFixed(1)}, join-game-button is '
+          '${joinSize.width.toStringAsFixed(1)} x '
+          '${joinSize.height.toStringAsFixed(1)}. Reproduce: $repro',
+    );
+    _expectAtLeast48(
+      tester,
+      find.byKey(_c712Create),
+      'capture $shotName: create-room-button',
+    );
+    _expectAtLeast48(
+      tester,
+      find.byKey(_c712Join),
+      'capture $shotName: join-game-button',
+    );
+    await tester.ensureVisible(find.byKey(_c712Join));
+    await tester.pump();
+    final Rect create = tester.getRect(find.byKey(_c712Create));
+    final Rect join = tester.getRect(find.byKey(_c712Join));
+    expect(
+      join.top >= create.bottom - 0.5,
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): expected join-game-button stacked '
+          'under create-room-button, create ${_c712Rect(create)}, join '
+          '${_c712Rect(join)}. Reproduce: $repro',
+    );
+    for (final Key key in const <Key>[_c712Create, _c712Join]) {
+      _expectRectInsideView(
+        tester,
+        find.byKey(key),
+        label: '$key',
+        context: 'before capture $shotName ($scenario). Reproduce: $repro',
+      );
+    }
+    expect(
+      factory.controllers,
+      isEmpty,
+      reason:
+          'capture $shotName ($scenario): home must build no controller '
+          'before a tap, built ${factory.controllers.length}. Reproduce: '
+          '$repro',
+    );
+    _c712ExpectNoLayoutError(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    _c712Print(
+      shotName,
+      'join-game-button',
+      join,
+      'create-room-button=${_c712Rect(create)}',
+      scenario,
+    );
+    await _capture(binding, tester, shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
+}
+
+/// 181: Create tapped with an empty name. Nothing opens; the name field has
+/// the focus and the red line with the refusal mark stands under it.
+Future<void> _shootC712NameRequired(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  final String repro = _x203Repro(shotName);
+  final String scenario =
+      'locale ${locale.languageCode}, fresh install, create-room-button '
+      'tapped with the name field empty';
+  const Key lineKey = Key('home-name-required');
+  final _ShotFactory factory = await _c712MountHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+  );
+  try {
+    await _c712TapHomeButton(tester, _c712Create);
+    await pumpUntilFound(
+      tester,
+      find.byKey(lineKey),
+      what:
+          'capture $shotName ($scenario): home-name-required after Create '
+          'with no name. Reproduce: $repro',
+    );
+    await pumpUntilAtRest(
+      tester,
+      find.byKey(_c712NameField),
+      what:
+          'capture $shotName ($scenario): home-name-field at rest after its '
+          'shake. Reproduce: $repro',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(HomeScreen)),
+    );
+    _c712ExpectKeys(
+      tester,
+      const <Key>[lineKey, _c712NameField, _c712Create, _c712Join],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final Finder line = find.byKey(lineKey);
+    expect(
+      find.descendant(of: line, matching: find.text(loc.homeNameRequired)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected "${loc.homeNameRequired}" '
+          'in home-name-required; texts on screen: ${_c712Texts(tester)}. '
+          'Reproduce: $repro',
+    );
+    expect(
+      find.descendant(of: line, matching: find.byType(RefusalNoticeMark)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected the refusal mark beside '
+          'the words, so colour is not the only signal. Reproduce: $repro',
+    );
+    expect(
+      _c712Editable(tester, _c712NameField).focusNode.hasFocus,
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): expected home-name-field to take '
+          'the focus (X226). Reproduce: $repro',
+    );
+    _c712ExpectNoKeys(
+      tester,
+      const <Key>[Key('create-room-sheet'), Key('join-sheet'), _c712Queue],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    expect(
+      factory.controllers,
+      isEmpty,
+      reason:
+          'capture $shotName ($scenario): Create with no name must build no '
+          'controller and send nothing; built ${factory.controllers.length}, '
+          'sent ${factory.allTypes}. Reproduce: $repro',
+    );
+    for (final Key key in const <Key>[lineKey, _c712NameField]) {
+      _expectRectInsideView(
+        tester,
+        find.byKey(key),
+        label: '$key',
+        context: 'before capture $shotName ($scenario). Reproduce: $repro',
+      );
+    }
+    _c712ExpectNoLayoutError(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    _c712Print(
+      shotName,
+      'home-name-required',
+      tester.getRect(line),
+      'home-name-field=${_c712Rect(tester.getRect(find.byKey(_c712NameField)))}'
+          ' focused=yes',
+      scenario,
+    );
+    await _capture(binding, tester, shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
+}
+
+/// 182 and 183: the create sheet ([create]) or the join sheet, opened from
+/// home with a name typed, both tiles at rest. Nothing is sent.
+Future<void> _shootC712Sheet(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required bool create,
+}) async {
+  final String sheetName = create ? 'create-room-sheet' : 'join-sheet';
+  final String firstName = create ? 'create-open-tile' : 'join-code-tile';
+  final String secondName = create ? 'create-friends-tile' : 'join-random-tile';
+  final Key sheetKey = Key(sheetName);
+  final Key firstKey = Key(firstName);
+  final Key secondKey = Key(secondName);
+  final IconData firstIcon = create
+      ? Icons.public_rounded
+      : Icons.dialpad_rounded;
+  final IconData secondIcon = create
+      ? Icons.group_rounded
+      : Icons.casino_rounded;
+  final String repro = _x203Repro(shotName);
+  final String scenario =
+      'locale ${locale.languageCode}, name "${_c712Name(locale)}" typed, '
+      '${create ? 'create-room-button' : 'join-game-button'} tapped';
+  final _ShotFactory factory = await _c712MountHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+  );
+  try {
+    await _c712TypeName(tester, locale, shotName: shotName, repro: repro);
+    await _c712TapHomeButton(tester, create ? _c712Create : _c712Join);
+    for (final Key key in <Key>[firstKey, secondKey]) {
+      await pumpUntilAtRest(
+        tester,
+        find.byKey(key),
+        what:
+            'capture $shotName ($scenario): $key in $sheetName. Reproduce: '
+            '$repro',
+      );
+    }
+    _c712ExpectKeys(
+      tester,
+      <Key>[sheetKey, firstKey, secondKey],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final Finder sheet = find.byKey(sheetKey);
+    final AppLocalizations loc = AppLocalizations.of(tester.element(sheet));
+    final String title = create ? loc.createSheetTitle : loc.joinSheetTitle;
+    expect(
+      find.descendant(of: sheet, matching: find.text(title)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected the title "$title" in '
+          '$sheetName; texts on screen: ${_c712Texts(tester)}. Reproduce: '
+          '$repro',
+    );
+    for (final (Key key, IconData icon) in <(Key, IconData)>[
+      (firstKey, firstIcon),
+      (secondKey, secondIcon),
+    ]) {
+      final Finder tile = find.byKey(key);
+      expect(
+        find.descendant(of: sheet, matching: tile),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario): expected $key inside $sheetName. '
+            'Reproduce: $repro',
+      );
+      expect(
+        find.descendant(of: tile, matching: find.byIcon(icon)),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario): expected $key to carry the glyph '
+            'of order 701. Reproduce: $repro',
+      );
+      final double height = tester.getSize(tile).height;
+      expect(
+        height,
+        greaterThanOrEqualTo(96.0),
+        reason:
+            'capture $shotName ($scenario): order 701 asks for tiles at least '
+            '96 dp tall, $key is ${height.toStringAsFixed(1)}. Reproduce: '
+            '$repro',
+      );
+      _expectRectInsideView(
+        tester,
+        tile,
+        label: '$key',
+        context: 'before capture $shotName ($scenario). Reproduce: $repro',
+      );
+    }
+    _c712ExpectNoKeys(
+      tester,
+      <Key>[
+        _c712CodeField,
+        _c712JoinRoom,
+        _c712Queue,
+        Key(create ? 'join-sheet' : 'create-room-sheet'),
+      ],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    expect(
+      factory.controllers,
+      isEmpty,
+      reason:
+          'capture $shotName ($scenario): opening the sheet must build no '
+          'controller and send nothing; built ${factory.controllers.length}, '
+          'sent ${factory.allTypes}. Reproduce: $repro',
+    );
+    _c712ExpectNoLayoutError(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    _c712Print(
+      shotName,
+      firstName,
+      tester.getRect(find.byKey(firstKey)),
+      '$secondName=${_c712Rect(tester.getRect(find.byKey(secondKey)))} '
+      '$sheetName=${_c712Rect(tester.getRect(sheet))}',
+      scenario,
+    );
+    await _capture(binding, tester, shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
+}
+
+/// 184: the join sheet's code entry with three symbols typed and the
+/// keyboard up. The screenshot is of the Flutter surface alone and the test
+/// text input stands in for the keyboard, so the keyboard is given as the
+/// view's bottom inset (40 % of the view height) the way an open keyboard
+/// reports itself; the sheet must rise above it.
+Future<void> _shootC712CodeEntry(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  const String typed = 'k7m';
+  const String shown = 'K7M';
+  final String repro = _x203Repro(shotName);
+  final String scenario =
+      'locale ${locale.languageCode}, name "${_c712Name(locale)}" typed, '
+      'join-game-button, join-code-tile, "$typed" typed, keyboard inset 40 % '
+      'of the view height';
+  expect(
+    normalizeRoomCode(typed),
+    shown,
+    reason:
+        'capture $shotName: fixture broken, "$typed" must fold to "$shown" '
+        '(section 32). Reproduce: $repro',
+  );
+  final _ShotFactory factory = await _c712MountHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+  );
+  try {
+    await _c712TypeName(tester, locale, shotName: shotName, repro: repro);
+    await openCodeEntry(tester);
+    final double dpr = tester.view.devicePixelRatio;
+    final Size view = tester.view.physicalSize / dpr;
+    final double keyboardDp = view.height * 0.4;
+    tester.view.viewInsets = FakeViewPadding(bottom: keyboardDp * dpr);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump();
+    await tester.enterText(find.byKey(_c712CodeField), typed);
+    await tester.pump();
+    for (final Key key in const <Key>[_c712JoinRoom, _c712CodeField]) {
+      await pumpUntilAtRest(
+        tester,
+        find.byKey(key),
+        what:
+            'capture $shotName ($scenario): $key at rest with the keyboard '
+            'up. Reproduce: $repro',
+      );
+    }
+    const Key sheetKey = Key('join-sheet');
+    _c712ExpectKeys(
+      tester,
+      const <Key>[sheetKey, _c712CodeField, _c712JoinRoom],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(sheetKey),
+        matching: find.byKey(_c712CodeField),
+      ),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): the code entry must be the join '
+          'sheet\'s own content (same sheet, no second route). Reproduce: '
+          '$repro',
+    );
+    _c712ExpectNoKeys(
+      tester,
+      const <Key>[Key('join-code-tile'), Key('join-random-tile'), _c712Queue],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final EditableText editable = _c712Editable(tester, _c712CodeField);
+    expect(
+      editable.controller.text,
+      shown,
+      reason:
+          'capture $shotName ($scenario): expected the field to show '
+          '"$shown" after typing "$typed", it shows '
+          '"${editable.controller.text}". Reproduce: $repro',
+    );
+    expect(
+      editable.focusNode.hasFocus,
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): expected room-code-field focused '
+          '(autofocus). Reproduce: $repro',
+    );
+    expect(
+      binding.testTextInput.isVisible,
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): expected the focused field to have '
+          'asked for the keyboard (TextInput.show). Reproduce: $repro',
+    );
+    final double keyboardTop = view.height - keyboardDp;
+    final Rect field = tester.getRect(find.byKey(_c712CodeField));
+    expect(
+      field.top >= 0 && field.bottom <= keyboardTop + 0.5,
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): the sheet must rise with the '
+          'keyboard (order 701): room-code-field is ${_c712Rect(field)}, the '
+          'keyboard starts at ${keyboardTop.toStringAsFixed(1)} dp of a '
+          '${view.height.toStringAsFixed(1)} dp view. Reproduce: $repro',
+    );
+    expect(
+      factory.controllers,
+      isEmpty,
+      reason:
+          'capture $shotName ($scenario): typing a code must build no '
+          'controller before Join; built ${factory.controllers.length}. '
+          'Reproduce: $repro',
+    );
+    _c712ExpectNoLayoutError(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final Rect join = tester.getRect(find.byKey(_c712JoinRoom));
+    _c712Print(
+      shotName,
+      'room-code-field',
+      field,
+      'join-room-button=${_c712Rect(join)} '
+          'join_above_keyboard=${join.bottom <= keyboardTop + 0.5 ? 'yes' : 'no'} '
+          'keyboard_top=${keyboardTop.toStringAsFixed(1)} '
+          'text="${editable.controller.text}"',
+      scenario,
+    );
+    await _capture(binding, tester, shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
+}
+
+/// 185: a code typed in the join sheet's code entry answered `CODE_BANNED`
+/// with a device ban, the frames of capture 173. The ban notice is waited
+/// for by key wherever it is drawn (home or the code entry); the printed line
+/// says where it was.
+Future<void> _shootC712CodeBan(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  final int untilMs = DateTime.now().millisecondsSinceEpoch + 3 * _x203Day;
+  const int nextMs = 7 * _x203Day;
+  final _X203Join j = await _x203JoinFromHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+    code: 'Q4R',
+    detail:
+        'typed in the join sheet code entry, CODE_BANNED scope device, '
+        'until_ms $untilMs, next_ms $nextMs',
+  );
+  j.transport.pushText(
+    _frame(
+      type: 'error',
+      re: j.joinId,
+      data: <String, Object?>{
+        'code': 'CODE_BANNED',
+        'message': 'code joins are blocked',
+        'ban': _x203Ban('device', nextMs, untilMs),
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  const Key noticeKey = Key('code-ban-notice');
+  await _pumpUntilFound(
+    tester,
+    find.byKey(noticeKey),
+    '$shotName: code-ban-notice after CODE_BANNED, on home or in the join '
+    'sheet. ${j.scenario}. Reproduce: ${j.repro}',
+  );
+  await _pumpRealDurationFrames(tester, frameCount: 12);
+  expect(
+    find.byType(LobbyScreen),
+    findsNothing,
+    reason:
+        '$shotName (${j.scenario}): the lobby route must be gone after '
+        'CODE_BANNED. Reproduce: ${j.repro}',
+  );
+  final bool inSheet = find
+      .descendant(
+        of: find.byKey(const Key('join-sheet')),
+        matching: find.byKey(noticeKey),
+      )
+      .evaluate()
+      .isNotEmpty;
+  final bool fieldShown = find.byKey(_c712CodeField).evaluate().isNotEmpty;
+  final String scenario =
+      '${j.scenario}, notice inside join-sheet: ${inSheet ? 'yes' : 'no'}';
+  _c712ExpectNoLayoutError(
+    tester,
+    shotName: shotName,
+    scenario: scenario,
+    repro: j.repro,
+  );
+  _expectX203BanNotice(
+    tester,
+    shotName: shotName,
+    scenario: scenario,
+    repro: j.repro,
+    scope: 'device',
+    untilMs: untilMs,
+    nextMs: nextMs,
+  );
+  _c712Print(
+    shotName,
+    'code-ban-notice',
+    tester.getRect(find.byKey(noticeKey)),
+    'in_join_sheet=${inSheet ? 'yes' : 'no'} '
+        'room-code-field=${fieldShown ? 'yes' : 'no'}',
+    scenario,
+  );
+  await _capture(binding, tester, shotName);
+}
+
+/// Home to the waiting window: a name, the join sheet, the random-players
+/// tile, and the `find_game` it sends answered by `queued` at [position]
+/// (section 33 item 3). Returns once the controller holds that position
+/// and the join sheet has gone.
+Future<void> _c712EnterQueue(
+  WidgetTester tester,
+  _ShotFactory factory, {
+  required Locale locale,
+  required int position,
+  required String shotName,
+  required String scenario,
+  required String repro,
+}) async {
+  await _c712TypeName(tester, locale, shotName: shotName, repro: repro);
+  await _c712TapHomeButton(tester, _c712Join);
+  const Key randomTile = Key('join-random-tile');
+  await pumpUntilAtRest(
+    tester,
+    find.byKey(randomTile),
+    what: 'capture $shotName ($scenario): join-random-tile. Reproduce: $repro',
+  );
+  await tester.tap(find.byKey(randomTile));
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(_c712Queue),
+    'capture $shotName ($scenario): queue-sheet after join-random-tile. '
+    'Reproduce: $repro',
+  );
+  var pumps = 0;
+  while (factory.sent('find_game').isEmpty) {
+    if (pumps >= 200) {
+      fail(
+        'capture $shotName ($scenario): no find_game was sent after 200 '
+        'frames of 16 ms; sent ${factory.allTypes}. Reproduce: $repro',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 16));
+    pumps += 1;
+  }
+  final List<String> finds = factory.sent('find_game');
+  expect(
+    finds,
+    hasLength(1),
+    reason:
+        'capture $shotName ($scenario): expected one find_game, sent '
+        '${factory.allTypes}. Reproduce: $repro',
+  );
+  final Map<String, Object?> data = _dataOf(finds.single);
+  expect(
+    data['name'],
+    _c712Name(locale),
+    reason:
+        'capture $shotName ($scenario): find_game must carry the typed name, '
+        'it carries ${data['name']}. Reproduce: $repro',
+  );
+  expect(
+    data['install'],
+    isA<String>(),
+    reason:
+        'capture $shotName ($scenario): find_game must carry install '
+        '(section 33 item 3), it carries ${data['install']}. Reproduce: '
+        '$repro',
+  );
+  factory.last.pushText(
+    _frame(
+      type: 'queued',
+      re: _idOf(finds.single),
+      data: <String, Object?>{'ticket': _c712Ticket, 'position': position},
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  final RoomController controller = factory.controllers.single;
+  pumps = 0;
+  while (controller.queueState?.position != position) {
+    if (pumps >= 200) {
+      fail(
+        'capture $shotName ($scenario): pushed queued position $position, '
+        'the controller holds position ${controller.queueState?.position} '
+        'after 200 frames of 16 ms. Reproduce: $repro',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 16));
+    pumps += 1;
+  }
+  await pumpUntilGone(
+    tester,
+    find.byKey(const Key('join-sheet')),
+    what: 'capture $shotName ($scenario): join-sheet gone. Reproduce: $repro',
+  );
+}
+
+/// 186 and 187: the waiting window at [position]. At 1 there is no
+/// `queue-ahead`; above 1 it reads `queueAhead(position - 1)`.
+Future<void> _shootC712Queue(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required int position,
+}) async {
+  final String repro = _x203Repro(shotName);
+  final String scenario =
+      'locale ${locale.languageCode}, name "${_c712Name(locale)}", '
+      'join-random-tile, find_game answered queued position $position';
+  final _ShotFactory factory = await _c712MountHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+  );
+  try {
+    await _c712EnterQueue(
+      tester,
+      factory,
+      locale: locale,
+      position: position,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    if (position > 1) {
+      await _pumpUntilFound(
+        tester,
+        find.byKey(_c712QueueAhead),
+        'capture $shotName ($scenario): queue-ahead at position $position. '
+        'Reproduce: $repro',
+      );
+    }
+    await pumpUntilAtRest(
+      tester,
+      find.byKey(_c712VsComputer),
+      what:
+          'capture $shotName ($scenario): queue-vs-computer at rest. '
+          'Reproduce: $repro',
+    );
+    _c712ExpectKeys(
+      tester,
+      const <Key>[_c712Queue, _c712VsComputer, _c712QueueCancel],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final Finder sheet = find.byKey(_c712Queue);
+    final AppLocalizations loc = AppLocalizations.of(tester.element(sheet));
+    expect(
+      find.descendant(of: sheet, matching: find.text(loc.queueTitle)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected the title '
+          '"${loc.queueTitle}" in queue-sheet; texts on screen: '
+          '${_c712Texts(tester)}. Reproduce: $repro',
+    );
+    final Finder ahead = find.byKey(_c712QueueAhead);
+    if (position == 1) {
+      expect(
+        ahead,
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario): position 1 must show no '
+            'queue-ahead; texts on screen: ${_c712Texts(tester)}. Reproduce: '
+            '$repro',
+      );
+    } else {
+      final String? aheadText = tester.widget<Text>(ahead).data;
+      expect(
+        aheadText,
+        loc.queueAhead(position - 1),
+        reason:
+            'capture $shotName ($scenario): expected queue-ahead to read '
+            '"${loc.queueAhead(position - 1)}", it reads "$aheadText". '
+            'Reproduce: $repro',
+      );
+    }
+    expect(
+      find.descendant(
+        of: find.byKey(_c712VsComputer),
+        matching: find.byIcon(Icons.smart_toy_rounded),
+      ),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): queue-vs-computer must carry '
+          'smart_toy_rounded. Reproduce: $repro',
+    );
+    _c712ExpectNoKeys(
+      tester,
+      const <Key>[
+        Key('vs-computer-2'),
+        Key('vs-computer-4'),
+        Key('vs-computer-back'),
+        Key('queue-reconnecting'),
+      ],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    for (final String type in const <String>['cancel_find', 'play_computer']) {
+      expect(
+        factory.sent(type),
+        isEmpty,
+        reason:
+            'capture $shotName ($scenario): nothing was tapped in the window, '
+            'so no $type; sent ${factory.allTypes}. Reproduce: $repro',
+      );
+    }
+    for (final Key key in const <Key>[_c712VsComputer, _c712QueueCancel]) {
+      _expectAtLeast48(tester, find.byKey(key), 'capture $shotName: $key');
+      _expectRectInsideView(
+        tester,
+        find.byKey(key),
+        label: '$key',
+        context: 'before capture $shotName ($scenario). Reproduce: $repro',
+      );
+    }
+    _c712ExpectNoLayoutError(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    _c712Print(
+      shotName,
+      'queue-vs-computer',
+      tester.getRect(find.byKey(_c712VsComputer)),
+      'queue-cancel=${_c712Rect(tester.getRect(find.byKey(_c712QueueCancel)))} '
+          'queue-ahead='
+          '${position > 1 ? _c712Rect(tester.getRect(ahead)) : 'none'}',
+      scenario,
+    );
+    await _capture(binding, tester, shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
+}
+
+/// 188: the waiting window swapped to the vs-computer choice: two tiles and
+/// the back arrow. Nothing is sent.
+Future<void> _shootC712VsComputer(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  const Key two = Key('vs-computer-2');
+  const Key four = Key('vs-computer-4');
+  const Key back = Key('vs-computer-back');
+  final String repro = _x203Repro(shotName);
+  final String scenario =
+      'locale ${locale.languageCode}, name "${_c712Name(locale)}", queued '
+      'position 1, queue-vs-computer tapped';
+  final _ShotFactory factory = await _c712MountHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+  );
+  try {
+    await _c712EnterQueue(
+      tester,
+      factory,
+      locale: locale,
+      position: 1,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    await pumpUntilAtRest(
+      tester,
+      find.byKey(_c712VsComputer),
+      what:
+          'capture $shotName ($scenario): queue-vs-computer at rest. '
+          'Reproduce: $repro',
+    );
+    await tester.tap(find.byKey(_c712VsComputer));
+    await tester.pump();
+    for (final Key key in const <Key>[two, four]) {
+      await pumpUntilAtRest(
+        tester,
+        find.byKey(key),
+        what: 'capture $shotName ($scenario): $key at rest. Reproduce: $repro',
+      );
+    }
+    await pumpUntilGone(
+      tester,
+      find.byKey(_c712VsComputer),
+      what:
+          'capture $shotName ($scenario): the waiting content gone after the '
+          'swap. Reproduce: $repro',
+    );
+    _c712ExpectKeys(
+      tester,
+      const <Key>[_c712Queue, two, four, back],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final Finder sheet = find.byKey(_c712Queue);
+    final AppLocalizations loc = AppLocalizations.of(tester.element(sheet));
+    expect(
+      find.descendant(of: sheet, matching: find.text(loc.vsComputerTitle)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected the title '
+          '"${loc.vsComputerTitle}"; texts on screen: ${_c712Texts(tester)}. '
+          'Reproduce: $repro',
+    );
+    _c712ExpectNoKeys(
+      tester,
+      const <Key>[_c712QueueCancel, _c712QueueAhead],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    for (final Key key in const <Key>[two, four]) {
+      final double height = tester.getSize(find.byKey(key)).height;
+      expect(
+        height,
+        greaterThanOrEqualTo(96.0),
+        reason:
+            'capture $shotName ($scenario): order 701 asks for tiles at least '
+            '96 dp tall, $key is ${height.toStringAsFixed(1)}. Reproduce: '
+            '$repro',
+      );
+    }
+    _expectAtLeast48(tester, find.byKey(back), 'capture $shotName: $back');
+    for (final Key key in const <Key>[two, four, back]) {
+      _expectRectInsideView(
+        tester,
+        find.byKey(key),
+        label: '$key',
+        context: 'before capture $shotName ($scenario). Reproduce: $repro',
+      );
+    }
+    for (final String type in const <String>['cancel_find', 'play_computer']) {
+      expect(
+        factory.sent(type),
+        isEmpty,
+        reason:
+            'capture $shotName ($scenario): opening the choice sends no '
+            '$type; sent ${factory.allTypes}. Reproduce: $repro',
+      );
+    }
+    _c712ExpectNoLayoutError(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    _c712Print(
+      shotName,
+      'vs-computer-2',
+      tester.getRect(find.byKey(two)),
+      'vs-computer-4=${_c712Rect(tester.getRect(find.byKey(four)))} '
+          'vs-computer-back=${_c712Rect(tester.getRect(find.byKey(back)))}',
+      scenario,
+    );
+    await _capture(binding, tester, shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
+}
+
+enum _C712Lobby { fillShown, fillRefused, computerSeats }
+
+/// A computer seat as section 34 item 1 writes one: the wire name, `via`
+/// "bot", `bot`, connected, its seed set by the server.
+Map<String, Object?> _c712BotSeat(int seat, int bot) => <String, Object?>{
+  ..._x202Seat(seat, _c712WireBotNames[bot]!, 'bot'),
+  'bot': bot,
+  'seed_origin': 'server',
+};
+
+/// 189, 190 and 191: the host's own lobby, mounted directly as capture 166
+/// is. 189: an open room (`open` true, `fill_ms` 0) of host, a `public` seat,
+/// a `link` seat and a free seat, the fill control shown. 190: the same after
+/// one tap on it answered `WRONG_PHASE`. 191: a friends-only room of host, a
+/// `link` seat and computer seats `bot` 1 and `bot` 4 (the room a rematch
+/// after a computer game returns to).
+Future<void> _shootC712Lobby(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required _C712Lobby shape,
+}) async {
+  final bool ar = locale.languageCode == 'ar';
+  final bool computers = shape == _C712Lobby.computerSeats;
+  final bool refused = shape == _C712Lobby.fillRefused;
+  final String roomCode = switch (shape) {
+    _C712Lobby.fillShown => 'PB7K2W',
+    _C712Lobby.fillRefused => 'RF9M3X',
+    _C712Lobby.computerSeats => 'CB4N6Q',
+  };
+  final String hostName = ar ? 'ديمة' : 'Dee';
+  final String publicName = ar ? 'ليلى' : 'Lina';
+  final String linkName = ar ? 'كريم' : 'Karim';
+  final List<Map<String, Object?>> seats = computers
+      ? <Map<String, Object?>>[
+          _x202Seat(0, hostName, 'host'),
+          _x202Seat(1, linkName, 'link'),
+          _c712BotSeat(2, 1),
+          _c712BotSeat(3, 4),
+        ]
+      : <Map<String, Object?>>[
+          _x202Seat(0, hostName, 'host'),
+          _x202Seat(1, publicName, 'public'),
+          _x202Seat(2, linkName, 'link'),
+        ];
+  final int? fillMs = computers ? null : 0;
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, host lobby, '
+      '${computers ? 'open false: host, a link seat, computer seats bot 1 '
+                'and bot 4 (via bot)' : 'open true, fill_ms 0: host, a public '
+                'seat, a link seat, seat 3 free'}'
+      '${refused ? ', fill_computer answered WRONG_PHASE' : ''}';
+  final String repro = _x203Repro(shotName);
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final FakeTransport socket = FakeTransport();
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: (Uri url) async => socket,
+  );
+  addTearDown(controller.dispose);
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      LobbyScreen(
+        controller: controller,
+        action: LobbyAction.create,
+        playerName: hostName,
+        players: 4,
+        open: !computers,
+      ),
+      locale: locale,
+    ),
+  );
+  var pumps = 0;
+  while (_sentOfType(socket, 'create_room').isEmpty) {
+    if (pumps >= 200) {
+      fail(
+        'capture $shotName ($scenario): no create_room was sent after 200 '
+        'frames; sent ${socket.sentRaw.map(_typeOf).toList()}. Reproduce: '
+        '$repro',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 16));
+    pumps += 1;
+  }
+  final String create = _sentOfType(socket, 'create_room').single;
+  if (!computers) {
+    expect(
+      _dataOf(create)['open'],
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): a lobby created open must send '
+          'create_room with open true (section 33 item 1), sent '
+          '${_dataOf(create)}. Reproduce: $repro',
+    );
+  }
+  socket.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-$shotName'},
+    ),
+  );
+  socket.pushText(
+    _frame(
+      type: 'room',
+      re: _idOf(create),
+      data: <String, Object?>{
+        ..._x202Room(code: roomCode, seats: seats, approval: false, seq: 1),
+        'open': !computers,
+        'fill_ms': ?fillMs,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byType(LobbyScreen),
+    '$shotName: LobbyScreen after the room frame. $scenario',
+  );
+  await _expectLobbyScreen(
+    tester,
+    localeName: locale.languageCode,
+    code: roomCode,
+    expectedSeatCount: seats.length,
+  );
+  expect(
+    <Object?>[controller.phase, controller.isHost],
+    <Object?>[RoomPhase.connected, true],
+    reason:
+        'capture $shotName ($scenario): expected a connected host, got '
+        '${controller.phase}, isHost ${controller.isHost}. Reproduce: $repro',
+  );
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(LobbyScreen)),
+  );
+
+  void expectOriginGlyph(int seat, IconData icon, String what) {
+    final Finder mark = find.byKey(Key('seat-origin-$seat'));
+    expect(
+      find.descendant(of: mark, matching: find.byIcon(icon)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected seat-origin-$seat to draw '
+          'the $what glyph; found ${mark.evaluate().length} such marks. '
+          'Reproduce: $repro',
+    );
+  }
+
+  if (computers) {
+    expectOriginGlyph(1, Icons.link, 'link');
+    for (final (int seat, int bot) in const <(int, int)>[(2, 1), (3, 4)]) {
+      final Finder card = find.byKey(Key('lobby-seat-$seat'));
+      final String shown = botCharacterName(loc, bot);
+      expect(
+        find.descendant(of: card, matching: find.text(shown)),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario): expected lobby-seat-$seat (bot '
+            '$bot) to show "$shown" in the app\'s language; texts on screen: '
+            '${_c712Texts(tester)}. Reproduce: $repro',
+      );
+      expectOriginGlyph(seat, Icons.smart_toy_rounded, 'robot');
+      expect(
+        find.descendant(of: card, matching: find.byIcon(Icons.wifi_off)),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario): a computer seat never shows the '
+            'away treatment, lobby-seat-$seat draws the wifi-off icon. '
+            'Reproduce: $repro',
+      );
+      if (ar) {
+        final String wire = _c712WireBotNames[bot]!;
+        expect(
+          find.text(wire),
+          findsNothing,
+          reason:
+              'capture $shotName ($scenario): the wire name "$wire" must not '
+              'be shown in Arabic. Reproduce: $repro',
+        );
+      }
+      _expectRectInsideView(
+        tester,
+        card,
+        label: 'lobby-seat-$seat',
+        context: 'before capture $shotName ($scenario). Reproduce: $repro',
+      );
+    }
+    _c712ExpectNoKeys(
+      tester,
+      const <Key>[_c712Fill, _c712FillError],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    _c712ExpectNoLayoutError(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    _c712Print(
+      shotName,
+      'lobby-seat-2',
+      tester.getRect(find.byKey(const Key('lobby-seat-2'))),
+      'lobby-seat-3='
+          '${_c712Rect(tester.getRect(find.byKey(const Key('lobby-seat-3'))))}',
+      scenario,
+    );
+    await _capture(binding, tester, shotName);
+    return;
+  }
+
+  expectOriginGlyph(1, Icons.public_rounded, 'random-players');
+  expectOriginGlyph(2, Icons.link, 'link');
+  expect(
+    find.byKey(const Key('lobby-seat-3')),
+    findsNothing,
+    reason:
+        'capture $shotName ($scenario): seat 3 is free, so no lobby-seat-3 '
+        'card. Reproduce: $repro',
+  );
+  await _pumpUntilFound(
+    tester,
+    find.byKey(_c712Fill),
+    '$shotName: lobby-fill-computer with fill_ms 0. $scenario',
+  );
+  // The control's enter motion (kMotionShort) runs out in these frames.
+  await _pumpRealDurationFrames(tester, frameCount: 12);
+  final Finder fill = find.byKey(_c712Fill);
+
+  void expectFillReady(String when) {
+    expect(
+      find.descendant(of: fill, matching: find.text(loc.lobbyFillComputer)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected "${loc.lobbyFillComputer}" '
+          'on lobby-fill-computer $when; texts on screen: '
+          '${_c712Texts(tester)}. Reproduce: $repro',
+    );
+    expect(
+      find.descendant(of: fill, matching: find.byIcon(Icons.smart_toy_rounded)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected the robot glyph on '
+          'lobby-fill-computer $when. Reproduce: $repro',
+    );
+    expect(
+      tester.widget<ButtonStyleButton>(fill).onPressed,
+      isNotNull,
+      reason:
+          'capture $shotName ($scenario): expected lobby-fill-computer '
+          'enabled $when. Reproduce: $repro',
+    );
+  }
+
+  expectFillReady('with fill_ms 0');
+  _expectAtLeast48(tester, fill, 'capture $shotName: lobby-fill-computer');
+  String extra = 'lobby-fill-computer-error=none';
+  if (refused) {
+    await tester.ensureVisible(fill);
+    await tester.pump();
+    await tester.tap(fill);
+    await tester.pump();
+    pumps = 0;
+    while (_sentOfType(socket, 'fill_computer').isEmpty) {
+      if (pumps >= 200) {
+        fail(
+          'capture $shotName ($scenario): no fill_computer was sent after a '
+          'tap on lobby-fill-computer at ${_c712Rect(tester.getRect(fill))}; '
+          'sent ${socket.sentRaw.map(_typeOf).toList()}. Reproduce: $repro',
+        );
+      }
+      await tester.pump(const Duration(milliseconds: 16));
+      pumps += 1;
+    }
+    final List<String> fills = _sentOfType(socket, 'fill_computer');
+    expect(
+      fills,
+      hasLength(1),
+      reason:
+          'capture $shotName ($scenario): one tap, one fill_computer; sent '
+          '${socket.sentRaw.map(_typeOf).toList()}. Reproduce: $repro',
+    );
+    expect(
+      _dataOf(fills.single),
+      isEmpty,
+      reason:
+          'capture $shotName ($scenario): fill_computer carries {} (section 34 '
+          'item 3), it carries ${_dataOf(fills.single)}. Reproduce: $repro',
+    );
+    socket.pushText(
+      _frame(
+        type: 'error',
+        re: _idOf(fills.single),
+        data: const <String, Object?>{
+          'code': 'WRONG_PHASE',
+          'message': 'fill not allowed yet',
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(_c712FillError),
+      '$shotName: lobby-fill-computer-error after WRONG_PHASE. $scenario',
+    );
+    await _pumpRealDurationFrames(tester, frameCount: 12);
+    final String words = lobbyErrorMessage(loc, 'WRONG_PHASE');
+    final Finder error = find.byKey(_c712FillError);
+    expect(
+      find.descendant(of: error, matching: find.text(words)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected "$words" in '
+          'lobby-fill-computer-error; texts on screen: ${_c712Texts(tester)}. '
+          'Reproduce: $repro',
+    );
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason:
+          'capture $shotName ($scenario): a refused fill leaves the lobby '
+          'connected, phase is ${controller.phase}. Reproduce: $repro',
+    );
+    expectFillReady('after the refusal');
+    _expectRectInsideView(
+      tester,
+      error,
+      label: 'lobby-fill-computer-error',
+      context: 'before capture $shotName ($scenario). Reproduce: $repro',
+    );
+    extra = 'lobby-fill-computer-error=${_c712Rect(tester.getRect(error))}';
+  } else {
+    expect(
+      find.byKey(_c712FillError),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): no error line before any tap. '
+          'Reproduce: $repro',
+    );
+  }
+  _expectRectInsideView(
+    tester,
+    fill,
+    label: 'lobby-fill-computer',
+    context: 'before capture $shotName ($scenario). Reproduce: $repro',
+  );
+  _c712ExpectNoLayoutError(
+    tester,
+    shotName: shotName,
+    scenario: scenario,
+    repro: repro,
+  );
+  _c712Print(
+    shotName,
+    'lobby-fill-computer',
+    tester.getRect(fill),
+    '$extra seat-origin-1='
+        '${_c712Rect(tester.getRect(find.byKey(const Key('seat-origin-1'))))}',
+    scenario,
+  );
+  await _capture(binding, tester, shotName);
+}
+
+/// The fairness row is the one state key [want] on screen, and the other
+/// three are absent; the info control and the verify link stand beside it.
+void _c712ExpectFairRow(
+  WidgetTester tester,
+  Key want, {
+  required String shotName,
+  required String scenario,
+  required String repro,
+}) {
+  for (final Key key in _c712FairStates) {
+    final int found = find.byKey(key).evaluate().length;
+    expect(
+      found,
+      key == want ? 1 : 0,
+      reason:
+          'capture $shotName ($scenario): expected the fairness row in state '
+          '$want only, found $found of $key; texts on screen: '
+          '${_c712Texts(tester)}. Reproduce: $repro',
+    );
+  }
+  _c712ExpectKeys(
+    tester,
+    const <Key>[Key('end-card-fair-hint'), Key('game-screen-verify-button')],
+    shotName: shotName,
+    scenario: scenario,
+    repro: repro,
+  );
+}
+
+/// 192: the loser's end card of the two-seat game of capture 113, played on
+/// this device from `game_started` to `game_over`. Its reveals are scripted
+/// (`_endCardReveal`), not a hash chain of the room's `chain_commit`, so the
+/// device's own check (fair_check.dart, run on the whole transcript with no
+/// request) fails at roll 1 and the row is `end-fair-failed`. The test seam
+/// `debugFairSourceOverride` is not used: it is read only under asserts, and
+/// the profile build CI captures in has none.
+Future<void> _shootC712EndFairFailed(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  const String roomCode = 'FX2K9M';
+  const String gameId = 'c712-fair-failed';
+  final String repro = _x203Repro(shotName);
+  final String scenario =
+      'room $roomCode, game $gameId, locale ${locale.languageCode}, seat 0 '
+      'rolled 2, 5, 3, seat 2 won; scripted reveals that do not hash to '
+      'chain_commit';
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+  expect(
+    debugFairSourceOverride,
+    isNull,
+    reason:
+        'capture $shotName: fixture broken, debugFairSourceOverride must be '
+        'unset so the card runs the real check. Reproduce: $repro',
+  );
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: 'tok-shot-192',
+    );
+    controller = opened.controller;
+    final int gameOverSeq = await _playLoseZeroScript(
+      tester,
+      opened.transport,
+      controller,
+      gameStartedSeq: opened.seq,
+    );
+    opened.transport.pushText(
+      _frame(
+        type: 'game_over',
+        data: <String, Object?>{
+          'winner': 2,
+          'verify_url': 'https://verify.example.invalid/shot192',
+          'seq': gameOverSeq,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byType(EndCard),
+      'capture $shotName ($scenario): the end card after game_over. '
+      'Reproduce: $repro',
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(_c712FairFailed),
+      'capture $shotName ($scenario): end-fair-failed once the check of the '
+      'scripted transcript ends; states on screen: '
+      '${_c712FairStates.where((Key k) => find.byKey(k).evaluate().isNotEmpty).toList()}. '
+      'Reproduce: $repro',
+      maxPumps: 400,
+    );
+    await tester.ensureVisible(find.byKey(_c712FairFailed));
+    await tester.pump();
+    // The row's 220 ms fade between states runs out in these frames.
+    await _pumpRealDurationFrames(tester, frameCount: 12);
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    _c712ExpectKeys(
+      tester,
+      const <Key>[Key('end-card-lose')],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    _c712ExpectFairRow(
+      tester,
+      _c712FairFailed,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final Finder row = find.byKey(_c712FairFailed);
+    expect(
+      find.descendant(of: row, matching: find.byType(RefusalNoticeMark)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected the refusal mark in the '
+          'failed row (order 704). Reproduce: $repro',
+    );
+    final Finder words = find.descendant(
+      of: row,
+      matching: find.text(loc.endFairGameFailed),
+    );
+    expect(
+      words,
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected "${loc.endFairGameFailed}" '
+          'in end-fair-failed; texts on screen: ${_c712Texts(tester)}. '
+          'Reproduce: $repro',
+    );
+    final Color? color = tester.widget<Text>(words).style?.color;
+    expect(
+      color,
+      LudoColors.error,
+      reason:
+          'capture $shotName ($scenario): the failed words are drawn in '
+          'LudoColors.error, they are drawn in $color. Reproduce: $repro',
+    );
+    _expectRectInsideView(
+      tester,
+      row,
+      label: 'end-fair-failed',
+      context: 'before capture $shotName ($scenario). Reproduce: $repro',
+    );
+    _c712ExpectNoLayoutError(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final Rect verify = tester.getRect(
+      find.byKey(const Key('game-screen-verify-button')),
+    );
+    _c712Print(
+      shotName,
+      'end-fair-failed',
+      tester.getRect(row),
+      'game-screen-verify-button=${_c712Rect(verify)}',
+      scenario,
+    );
+    await _capture(binding, tester, shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 193: the loser's end card reached by a resume (the frames of capture
+/// 112): the device holds none of the game, so the check asks for the game
+/// log, and every `game_log` is answered `RATE_LIMITED`. The row is
+/// `end-fair-unavailable`, reading `endFairLine` as it always did.
+Future<void> _shootC712EndFairUnavailable(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  const String roomCode = 'UV3K8P';
+  const String gameId = 'c712-fair-unavailable';
+  const String seatToken = 'tok-shot-193';
+  final String repro = _x203Repro(shotName);
+  final String scenario =
+      'room $roomCode, game $gameId, locale ${locale.languageCode}, Back to '
+      'game on home, the resume answered with a FINISHED room, every '
+      'game_log answered RATE_LIMITED';
+  final _ShotFactory factory = _ShotFactory();
+  try {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+    await (await SharedPreferences.getInstance()).clear();
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+    expect(
+      debugFairSourceOverride,
+      isNull,
+      reason:
+          'capture $shotName: fixture broken, debugFairSourceOverride must be '
+          'unset so the card runs the real check. Reproduce: $repro',
+    );
+    await _seedSeatWithoutSavedTime(
+      const SeatRecord(code: roomCode, seat: 0, seatToken: seatToken),
+    );
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+        locale: locale,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+    _c712ExpectKeys(
+      tester,
+      const <Key>[Key('home-rejoin-button')],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    await tester.ensureVisible(find.byKey(const Key('home-rejoin-button')));
+    await _tapAndAwaitPushedRoute(tester, const Key('home-rejoin-button'));
+    expect(
+      factory.sent('resume'),
+      hasLength(1),
+      reason:
+          'capture $shotName ($scenario): the tap must send one resume, sent '
+          '${factory.allTypes}. Reproduce: $repro',
+    );
+    final FakeTransport transport = factory.last;
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: _idOf(factory.sent('resume').single),
+        data: <String, Object?>{
+          ..._roomJson(
+            code: roomCode,
+            state: 'FINISHED',
+            players: 2,
+            hostSeat: 0,
+            gameId: gameId,
+            clientSeeds: '0:seed|2:seed',
+            winner: 2,
+            turn: const <String, Object?>{
+              'seat': 2,
+              'phase': 'finished',
+              'deadline_ms': 0,
+              'k': 8,
+            },
+            seats: <Map<String, Object?>>[
+              _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 12, -1]),
+              _seatJson(2, name: 'Karim', tokens: const <int>[57, 57, 57, 57]),
+            ],
+            seq: 9,
+          ),
+          'verify_url': 'https://verify.example.invalid/shot193',
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byType(EndCard),
+      'capture $shotName ($scenario): the end card from the FINISHED '
+      'snapshot. Reproduce: $repro',
+    );
+    final Set<String> answered = <String>{};
+    var pumps = 0;
+    while (find.byKey(_c712FairUnavailable).evaluate().isEmpty) {
+      for (final FakeTransport t in factory.transports) {
+        for (final String raw in _sentOfType(t, 'game_log')) {
+          final String id = _idOf(raw);
+          if (answered.add(id)) {
+            t.pushText(
+              _frame(
+                type: 'error',
+                re: id,
+                data: const <String, Object?>{
+                  'code': 'RATE_LIMITED',
+                  'message': 'game_log',
+                },
+              ),
+            );
+          }
+        }
+      }
+      if (pumps >= 600) {
+        fail(
+          'capture $shotName ($scenario): no end-fair-unavailable after 600 '
+          'frames of 16 ms; game_log answered ${answered.length} times; '
+          'states on screen: '
+          '${_c712FairStates.where((Key k) => find.byKey(k).evaluate().isNotEmpty).toList()}; '
+          'sent ${factory.allTypes}. Reproduce: $repro',
+        );
+      }
+      await tester.pump(const Duration(milliseconds: 16));
+      pumps += 1;
+    }
+    expect(
+      answered,
+      isNotEmpty,
+      reason:
+          'capture $shotName ($scenario): the card reached unavailable '
+          'without asking for the game log; sent ${factory.allTypes}. '
+          'Reproduce: $repro',
+    );
+    await tester.ensureVisible(find.byKey(_c712FairUnavailable));
+    await tester.pump();
+    // The row's 220 ms fade between states runs out in these frames.
+    await _pumpRealDurationFrames(tester, frameCount: 12);
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    _c712ExpectKeys(
+      tester,
+      const <Key>[Key('end-card-lose')],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    _c712ExpectFairRow(
+      tester,
+      _c712FairUnavailable,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final Finder row = find.byKey(_c712FairUnavailable);
+    final String? rowText = tester.widget<Text>(row).data;
+    expect(
+      rowText,
+      loc.endFairLine,
+      reason:
+          'capture $shotName ($scenario): the unavailable row reads '
+          '"${loc.endFairLine}" as it always did (order 704 verdict 1), it '
+          'reads "$rowText". Reproduce: $repro',
+    );
+    _expectRectInsideView(
+      tester,
+      row,
+      label: 'end-fair-unavailable',
+      context: 'before capture $shotName ($scenario). Reproduce: $repro',
+    );
+    _c712ExpectNoLayoutError(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    final Rect verify = tester.getRect(
+      find.byKey(const Key('game-screen-verify-button')),
+    );
+    _c712Print(
+      shotName,
+      'end-fair-unavailable',
+      tester.getRect(row),
+      'game-screen-verify-button=${_c712Rect(verify)} '
+          'game_log_answered=${answered.length}',
+      scenario,
+    );
+    await _capture(binding, tester, shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
 }
