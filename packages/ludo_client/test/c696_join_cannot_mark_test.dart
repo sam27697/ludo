@@ -39,6 +39,7 @@ import 'package:ludo_client/src/net/transport.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://c696-test.invalid/ws';
 const String _code = 'K7M2QP';
@@ -559,6 +560,9 @@ Future<void> _tap(WidgetTester tester, Key key) async {
 }
 
 Future<void> _typeAndJoin(WidgetTester tester, _Rig rig, String id) async {
+  // Order 701: a name first (X226), then the code entry in the join sheet.
+  await enterOldDefaultName(tester);
+  await openCodeEntry(tester);
   await tester.enterText(find.byKey(_codeFieldKey), _code);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -576,7 +580,13 @@ Future<void> _typeAndJoin(WidgetTester tester, _Rig rig, String id) async {
 }
 
 Future<void> _hostLobby(WidgetTester tester, _Rig rig, String id) async {
-  await _tap(tester, _createKey);
+  // Order 701: a name first (X226); Create opens the sheet and the
+  // friends-only tile creates the room.
+  await enterOldDefaultName(tester);
+  await tester.ensureVisible(find.byKey(_createKey));
+  await tapCreateRoom(tester);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
   expect(
     rig.sent('create_room'),
     hasLength(1),

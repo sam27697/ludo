@@ -142,6 +142,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
+import 'package:ludo_client/src/account.dart';
 import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
 import 'package:ludo_client/src/board.dart' show LudoBoard;
@@ -174,6 +175,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../test/net/fake_transport.dart';
 import 'fixtures/real_games_fixture.dart' show realGamesJson;
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://screenshots-test.invalid/ws';
 
@@ -422,6 +424,11 @@ void _stubScreenshotChannel(WidgetTester tester) {
 /// LobbyScreen.initState's synchronous createRoom/joinRoom call to have put
 /// its request on the wire by the time this returns.
 Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
+  if (buttonKey == const Key('create-room-button')) {
+    // Order 701: a name, then the create sheet's friends-only tile.
+    await createViaSheet(tester);
+    return;
+  }
   await tester.tap(find.byKey(buttonKey));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -1361,7 +1368,7 @@ void main() {
       find.byKey(const Key('home-name-field')),
       joinerName,
     );
-    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    await enterCodeInEntry(tester, roomCode);
     // Join is in the tree only once the field holds a full code (C-523 D3);
     // let its entry finish before the tap. Home only, so this settles.
     await tester.pumpAndSettle();
@@ -2230,7 +2237,7 @@ void main() {
       find.byKey(const Key('home-name-field')),
       joinerName,
     );
-    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    await enterCodeInEntry(tester, roomCode);
     // Join is in the tree only once the field holds a full code (C-523 D3);
     // let its entry finish before the tap. Home only, so this settles.
     await tester.pumpAndSettle();
@@ -4922,6 +4929,10 @@ void main() {
   testWidgets('capture 33-home-last-game-en, 34-home-last-game-ar', (
     tester,
   ) async {
+    // Order 701: home shows the last-game card only to a player signed in
+    // with Google; the test seam stands in for that sign-in.
+    debugGoogleSignedInOverride = true;
+    addTearDown(() => debugGoogleSignedInOverride = null);
     binding.testTextInput.register();
     _stubScreenshotChannel(tester);
     await binding.convertFlutterSurfaceToImage();
@@ -8055,7 +8066,7 @@ Future<_RealEntry> _enterRealGame(
           '$where: the recorded room code "$roomCode" folds to "$typedCode", '
           'which is not a valid section 32 code',
     );
-    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    await enterCodeInEntry(tester, roomCode);
     // Join is in the tree only once the field holds a full code (C-523 D3).
     await tester.pumpAndSettle();
     await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
@@ -12720,7 +12731,7 @@ Future<_OpenedTrayGame> _openGuestSeat(
     const String hostName = 'Priya';
     const String guestName = 'Karim';
     await tester.enterText(find.byKey(const Key('home-name-field')), guestName);
-    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    await enterCodeInEntry(tester, roomCode);
     // Join is in the tree only once the field holds a full code (C-523 D3);
     // let its entry finish before the tap. Home only, so this settles.
     await tester.pumpAndSettle();
@@ -13812,7 +13823,7 @@ Future<_OpenedTrayGame> _openFourSeatGuestGame(
     await _expectHomeScreen(tester, localeName: locale.languageCode);
 
     await tester.enterText(find.byKey(const Key('home-name-field')), 'Karim');
-    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    await enterCodeInEntry(tester, roomCode);
     // Join is in the tree only once the field holds a full code (C-523 D3);
     // let its entry finish before the tap. Home only, so this settles.
     await tester.pumpAndSettle();
@@ -17820,7 +17831,7 @@ Future<void> _shootHomeJoinShown(
         'code is typed',
   );
 
-  await tester.enterText(find.byKey(const Key('room-code-field')), code);
+  await enterCodeInEntry(tester, code);
   await tester.pumpAndSettle();
   // A store screenshot with the caret handle up shows the typing, not the
   // screen; take focus off the field the way capture 14 does for the name.
@@ -18233,7 +18244,7 @@ Future<void> _typeCodeAndJoin(
   required String code,
   required String shotName,
 }) async {
-  await tester.enterText(find.byKey(const Key('room-code-field')), code);
+  await enterCodeInEntry(tester, code);
   await tester.pump();
   await _pumpUntilFound(
     tester,
@@ -18676,16 +18687,12 @@ Future<void> _shootLobbyJoinRefused(
       );
       await _pumpRealDurationFrames(tester, frameCount: 8);
       expect(
-        tester
-            .widget<TextField>(
-              find.byKey(const Key('room-code-field'), skipOffstage: false),
-            )
-            .controller!
-            .text,
-        isEmpty,
+        find.byKey(const Key('room-code-field'), skipOffstage: false),
+        findsNothing,
         reason:
-            'capture $shotName ($scenario): a link id fills no code field, '
-            'so Home must hold an empty one under the lobby',
+            'capture $shotName ($scenario): a link id fills no code field and '
+            'opens no code entry; the field lives in the join sheet, which '
+            'must not be up under the lobby',
       );
     } else {
       await _typeCodeAndJoin(tester, code: code, shotName: shotName);
@@ -25777,7 +25784,7 @@ Future<void> _shootX202Knocker(
   );
   final String joiner = ar ? 'سام' : 'Sam';
   await tester.enterText(find.byKey(const Key('home-name-field')), joiner);
-  await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+  await enterCodeInEntry(tester, roomCode);
   await tester.pumpAndSettle();
   await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
   expect(
@@ -26020,7 +26027,7 @@ Future<_X203Join> _x203JoinFromHome(
   );
   final String joiner = ar ? 'سام' : 'Sam';
   await tester.enterText(find.byKey(const Key('home-name-field')), joiner);
-  await tester.enterText(find.byKey(const Key('room-code-field')), code);
+  await enterCodeInEntry(tester, code);
   await tester.pumpAndSettle();
   await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
   var pumps = 0;
@@ -26250,7 +26257,7 @@ Future<void> _shootHomeShortCode(
         'capture $shotName: join-room-button is absent before a code is '
         'typed. Reproduce: $repro',
   );
-  await tester.enterText(find.byKey(const Key('room-code-field')), typed);
+  await enterCodeInEntry(tester, typed);
   await tester.pumpAndSettle();
   FocusManager.instance.primaryFocus?.unfocus();
   await tester.pump();

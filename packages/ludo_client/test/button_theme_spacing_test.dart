@@ -13,6 +13,8 @@ import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/theme.dart';
 import 'package:path/path.dart' as p;
 
+import 'support/home_flow.dart';
+
 Directory _findPackageRoot() {
   bool isLudoClient(Directory dir) {
     final File pubspec = File(p.join(dir.path, 'pubspec.yaml'));
@@ -415,6 +417,10 @@ void main() {
     (WidgetTester tester) async {
       await tester.pumpWidget(_homeApp());
       await tester.pump();
+      // Order 701: join-room-button is in the join sheet's code entry, which
+      // opens only with a name.
+      await enterName(tester, 'Player');
+      await openCodeEntry(tester);
       // Join is in the tree only with a full-length code (C-523 D3).
       await tester.enterText(
         find.byKey(const Key('room-code-field')),

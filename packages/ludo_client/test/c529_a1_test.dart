@@ -47,6 +47,7 @@ import 'package:ludo_client/src/server_config.dart' show RoomControllerFactory;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _codeKey = Key('room-code-field');
 const Key _createKey = Key('create-room-button');
@@ -298,7 +299,11 @@ Future<void> _tap(WidgetTester tester, Key key) async {
 
 /// Types a full code, then waits out the 200 ms AnimatedSize that brings Join
 /// in so a tap lands on its final rect.
+///
+/// Order 701: a name first (X226), then the code entry in the join sheet.
 Future<void> _typeCode(WidgetTester tester, String code) async {
+  await enterName(tester, 'Player');
+  await openCodeEntry(tester);
   await tester.enterText(find.byKey(_codeKey), code);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 250));
@@ -372,7 +377,13 @@ Future<void> _hostLobbyAwaitingResume(
   _Rig rig,
   String scenario,
 ) async {
-  await _tap(tester, _createKey);
+  // Order 701: a name first (X226); Create opens the sheet and the
+  // friends-only tile creates the room.
+  await enterName(tester, 'Player');
+  await tester.ensureVisible(find.byKey(_createKey));
+  await tapCreateRoom(tester);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
   expect(
     rig.sent('create_room'),
     hasLength(1),
@@ -817,6 +828,9 @@ void main() {
             reason: '$scenario: Back to home must return to Home',
           );
 
+          // Order 701: the field lives in the join sheet. Open it to read
+          // it, then back out so the link below lands on Home.
+          await openCodeEntry(tester);
           expect(
             _fieldText(tester, _codeKey),
             isEmpty,
@@ -824,6 +838,7 @@ void main() {
                 '$scenario: a link id fills no field; the field holds '
                 '"${_fieldText(tester, _codeKey)}"',
           );
+          await backOutOfSheet(tester, joinSheetKey);
 
           links.stream.add(_linkTo(_linkId));
           await _pumpBounded(tester, frames: 3);
@@ -903,6 +918,8 @@ void main() {
           isTrue,
           reason: '$scenario: Back to home must return to Home',
         );
+        // Order 701: the field lives in the join sheet; open it to read it.
+        await openCodeEntry(tester);
         expect(
           _fieldText(tester, _codeKey),
           '',

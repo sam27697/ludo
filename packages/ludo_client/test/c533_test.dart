@@ -56,6 +56,7 @@ import 'package:ludo_client/src/theme.dart'
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _createKey = Key('create-room-button');
 const Key _removedNoticeKey = Key('home-removed-notice');
@@ -405,7 +406,13 @@ Future<void> _playingGame(
 
 /// Home, tap Create, answer create_room with a two seat lobby for host seat 0.
 Future<void> _hostLobby(WidgetTester tester, _Rig rig, String scenario) async {
-  await _tap(tester, _createKey);
+  // Order 701: a name first (X226); Create opens the sheet and the
+  // friends-only tile creates the room.
+  await enterOldDefaultName(tester);
+  await tester.ensureVisible(find.byKey(_createKey));
+  await tapCreateRoom(tester);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
   expect(
     rig.sent('create_room'),
     hasLength(1),
@@ -1480,6 +1487,9 @@ void main() {
           if (variant.host) {
             await _hostLobby(tester, rig, scenario);
           } else {
+            // Order 701: a name, then the code entry in the join sheet.
+            await enterOldDefaultName(tester);
+            await openCodeEntry(tester);
             await tester.enterText(
               find.byKey(const Key('room-code-field')),
               _code,

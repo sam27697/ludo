@@ -31,6 +31,7 @@ import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
+import 'package:ludo_client/src/account.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/die_mark.dart';
 import 'package:ludo_client/src/home_screen.dart';
@@ -39,6 +40,8 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/session_memory.dart';
 import 'package:ludo_client/src/theme.dart' show buildAppTheme;
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/home_flow.dart';
 
 const Key _logoKey = Key('home-logo-panel');
 const Key _localeKey = Key('locale-toggle-button');
@@ -595,9 +598,6 @@ void main() {
         const Size size = Size(393, 780);
         final String r = _repro(size, locale, 1.0, ', code typed');
         await _mount(tester, size: size, locale: locale);
-        await tester.enterText(find.byKey(_codeKey), 'AB23CD');
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
 
         await _expectGoldStyle(
           tester,
@@ -617,6 +617,13 @@ void main() {
           'create button',
           r,
         );
+        // Order 701: the second home button is the quiet one; the gold join
+        // is the code entry's Join, behind the join sheet's code tile.
+        await enterOldDefaultName(tester);
+        await openCodeEntry(tester);
+        await tester.enterText(find.byKey(_codeKey), 'AB23CD');
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
         await _expectGoldStyle(tester, find.byKey(_joinKey), 'join button', r);
       });
 
@@ -624,6 +631,9 @@ void main() {
           'style', (tester) async {
         const Size size = Size(393, 780);
         final String r = _repro(size, locale, 1.0, ', last game seeded');
+        // Order 701: the card is shown only to a player signed in with Google.
+        debugGoogleSignedInOverride = true;
+        addTearDown(() => debugGoogleSignedInOverride = null);
         SharedPreferences.setMockInitialValues(<String, Object>{});
         await SessionMemory.recordLastGame(
           LastGame(
@@ -647,6 +657,12 @@ void main() {
         const Size size = Size(393, 780);
         final String r = _repro(size, locale, 1.0, ', code field focus');
         await _mount(tester, size: size, locale: locale);
+        // Order 701: the field is in the join sheet and takes focus on its
+        // own; take focus away so the tap below is what gives it back.
+        await enterOldDefaultName(tester);
+        await openCodeEntry(tester);
+        FocusManager.instance.primaryFocus?.unfocus();
+        await tester.pump(const Duration(milliseconds: 500));
 
         Future<ByteData> shot() async {
           final RenderRepaintBoundary b = tester.renderObject(
@@ -923,17 +939,15 @@ void main() {
             won: true,
           ),
         );
+        debugGoogleSignedInOverride = true;
+        addTearDown(() => debugGoogleSignedInOverride = null);
         await _mount(tester, size: size, locale: locale);
-        await tester.enterText(find.byKey(_codeKey), 'AB23CD');
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
 
         final Rect screen = Offset.zero & size;
         for (final MapEntry<String, Key> e in <String, Key>{
           'home-name-field': _nameKey,
           'create-room-button': _createKey,
-          'room-code-field': _codeKey,
-          'join-room-button': _joinKey,
+          'join-game-button': joinGameButtonKey,
           'home-last-game': _lastGameKey,
         }.entries) {
           final Finder f = find.byKey(e.value);
@@ -977,16 +991,12 @@ void main() {
         );
         await _seedMemoryFully();
         await _mount(tester, size: size, locale: locale);
-        await tester.enterText(find.byKey(_codeKey), 'AB23CD');
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
 
         final Rect screen = Offset.zero & size;
         for (final MapEntry<String, Key> e in <String, Key>{
           'home-name-field': _nameKey,
           'create-room-button': _createKey,
-          'room-code-field': _codeKey,
-          'join-room-button': _joinKey,
+          'join-game-button': joinGameButtonKey,
         }.entries) {
           final Finder f = find.byKey(e.value);
           expect(f, findsOneWidget, reason: '${e.key} missing. $r');

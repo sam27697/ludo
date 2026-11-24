@@ -30,6 +30,7 @@ import 'package:ludo_client/src/net/transport.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _codeKey = Key('room-code-field');
 const Key _joinKey = Key('join-room-button');
@@ -228,10 +229,14 @@ class _Home {
     );
     await tester.pump();
     await tester.pump();
+    // Order 701 (X226): a join needs a name; the default the old field held.
+    await enterName(tester, oldDefaultName(locale.languageCode));
     return h;
   }
 
   Future<void> typeAndJoin() async {
+    // Order 701: the code field is behind the join sheet's code tile.
+    await openCodeEntry(tester);
     await tester.enterText(find.byKey(_codeKey), _code);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));

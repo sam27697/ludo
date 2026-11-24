@@ -42,6 +42,7 @@ import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://c681-link-resume.invalid/ws';
 const String _code = 'AB23CD';
@@ -533,7 +534,7 @@ void main() {
       final _Mount mount = _prepare(tester, id);
       await _pumpHome(tester, mount);
       await tester.ensureVisible(find.byKey(_createKey));
-      await tester.tap(find.byKey(_createKey));
+      await tapCreateRoom(tester);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       final FakeTransport transport = mount.factory.transports.single;
