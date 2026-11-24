@@ -84,6 +84,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/fair_check.dart' show debugFairSourceOverride;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
@@ -1117,6 +1118,12 @@ void main() {
       'the winner\'s name on the lose card carries the winner\'s seat '
       'colour, never LudoColors.error',
       (tester) async {
+        // The scripted dice here reveal 'a' * 64, which is not a chain, so a
+        // real fair check would honestly turn the row red. This test is about
+        // the card's colours, not the fairness verdict: the seam answers no
+        // source, so no check runs and the row stays as it was before C-704.
+        debugFairSourceOverride = (String gameId, String chainCommit) => null;
+        addTearDown(() => debugFairSourceOverride = null);
         await _minimalLoseGame(tester);
 
         final Set<Color> colors = _colorsUnder(tester, find.byKey(_loseKey));
