@@ -5,10 +5,14 @@
 // keeps owning the code and the error, so a code typed here is still there
 // the next time the sheet opens.
 //
-// A typed-code join runs while the sheet stays up under the room's route.
-// When the server refuses the code with a ban, the route comes back to this
-// sheet and the ban notice shows here, where the code was typed; any other
-// way the join ends closes the sheet.
+// A typed-code join runs while the sheet stays up under the room's route,
+// only for as long as the join's outcome is unknown. Once the join is
+// accepted and the room's route covers the sheet, home takes the sheet's
+// route out from under it without motion, so coming back from the room shows
+// home and never this sheet. When the server refuses the code with a ban,
+// the route comes back to this sheet and the ban notice shows here, where
+// the code was typed; any other refusal closes the sheet once the route has
+// come back.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -24,7 +28,8 @@ import 'theme.dart';
 
 /// What the join sheet closed with.
 enum JoinChoice {
-  /// A typed-code join ran from the sheet and ended without a ban to show.
+  /// A typed-code join ran from the sheet: accepted, or ended without a ban
+  /// to show.
   code,
 
   /// Random players: home joins the waiting line.
@@ -37,7 +42,8 @@ enum JoinChoice {
 /// runs the typed-code join and completes once the room's route has come
 /// back: true when the sheet stays up to show [codeBan], false when it
 /// closes. [onDismissBan] is the notice's close control. [onRoute] hears the
-/// sheet's route, so its owner can take it down if the owner goes first.
+/// sheet's route, so its owner can take it down if the owner goes first, or
+/// from under an accepted join's room.
 /// Null when the sheet was closed without a choice.
 Future<JoinChoice?> showJoinSheet(
   BuildContext context, {
@@ -125,9 +131,9 @@ class _JoinSheetState extends State<JoinSheet> {
     if (!mounted || stay) {
       return;
     }
-    // A join that resumes a held seat pushes its route at once, above this
-    // sheet: then this sheet is no longer on top and only its own route may
-    // go, without touching the one above it.
+    // Should anything still be above this sheet when the join's route has
+    // come back, only the sheet's own route may go, without touching the
+    // one above it.
     final NavigatorState navigator = Navigator.of(context);
     final ModalRoute<Object?>? route = ModalRoute.of(context);
     if (route == null || route.isCurrent) {
