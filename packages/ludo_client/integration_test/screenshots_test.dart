@@ -18215,9 +18215,10 @@ Future<void> _mountShotHome(
     ),
   );
   if (coldLink != null) {
-    // Section 31 (order 681): a cold room link joins by itself, so the lobby
-    // is pushed over Home and its connecting view never settles. The caller
-    // waits for the lobby; Home is underneath, offstage.
+    // Section 31 (order 681): a cold room link joins without a tap once
+    // there is a name (order 701, X226: a first-time player submits one
+    // first), and the lobby's connecting view never settles. The caller
+    // drives the name and waits for the lobby.
     expect(
       find.byType(HomeScreen, skipOffstage: false),
       findsOneWidget,
@@ -18673,17 +18674,37 @@ Future<void> _shootLobbyJoinRefused(
     );
     if (fromLink) {
       // Section 31 (order 681): a link carries a link id, never a code, so it
-      // fills no field and shows no Join to tap. The cold link is the one
-      // tap: Home pushes the lobby and sends join_room with the link id.
+      // fills no field and shows no Join to tap. Order 701 (X226): this
+      // first-time player has no name, so the link waits on Home with the
+      // name-required line until a name is submitted from the keyboard; the
+      // name typed is the default the old home sent in its place.
       for (int i = 0; i < 6; i += 1) {
         await tester.runAsync(() => Future<void>.delayed(Duration.zero));
         await tester.pump(const Duration(milliseconds: 100));
       }
       await _pumpUntilFound(
         tester,
+        find.byKey(homeNameRequiredKey),
+        'capture $shotName ($scenario): home-name-required while the cold '
+        'link waits for a first-time player\'s name',
+      );
+      expect(
+        <Object?>[
+          find.byType(LobbyScreen).evaluate().length,
+          factory.sent('join_room').length,
+        ],
+        <Object?>[0, 0],
+        reason:
+            'capture $shotName ($scenario): with no name the link must wait: '
+            'expected [LobbyScreen, join_room sent] = [0, 0], sent '
+            '${factory.allTypes}',
+      );
+      await submitName(tester, oldDefaultName(locale.languageCode));
+      await _pumpUntilFound(
+        tester,
         find.byType(LobbyScreen),
         'capture $shotName ($scenario): the lobby pushed by the cold link '
-        'join, with no tap',
+        'join once the name was submitted, with no other tap',
       );
       await _pumpRealDurationFrames(tester, frameCount: 8);
       expect(
@@ -24752,6 +24773,15 @@ Future<void> _shootEndFourLarge(
     );
   }
 
+  // C-704: four_seats_1 is a recorded real game, so the card's own check
+  // finds every roll fair; the shot shows that verdict, not the line that
+  // stands while the check runs.
+  await _awaitEndFairOk(
+    tester,
+    loc: loc,
+    what: '$shotName ($scenario)',
+    reproduce: reproduce,
+  );
   final List<String> problems = await _measureEndCardX167(
     tester,
     capture: shotName,
@@ -24768,6 +24798,62 @@ Future<void> _shootEndFourLarge(
       'failed; reproduce with $reproduce\n${problems.join('\n')}',
     );
   }
+}
+
+const Key _endFairOkKey = Key('end-fair-ok');
+
+/// C-704: pumps until the end card's fairness row holds a verdict
+/// (`end-fair-ok`, `end-fair-failed` or `end-fair-unavailable`) and requires
+/// it to be fair, reading [AppLocalizations.endFairGame]. For captures that
+/// replay a recorded real game: the room's `chain_commit`, every `rolled`
+/// frame's `k`, `reveal` and `value` and the `game_started` seeds are the
+/// recording's, pushed verbatim, so the device's own check must find every
+/// roll fair. A failed or unavailable verdict, or none at all, fails the
+/// capture with what the row showed. Not for scripted dice, whose reveals
+/// are not a chain: those would show the failed row.
+Future<void> _awaitEndFairOk(
+  WidgetTester tester, {
+  required AppLocalizations loc,
+  required String what,
+  required String reproduce,
+}) async {
+  const List<String> verdicts = <String>[
+    'end-fair-ok',
+    'end-fair-failed',
+    'end-fair-unavailable',
+  ];
+  List<String> shown() => <String>[
+    for (final String k in <String>['end-fair-checking', ...verdicts])
+      if (find.byKey(Key(k)).evaluate().isNotEmpty) k,
+  ];
+  await _pumpUntilFound(
+    tester,
+    find.byWidgetPredicate(
+      (Widget w) =>
+          w.key is ValueKey<String> &&
+          verdicts.contains((w.key! as ValueKey<String>).value),
+    ),
+    '$what: a fair check verdict on the end card (one of $verdicts); '
+    'reproduce with $reproduce',
+  );
+  expect(
+    shown(),
+    <String>['end-fair-ok'],
+    reason:
+        '$what: a recorded real game must be checked fair, so the row must '
+        'show end-fair-ok alone; it shows ${shown()}; reproduce with '
+        '$reproduce',
+  );
+  expect(
+    find.descendant(
+      of: find.byKey(_endFairOkKey),
+      matching: find.text(loc.endFairGame),
+    ),
+    findsOneWidget,
+    reason:
+        '$what: end-fair-ok must read "${loc.endFairGame}"; reproduce with '
+        '$reproduce',
+  );
 }
 
 /// Measures the end card on the live tree and prints one `X167` line, in
@@ -24897,9 +24983,11 @@ Future<List<String>> _measureEndCardX167(
           ? null
           : find.ancestor(of: statTile, matching: find.byType(Row)).first,
     ),
+    // C-704: the fairness row of a replayed real game, checked fair by the
+    // device ([_awaitEndFairOk] ran before this measure).
     (
       'verify_line',
-      find.descendant(of: cardFinder, matching: find.text(loc.endFairLine)),
+      find.descendant(of: cardFinder, matching: find.byKey(_endFairOkKey)),
     ),
     ('verify_button', find.byKey(const Key('game-screen-verify-button'))),
     if (rematch) ...<(String, Finder?)>[
@@ -25101,9 +25189,18 @@ Future<void> _shootEndNoRecord(
         '$shotName ($scenario): expected one EndCard; reproduce with '
         '$reproduce',
   );
+  // C-704: host_wins_1 is a recorded real game, so the card's own check
+  // finds every roll fair: the fairness line is `end-fair-ok` reading
+  // endFairGame, and the shot waits for that verdict.
+  await _awaitEndFairOk(
+    tester,
+    loc: loc,
+    what: '$shotName ($scenario)',
+    reproduce: reproduce,
+  );
   final Finder fairLine = find.descendant(
     of: cardFinder,
-    matching: find.text(loc.endFairLine),
+    matching: find.byKey(_endFairOkKey),
   );
   final Finder fairHint = find.byKey(const Key('end-card-fair-hint'));
   final Finder verifyButton = find.byKey(

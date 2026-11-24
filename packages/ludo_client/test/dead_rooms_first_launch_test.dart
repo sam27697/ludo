@@ -58,6 +58,7 @@ import 'package:ludo_client/src/deep_link.dart';
 import 'package:ludo_client/src/end_card.dart';
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
+import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
 import 'package:ludo_client/src/server_config.dart' show RoomControllerFactory;
@@ -404,6 +405,45 @@ Future<void> _typeCode(WidgetTester tester, String code) async {
   await tester.pump(const Duration(milliseconds: 250));
 }
 
+/// Sends the keyboard action `home-name-field` declares, as the keyboard
+/// would on its action key.
+Future<void> _submitNameFromKeyboard(WidgetTester tester) async {
+  await tester.showKeyboard(find.byKey(_nameKey));
+  final TextInputAction action =
+      tester.widget<TextField>(find.byKey(_nameKey)).textInputAction ??
+      TextInputAction.done;
+  await tester.testTextInput.receiveAction(action);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
+/// Sends Go from `room-code-field` in the join sheet's code entry.
+Future<void> _submitCodeFromKeyboard(WidgetTester tester) async {
+  await tester.showKeyboard(find.byKey(_codeKey));
+  await tester.testTextInput.receiveAction(TextInputAction.go);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
+/// Nothing was created, joined or opened: no controller, no frame, no
+/// sheet and no lobby.
+void _expectNothingStarted(WidgetTester tester, _Rig rig, String what) {
+  expect(
+    <Object?>[
+      rig.controllers.length,
+      rig.allTypes.length,
+      find.byKey(createRoomSheetKey).evaluate().length,
+      find.byKey(joinSheetKey).evaluate().length,
+      find.byType(LobbyScreen).evaluate().length,
+    ],
+    <Object?>[0, 0, 0, 0, 0],
+    reason:
+        '$what must start nothing: expected [controllers, frames sent, '
+        'create-room-sheet, join-sheet, LobbyScreen] all 0; frames sent '
+        '${rig.allTypes}',
+  );
+}
+
 String _fieldText(WidgetTester tester, Key key) {
   return tester
       .widget<TextField>(find.byKey(key, skipOffstage: false))
@@ -650,7 +690,10 @@ void main() {
   });
 
   // ------------------------------------------------------------------ D1
-  group('D1 Go on the name field follows the primary action', () {
+  // Order 701 removed Go on the name field: the name is typed, then Create
+  // or Join goes through its sheet, and only a link waiting for a name joins
+  // from the name field's keyboard action (D1a, D4a).
+  group('D1 the keyboard submit follows the action the player chose', () {
     testWidgets('D1a: a link id arriving after the name was edited: join_room '
         'by link with the edited name, never create_room, and '
         'a vanished room reads in the link\'s terms', (tester) async {
@@ -718,18 +761,29 @@ void main() {
     });
 
     testWidgets(
-      'D1b: a valid code the player typed, Go on the name field joins it '
-      '(Join is primary) and the typed-code wording is kept',
+      'D1b: the name typed on home, a valid code typed in the join sheet: Go '
+      'on the code field joins it with that name, and the name field\'s own '
+      'keyboard action creates nothing (order 701 removed Go on the name)',
       (tester) async {
-        const String scenario = 'D1b typed code, Go on name';
+        const String scenario =
+            'D1b name on home, name action, typed code, Go on code';
         final _Rig rig = _Rig();
         await _mount(tester, rig);
 
-        await _typeCode(tester, _otherCode);
         await tester.enterText(find.byKey(_nameKey), 'Eli');
-        await tester.testTextInput.receiveAction(TextInputAction.go);
         await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
+        await _submitNameFromKeyboard(tester);
+        _expectNothingStarted(tester, rig, '$scenario: the name action');
+
+        await _typeCode(tester, _otherCode);
+        expect(
+          _fieldText(tester, _nameKey),
+          'Eli',
+          reason:
+              '$scenario: fixture: opening the code entry must keep the '
+              'typed name; the field reads "${_fieldText(tester, _nameKey)}"',
+        );
+        await _submitCodeFromKeyboard(tester);
 
         expect(
           rig.sent('create_room'),
@@ -747,23 +801,43 @@ void main() {
           'name': 'Eli',
         }, reason: '$scenario: sent ${_dataOf(joins.single)}');
 
+        // A typed code keeps the typed-code wording when the room is gone.
+        _answerError(rig.last, _idOf(joins.single), 'NO_SUCH_ROOM');
+        await _pumpBounded(tester, frames: 3);
+        final Finder error = find.byKey(_lobbyErrorKey);
+        expect(error, findsOneWidget, reason: '$scenario: lobby-error shows');
+        expect(
+          find.descendant(
+            of: error,
+            matching: find.text(_loc(tester).lobbyErrorNoSuchRoom),
+          ),
+          findsOneWidget,
+          reason:
+              '$scenario: a typed code reads lobbyErrorNoSuchRoom; texts are '
+              '${tester.widgetList<Text>(find.descendant(of: error, matching: find.byType(Text))).map((Text t) => t.data).toList()}',
+        );
+
         await _finish(tester, rig);
       },
     );
 
     testWidgets(
-      'D1c: no code in the field, Go on the name field creates; a code of '
-      'fewer than six symbols is a code to join (section 32 item 1)',
+      'D1c: no code anywhere, the name field\'s keyboard action creates '
+      'nothing and Create through its sheet creates with the typed name; a '
+      'code of fewer than six symbols in the join sheet is a code to join '
+      '(section 32 item 1)',
       (tester) async {
-        const String scenario = 'D1c no code and partial code, Go on name';
+        const String scenario =
+            'D1c name action, Create sheet, partial code, Go on code';
         final _Rig rig = _Rig();
         await _mount(tester, rig);
 
         await tester.enterText(find.byKey(_nameKey), 'Dee');
-        await tester.testTextInput.receiveAction(TextInputAction.go);
         await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
+        await _submitNameFromKeyboard(tester);
+        _expectNothingStarted(tester, rig, '$scenario: the name action');
 
+        await _tapCreate(tester);
         expect(
           rig.sent('join_room'),
           isEmpty,
@@ -778,19 +852,22 @@ void main() {
         expect(
           _dataOf(creates.single)['name'],
           'Dee',
-          reason: '$scenario: create_room carries the typed name',
+          reason:
+              '$scenario: create_room carries the typed name; sent '
+              '${_dataOf(creates.single)}',
         );
 
         await _finish(tester, rig);
 
         final _Rig partial = _Rig();
         await _mount(tester, partial);
+        await tester.enterText(find.byKey(_nameKey), 'Dee');
+        await tester.pump();
+        await _ensureCodeEntry(tester);
         await tester.enterText(find.byKey(_codeKey), 'AB23C');
         await tester.pump();
-        await tester.enterText(find.byKey(_nameKey), 'Dee');
-        await tester.testTextInput.receiveAction(TextInputAction.go);
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump(const Duration(milliseconds: 250));
+        await _submitCodeFromKeyboard(tester);
         expect(
           partial.sent('create_room'),
           isEmpty,
@@ -805,9 +882,11 @@ void main() {
           reason: '$scenario: five symbols, Go joins; sent ${partial.allTypes}',
         );
         expect(
-          _dataOf(partialJoins.single)['code'],
-          'AB23C',
-          reason: '$scenario: the code on the wire is the five symbols',
+          _noInstall(_dataOf(partialJoins.single)),
+          <String, Object?>{'code': 'AB23C', 'name': 'Dee'},
+          reason:
+              '$scenario: the code on the wire is the five symbols, with the '
+              'name typed on home; sent ${_dataOf(partialJoins.single)}',
         );
         await _finish(tester, partial);
       },
