@@ -17,8 +17,8 @@
 // fails here. Order 711 replaced three paragraphs in each language (the
 // intro, the advertising paragraph's last sentence, "What you type, and
 // where it goes."); those constants carry the order's text verbatim. The
-// English quotation marks around the section name are written as `&quot;`,
-// the order asking for ASCII double quotes escaped for HTML.
+// English quotation marks around the section name are plain ASCII double
+// quotes, written raw as the page writes its apostrophes.
 //
 // Interpretations the contract leaves open are listed where they are made:
 //
@@ -167,7 +167,7 @@ const String _enPAds =
     'and no third-party crash reporting. Nothing about your use of the '
     'app is shared with any other company. There is no advertising '
     'identifier. The only identifier the app uses is the random install '
-    'id described under &quot;Stopping repeated unwanted joins&quot; '
+    'id described under "Stopping repeated unwanted joins" '
     'below.';
 const String _enH2Typed = 'What you type, and where it goes.';
 const String _enPTyped =
