@@ -391,7 +391,7 @@ class Room {
 
   /// `docs/PROTOCOL.md` section 35 item 3: the last `pre` handed to a socket,
   /// as the game ([gameId]), the seat and the roll number `k` it was for.
-  /// Written only by `RoomRegistry.preRollFor`. A seat holds a `pre` while
+  /// Written only by `recordPreSent` in `registry.dart`. A seat holds a `pre` while
   /// these name the current game, that seat, and `rollCount + 1`, and the
   /// game still awaits that seat's roll. Never on the wire, in a snapshot or
   /// in the verify record.

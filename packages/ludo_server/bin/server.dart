@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:ludo_server/ludo_server.dart';
+import 'package:ludo_server/src/envelope.dart' show logSafeError;
 
 const int _defaultPort = 8080;
 
@@ -28,7 +29,7 @@ void main() {
   runZonedGuarded(() {
     unawaited(_run());
   }, (Object error, StackTrace stack) {
-    stderr.writeln('unhandled $error\n$stack');
+    stderr.writeln('unhandled ${logSafeError(error)}\n$stack');
   });
 }
 

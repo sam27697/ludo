@@ -2462,51 +2462,6 @@ class RoomRegistry {
     );
   }
 
-  /// `docs/PROTOCOL.md` section 35 item 1: the `pre` owed to the socket
-  /// holding [seatToken] in room [code], or null when it is owed none. It is
-  /// owed one exactly when the room is PLAYING, that seat is a human seat on
-  /// turn and the game awaits its roll: the payload of the `rolled` its
-  /// `roll` would produce now, from [_drawRoll] without committing. The roll
-  /// counter, the chain and the engine are left as they were, so two calls
-  /// in a row give the same map.
-  ///
-  /// Called by the socket layer only for a copy it is about to send. The
-  /// room remembers the game, seat and `k` handed out, which is how a
-  /// retirement of that seat knows to take the roll first (item 3).
-  Map<String, Object?>? preRollFor({
-    required String code,
-    required String seatToken,
-  }) {
-    final Room? room = _rooms[code];
-    if (room == null || room.state != RoomState.playing) {
-      return null;
-    }
-    final Seat? seat = _findSeat(room, seatToken);
-    if (seat == null || seat.bot != null) {
-      return null;
-    }
-    final engine.GameState? game = room.game;
-    if (game == null ||
-        game.phase != engine.GamePhase.awaitRoll ||
-        game.currentSeat != seat.seat) {
-      return null;
-    }
-    if (room.rollCount + 1 > room.chain.chainLength) {
-      // [roll] refuses this roll with INTERNAL before reading a link, so
-      // there is no face to show either.
-      return null;
-    }
-    final _RollDraw draw = _drawRoll(room, seat, commit: false);
-    final Map<String, Object?>? payload = draw.payload;
-    if (payload == null) {
-      return null;
-    }
-    room.preGameId = room.gameId;
-    room.preSeat = seat.seat;
-    room.preK = draw.k;
-    return payload;
-  }
-
   /// Section 35 item 3: [seat] was sent a `pre` for the roll it owes now, and
   /// that roll has not been taken.
   bool _holdsPre(Room room, Seat seat) {
@@ -4278,4 +4233,69 @@ class _RollDraw {
   final bool release;
   final Map<String, Object?>? payload;
   final engine.EngineError? refused;
+}
+
+/// `docs/PROTOCOL.md` section 35 item 1: the `pre` owed to the socket holding
+/// [seatToken] in room [code], or null when it is owed none. It is owed one
+/// exactly when the room is PLAYING, that seat is a human seat on turn and the
+/// game awaits its roll: the payload of the `rolled` its `roll` would produce
+/// now, from `_drawRoll` without committing. Pure: nothing on the room, the
+/// seat, the roll counter, the chain or the engine is written, so two calls in
+/// a row give the same map. What was handed out is recorded separately, by
+/// [recordPreSent], once a copy carrying it has gone to an open socket.
+///
+/// A top-level function of this library, not a member of [RoomRegistry], so
+/// that it reaches the registry's private state and stays out of the
+/// package's public surface (`lib/ludo_server.dart` exports this file with
+/// `show`).
+Map<String, Object?>? peekPre(
+  RoomRegistry registry, {
+  required String code,
+  required String seatToken,
+}) {
+  final Room? room = registry._rooms[code];
+  if (room == null || room.state != RoomState.playing) {
+    return null;
+  }
+  final Seat? seat = registry._findSeat(room, seatToken);
+  if (seat == null || seat.bot != null) {
+    return null;
+  }
+  final engine.GameState? game = room.game;
+  if (game == null ||
+      game.phase != engine.GamePhase.awaitRoll ||
+      game.currentSeat != seat.seat) {
+    return null;
+  }
+  if (room.rollCount + 1 > room.chain.chainLength) {
+    // `roll` refuses this roll with INTERNAL before reading a link, so there
+    // is no face to show either.
+    return null;
+  }
+  return registry._drawRoll(room, seat, commit: false).payload;
+}
+
+/// Section 35 item 3: records that the seat holding [seatToken] in room
+/// [code] was sent the `pre` of roll [k] of the current game. Called by the
+/// socket layer only after a copy carrying that `pre` was handed to an open
+/// socket. This record is how a retirement of that seat knows to take the
+/// roll first. Writes nothing unless [k] is still the roll that seat owes.
+/// Kept out of the package's public surface like [peekPre].
+void recordPreSent(
+  RoomRegistry registry, {
+  required String code,
+  required String seatToken,
+  required int k,
+}) {
+  final Room? room = registry._rooms[code];
+  if (room == null || room.gameId == null || k != room.rollCount + 1) {
+    return;
+  }
+  final Seat? seat = registry._findSeat(room, seatToken);
+  if (seat == null || seat.bot != null) {
+    return;
+  }
+  room.preGameId = room.gameId;
+  room.preSeat = seat.seat;
+  room.preK = k;
 }

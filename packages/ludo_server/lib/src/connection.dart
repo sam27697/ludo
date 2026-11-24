@@ -2784,11 +2784,34 @@ class Connection {
     if (_closed) {
       return;
     }
-    final Map<String, Object?> out = _withPre(type, data) ?? data;
+    Map<String, Object?> out = data;
+    int? preK;
+    // Section 35 item 5: a copy without `pre` is still a correct frame (the
+    // client waits for `rolled`), so a failure computing `pre` costs only the
+    // `pre`. It must never stop this send, nor a broadcast loop that called
+    // it, and it is logged, with a FormatException's input left out.
+    try {
+      final ({Map<String, Object?> data, int k})? decorated =
+          _withPre(type, data);
+      if (decorated != null) {
+        out = decorated.data;
+        preK = decorated.k;
+      }
+    } catch (error) {
+      out = data;
+      preK = null;
+      // ignore: avoid_print
+      print('pre_failed room=${roomCode ?? '-'} error=${logSafeError(error)}');
+    }
     final String id = generateMessageId(random);
     channel.sink.add(
       encodeEnvelope(type: type, id: id, data: out, re: re),
     );
+    final String? code = roomCode;
+    final String? token = seatToken;
+    if (preK != null && code != null && token != null) {
+      recordPreSent(registry, code: code, seatToken: token, k: preK);
+    }
   }
 
   /// `docs/PROTOCOL.md` section 35 item 1: this socket's own copy of a `turn`
@@ -2799,8 +2822,12 @@ class Connection {
   /// and `phase`, and a snapshot's `code` and `k`, must say the same, so a
   /// copy describing an earlier moment gets none. [data] is never changed:
   /// it is the map every other socket and `room.gameLog` hold. Null when
-  /// this copy carries no `pre`.
-  Map<String, Object?>? _withPre(String type, Map<String, Object?> data) {
+  /// this copy carries no `pre`; otherwise the copy and the `k` of its
+  /// `pre`, for the record [_send] writes once the copy has gone out.
+  ({Map<String, Object?> data, int k})? _withPre(
+    String type,
+    Map<String, Object?> data,
+  ) {
     final String? code = roomCode;
     final String? token = seatToken;
     if (code == null || token == null) {
@@ -2832,11 +2859,16 @@ class Connection {
       return null;
     }
     final Map<String, Object?>? pre =
-        registry.preRollFor(code: code, seatToken: token);
+        peekPre(registry, code: code, seatToken: token);
     if (pre == null) {
       return null;
     }
-    return withRollerPre(type: type, data: data, pre: pre);
+    final Map<String, Object?>? copy =
+        withRollerPre(type: type, data: data, pre: pre);
+    if (copy == null) {
+      return null;
+    }
+    return (data: copy, k: pre['k']! as int);
   }
 
   Seat? _ownSeat(Room room, String token) {
