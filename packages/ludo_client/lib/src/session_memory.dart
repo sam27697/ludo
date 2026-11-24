@@ -436,6 +436,18 @@ class SessionMemory {
     }
   }
 
+  /// Writes [name] alone as [lastName], for a seat that came by no code and
+  /// no create of this phone's own (the waiting line, a computer game). Never
+  /// throws: an unusable store is swallowed, same as [recordSeat].
+  static Future<void> recordName(String name) async {
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_nameKey, name);
+    } on Object {
+      return;
+    }
+  }
+
   /// Writes [code] to the front of the recent list so a later [load]
   /// restores it newest-first, unique, and at most [_maxRecentCodes].
   /// When [name] is given, also stores it as [lastName]. Never writes or

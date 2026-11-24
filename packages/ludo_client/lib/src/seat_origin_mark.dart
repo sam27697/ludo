@@ -23,6 +23,8 @@ String? seatOriginLabel(AppLocalizations loc, SeatVia via) {
     case SeatVia.approved:
       return loc.seatOriginApproved;
     case SeatVia.host:
+    case SeatVia.public:
+    case SeatVia.bot:
     case SeatVia.unknown:
       return null;
   }
@@ -67,7 +69,10 @@ class SeatOriginMark extends StatelessWidget {
           ),
         ],
       ),
-      SeatVia.host || SeatVia.unknown => const SizedBox.shrink(),
+      SeatVia.host ||
+      SeatVia.public ||
+      SeatVia.bot ||
+      SeatVia.unknown => const SizedBox.shrink(),
     };
     return Semantics(
       label: label,

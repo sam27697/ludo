@@ -24,7 +24,9 @@ enum SeedOrigin { player, server }
 
 /// docs/PROTOCOL.md section 31 item 1: how a seat came to be taken. `unknown`
 /// is a missing key (an older server) or a value this build does not know.
-enum SeatVia { host, link, code, approved, unknown }
+/// Section 33 item 5 adds `public` (a seat given from the waiting line) and
+/// `bot` (a computer seat, section 34).
+enum SeatVia { host, link, code, approved, public, bot, unknown }
 
 /// docs/PROTOCOL.md section 31 item 3: one open knock, as the host's
 /// snapshot lists it. [expiresMs] is the time remaining when the snapshot
@@ -130,6 +132,7 @@ class SeatState {
     this.drought,
     this.banked = 0,
     this.via = SeatVia.unknown,
+    this.bot,
   });
 
   final int seat;
@@ -162,6 +165,10 @@ class SeatState {
   /// docs/PROTOCOL.md section 31 item 1.
   final SeatVia via;
 
+  /// docs/PROTOCOL.md section 34 item 1: which of the six computer characters
+  /// plays this seat (1..6). Null for a human seat, which carries no key.
+  final int? bot;
+
   factory SeatState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');
     if (seat < 0 || seat > 3) {
@@ -179,6 +186,10 @@ class SeatState {
     final int? drought = _optInt(json, 'drought');
     final int banked = _optInt(json, 'banked') ?? 0;
     final SeatVia via = _seatViaOf(json['via']);
+    final int? bot = _optInt(json, 'bot');
+    if (bot != null && (bot < 1 || bot > 6)) {
+      throw const SnapshotFormatException('bot');
+    }
 
     return SeatState(
       seat: seat,
@@ -191,6 +202,7 @@ class SeatState {
       drought: drought,
       banked: banked,
       via: via,
+      bot: bot,
     );
   }
 
@@ -209,6 +221,7 @@ class SeatState {
     int? drought,
     int? banked,
     SeatVia? via,
+    int? bot,
   }) {
     return SeatState(
       seat: seat ?? this.seat,
@@ -221,6 +234,7 @@ class SeatState {
       drought: drought ?? this.drought,
       banked: banked ?? this.banked,
       via: via ?? this.via,
+      bot: bot ?? this.bot,
     );
   }
 }
@@ -393,6 +407,8 @@ class RoomSnapshot {
     this.linkId = '',
     this.guestApproval = false,
     this.knocks = const <Knock>[],
+    this.open = false,
+    this.fillMs,
     required this.seq,
   });
 
@@ -460,6 +476,15 @@ class RoomSnapshot {
   /// docs/PROTOCOL.md section 31 item 3: the open knocks, host's snapshot
   /// only. Empty when none or when the key is absent.
   final List<Knock> knocks;
+
+  /// docs/PROTOCOL.md section 33 item 1: an open room, one the server may
+  /// seat strangers in from the waiting line. False when the key is absent.
+  final bool open;
+
+  /// docs/PROTOCOL.md section 34 item 3: in the host's snapshot of an open
+  /// LOBBY with a free seat, the milliseconds left until `fill_computer` is
+  /// allowed (0 once it is). Null when the key is absent.
+  final int? fillMs;
 
   final int seq;
 
@@ -549,6 +574,12 @@ class RoomSnapshot {
       }
     }
 
+    final bool open = _optBool(json, 'open') ?? false;
+    final int? fillMs = _optInt(json, 'fill_ms');
+    if (fillMs != null && fillMs < 0) {
+      throw const SnapshotFormatException('fill_ms');
+    }
+
     final int seq = _reqInt(json, 'seq');
 
     return RoomSnapshot(
@@ -571,6 +602,8 @@ class RoomSnapshot {
       linkId: linkId,
       guestApproval: guestApproval,
       knocks: knocks,
+      open: open,
+      fillMs: fillMs,
       seq: seq,
     );
   }
@@ -611,6 +644,8 @@ class RoomSnapshot {
     String? linkId,
     bool? guestApproval,
     List<Knock>? knocks,
+    bool? open,
+    int? fillMs,
     int? seq,
   }) {
     return RoomSnapshot(
@@ -640,6 +675,8 @@ class RoomSnapshot {
       linkId: linkId ?? this.linkId,
       guestApproval: guestApproval ?? this.guestApproval,
       knocks: knocks ?? this.knocks,
+      open: open ?? this.open,
+      fillMs: fillMs ?? this.fillMs,
       seq: seq ?? this.seq,
     );
   }
@@ -675,6 +712,10 @@ SeatVia _seatViaOf(Object? value) {
       return SeatVia.code;
     case 'approved':
       return SeatVia.approved;
+    case 'public':
+      return SeatVia.public;
+    case 'bot':
+      return SeatVia.bot;
     default:
       return SeatVia.unknown;
   }
