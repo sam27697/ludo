@@ -650,13 +650,13 @@ class Connection {
   }
 
   void _handleCreateRoom(ParsedEnvelope envelope) {
+    // Section 33 item 4: a queued socket that creates a room leaves the line.
+    _dropOwnTicket();
     if (!rateLimiter.recordCreateRoom(ip)) {
       _reject(envelope, ProtocolError.rateLimited);
       return;
     }
     _withdrawOwnKnock();
-    // Section 33 item 4: a queued socket that creates a room leaves the line.
-    _dropOwnTicket();
 
     const Set<String> allowedKeys = <String>{
       'name',
@@ -746,12 +746,12 @@ class Connection {
   }
 
   void _handleJoinRoom(ParsedEnvelope envelope) {
+    // Section 33 item 4: a queued socket that joins a room leaves the line.
+    _dropOwnTicket();
     if (!rateLimiter.recordJoinOrResume(ip)) {
       _reject(envelope, ProtocolError.rateLimited);
       return;
     }
-    // Section 33 item 4: a queued socket that joins a room leaves the line.
-    _dropOwnTicket();
 
     // Section 31 item 2: the room is named by `code` or by `link`, never both
     // and never neither; `install` may ride on either.
@@ -1191,13 +1191,13 @@ class Connection {
   }
 
   Future<void> _handleResume(ParsedEnvelope envelope) async {
+    // Section 33 item 4: a queued socket that resumes a seat leaves the line.
+    _dropOwnTicket();
     if (!rateLimiter.recordJoinOrResume(ip)) {
       _reject(envelope, ProtocolError.rateLimited);
       return;
     }
     _withdrawOwnKnock();
-    // Section 33 item 4: a queued socket that resumes a seat leaves the line.
-    _dropOwnTicket();
 
     const Set<String> allowedKeys = <String>{'code', 'seat_token'};
     if (!envelope.data.keys.every(allowedKeys.contains)) {
