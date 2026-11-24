@@ -394,6 +394,9 @@ class _Lobby {
     String? note,
   }) async {
     pushed.add(note ?? '$type${jsonEncode(data)}${re == null ? '' : ' re'}');
+    if (re != null) {
+      answered.add(re);
+    }
     transport.pushText(_frame(type, data, re: re));
     await tester.pump();
     await tester.pump();
@@ -502,6 +505,24 @@ class _Lobby {
           'expected exactly one lobby-fill-computer $when, found '
           '${find.byKey(_fillKey).evaluate().length}. $why',
     );
+  }
+
+  /// Request ids a pushed frame has answered.
+  final Set<String> answered = <String>{};
+
+  /// Answers every `fill_computer` still open with a `WRONG_PHASE` refusal,
+  /// so no request timeout is left pending when the row ends.
+  Future<void> answerOpenFills() async {
+    for (final Map<String, Object?> f in sent('fill_computer')) {
+      final String id = f['id']! as String;
+      if (!answered.contains(id)) {
+        await push('error', <String, Object?>{
+          'code': 'WRONG_PHASE',
+          'message': 'closing the row',
+        }, re: id);
+      }
+    }
+    await tester.pump();
   }
 
   Future<void> tapFill() async {
@@ -1117,6 +1138,7 @@ void main() {
             'expected the valid-tap tick (FeedbackCue.tap) on the tap, '
             'played ${l.feedback.played}. ${l.why}',
       );
+      await l.answerOpenFills();
     });
 
     _row('tap.disabled: disabled while the request is out; a second tap '
@@ -1159,6 +1181,7 @@ void main() {
             '${l.sent('fill_computer').length} fill_computer frames. '
             '${l.why}',
       );
+      await l.answerOpenFills();
     });
 
     _row('tap.error: an error answer shows the lobby error words and '
@@ -1178,6 +1201,32 @@ void main() {
         reason:
             'expected the lobby error words "$words" on screen after '
             'WRONG_PHASE, screen shows: ${l.screenTexts()}. ${l.why}',
+      );
+      const Key errorKey = Key('lobby-fill-computer-error');
+      expect(
+        find.descendant(of: find.byKey(errorKey), matching: find.text(words)),
+        findsOneWidget,
+        reason:
+            'expected "$words" inside lobby-fill-computer-error, found '
+            '${find.byKey(errorKey).evaluate().length} such keys. ${l.why}',
+      );
+      final Rect errorRect = tester.getRect(find.byKey(errorKey));
+      final Rect controlRect = tester.getRect(find.byKey(_fillKey));
+      expect(
+        errorRect.top >= controlRect.bottom - 0.5,
+        isTrue,
+        reason:
+            'expected the error words under the control: control '
+            '$controlRect, error $errorRect. ${l.why}',
+      );
+      final List<FeedbackCue> cues = l.feedback.played;
+      final int tapAt = cues.indexOf(FeedbackCue.tap);
+      expect(
+        tapAt >= 0 && cues.indexOf(FeedbackCue.invalidTap, tapAt) > tapAt,
+        isTrue,
+        reason:
+            'expected FeedbackCue.tap on the tap and FeedbackCue.invalidTap '
+            'after it on the refusal, played $cues. ${l.why}',
       );
       l.expectFillPresent('after the error answer');
       expect(
@@ -1202,6 +1251,7 @@ void main() {
         'message': 'not yet',
       }, re: id);
       expect(tester.takeException(), isNull, reason: l.why);
+      await l.answerOpenFills();
     });
 
     _row('tap.accepted: the answer seats a computer and the control leaves', (
