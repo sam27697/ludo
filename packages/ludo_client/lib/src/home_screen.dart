@@ -1217,7 +1217,8 @@ class _HomeScreenState extends State<HomeScreen>
   /// completes as soon as that route has come back, true when the server
   /// refused the code with a ban that the sheet now shows (the sheet stays),
   /// false when the sheet should close. The rest of the join (retiring the
-  /// controller, a new table) goes on after it.
+  /// controller, a new table) goes on after it. An accepted join has taken
+  /// the sheet away before then ([_dropJoinSheetUnder]).
   Future<bool> _joinFromSheet() {
     final Completer<bool> returned = Completer<bool>();
     void answer(bool stay) {
@@ -1234,6 +1235,62 @@ class _HomeScreenState extends State<HomeScreen>
       ).whenComplete(() => answer(false)),
     );
     return returned.future;
+  }
+
+  /// C-714: takes the join sheet out from under [roomRoute] once the join it
+  /// started is accepted (the controller holds a room on a live connection)
+  /// and [roomRoute] has finished coming in, so it covers the sheet. Removed
+  /// with no motion, since nobody can see it; coming back from the room then
+  /// shows home at once. Until both hold, the sheet stays: a ban comes back
+  /// to it, and any other refusal closes it with its usual motion once the
+  /// route has returned. Does nothing when the sheet is not up.
+  void _dropJoinSheetUnder(
+    ModalRoute<Object?> roomRoute,
+    RoomController controller,
+  ) {
+    final Route<Object?>? sheet = _joinSheetRoute;
+    final Animation<double>? coming = roomRoute.animation;
+    if (!_joinSheetUp || sheet == null || coming == null) {
+      return;
+    }
+    bool watching = true;
+    late final VoidCallback check;
+    void onStatus(AnimationStatus status) => check();
+    void stop() {
+      if (!watching) {
+        return;
+      }
+      watching = false;
+      coming.removeStatusListener(onStatus);
+      controller.removeListener(check);
+    }
+
+    check = () {
+      if (!watching) {
+        return;
+      }
+      if (!mounted ||
+          !roomRoute.isActive ||
+          !sheet.isActive ||
+          !identical(_joinSheetRoute, sheet)) {
+        stop();
+        return;
+      }
+      // Finished coming in and not yet leaving: the opaque room route, or
+      // a screen it pushed, is drawn over the sheet.
+      final bool covered = coming.status == AnimationStatus.completed;
+      final bool accepted =
+          controller.phase == RoomPhase.connected && controller.room != null;
+      if (!covered || !accepted) {
+        return;
+      }
+      stop();
+      sheet.navigator?.removeRoute(sheet, JoinChoice.code);
+    };
+    coming.addStatusListener(onStatus);
+    controller.addListener(check);
+    unawaited(roomRoute.popped.whenComplete(stop));
+    check();
   }
 
   /// The join sheet's Join: false, with the invalid-code line, for a code that
@@ -1351,8 +1408,7 @@ class _HomeScreenState extends State<HomeScreen>
     // runs. A stale record is safe, a refused resume clears it and says so.
     final SeatRecord? held = _seatRecordFor(normalized);
     if (held != null) {
-      onRouteReturned?.call(false);
-      await _rejoinRoom(held);
+      await _rejoinRoom(held, onRouteReturned: onRouteReturned);
       return;
     }
     final String name = _typedName;
@@ -1388,19 +1444,21 @@ class _HomeScreenState extends State<HomeScreen>
 
     controller.addListener(persistSuccessfulJoin);
     persistSuccessfulJoin();
+    final MaterialPageRoute<Object?> roomRoute = MaterialPageRoute<Object?>(
+      builder: (context) => RoomRoute(
+        controller: controller,
+        action: LobbyAction.join,
+        code: normalized,
+        playerName: name,
+        fromLink: fromLink,
+      ),
+    );
     final Object? result;
     try {
-      result = await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => RoomRoute(
-            controller: controller,
-            action: LobbyAction.join,
-            code: normalized,
-            playerName: name,
-            fromLink: fromLink,
-          ),
-        ),
-      );
+      final Future<Object?> returned = Navigator.of(context)
+          .push<Object?>(roomRoute);
+      _dropJoinSheetUnder(roomRoute, controller);
+      result = await returned;
     } finally {
       controller.removeListener(persistSuccessfulJoin);
     }
@@ -1581,7 +1639,14 @@ class _HomeScreenState extends State<HomeScreen>
   /// players a create or join would otherwise carry. H1, on the controller
   /// this watches, is what records the seat again once the resume lands;
   /// nothing here writes [SessionMemory] directly.
-  Future<void> _rejoinRoom(SeatRecord record) async {
+  ///
+  /// [onRouteReturned] is the join sheet's, for a held seat taken back by its
+  /// typed code: it hears, once, that the route has come back. A resume
+  /// never leaves a ban for the sheet to show.
+  Future<void> _rejoinRoom(
+    SeatRecord record, {
+    void Function(bool bannedInSheet)? onRouteReturned,
+  }) async {
     if (_hasNotice) {
       setState(_clearNotices);
     }
@@ -1590,17 +1655,21 @@ class _HomeScreenState extends State<HomeScreen>
     final String name = _typedName;
     final RoomController controller = widget.controllerFactory();
     _watchOwnedController(controller);
-    final Object? result = await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => RoomRoute(
-          controller: controller,
-          action: LobbyAction.resume,
-          code: record.code,
-          playerName: name,
-          resume: record,
-        ),
+    final MaterialPageRoute<Object?> roomRoute = MaterialPageRoute<Object?>(
+      builder: (context) => RoomRoute(
+        controller: controller,
+        action: LobbyAction.resume,
+        code: record.code,
+        playerName: name,
+        resume: record,
       ),
     );
+    final Future<Object?> returned = Navigator.of(context)
+        .push<Object?>(roomRoute);
+    if (onRouteReturned != null) {
+      _dropJoinSheetUnder(roomRoute, controller);
+    }
+    final Object? result = await returned;
     // C-447 D4, C-540 D4: a resume the server refused (room reaped, seat
     // taken back) or a seat removed while the route was up goes home with its
     // own true line, set before the retire like the removed notice in
@@ -1621,6 +1690,7 @@ class _HomeScreenState extends State<HomeScreen>
     // C-669 r2 D4: a resume the server refused for a gone room leaves a dead
     // code in the field when the player typed it, as a refused join does.
     _clearDeadJoinCode(controller, record.code);
+    onRouteReturned?.call(false);
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and

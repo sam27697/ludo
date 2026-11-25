@@ -337,6 +337,9 @@ class _PlayerCount extends StatelessWidget {
   Widget build(BuildContext context) {
     final Color ink = IconTheme.of(context).color ?? LudoColors.ink;
     final TextTheme textTheme = Theme.of(context).textTheme;
+    // The numeral in the locale's digits, as the lobby numbers its seats.
+    final String numeral = MaterialLocalizations.of(context)
+        .formatDecimal(count);
     // Two players sit opposite each other on the board, as the game seats
     // them.
     final List<int> seats = count == 2
@@ -346,7 +349,7 @@ class _PlayerCount extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         Text(
-          '$count',
+          numeral,
           style: textTheme.displaySmall?.copyWith(
             color: ink,
             fontWeight: FontWeight.w800,
