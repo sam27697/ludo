@@ -84,6 +84,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/fair_check.dart' show debugFairSourceOverride;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
@@ -1117,6 +1118,12 @@ void main() {
       'the winner\'s name on the lose card carries the winner\'s seat '
       'colour, never LudoColors.error',
       (tester) async {
+        // The scripted dice here reveal 'a' * 64, which is not a chain, so a
+        // real fair check would honestly turn the row red. This test is about
+        // the card's colours, not the fairness verdict: the seam answers no
+        // source, so no check runs and the row stays as it was before C-704.
+        debugFairSourceOverride = (String gameId, String chainCommit) => null;
+        addTearDown(() => debugFairSourceOverride = null);
         await _minimalLoseGame(tester);
 
         final Set<Color> colors = _colorsUnder(tester, find.byKey(_loseKey));
@@ -1273,6 +1280,10 @@ void main() {
     // of the three is its own case rather than one that could pass by only
     // proving the win.
     testWidgets('endFairLine is shown on a win', (tester) async {
+      // Scripted dice: no fair check runs, so the row shows the line as
+      // before C-704. The verdict states are covered in c704_*_test.dart.
+      debugFairSourceOverride = (String gameId, String chainCommit) => null;
+      addTearDown(() => debugFairSourceOverride = null);
       final (RoomController controller, _) = await _minimalWinGame(tester);
       final AppLocalizations loc = _locOf(tester);
       expect(controller.room!.state, RoomState.finished);
@@ -1287,6 +1298,10 @@ void main() {
     });
 
     testWidgets('endFairLine is shown on a loss', (tester) async {
+      // Scripted dice: no fair check runs, so the row shows the line as
+      // before C-704. The verdict states are covered in c704_*_test.dart.
+      debugFairSourceOverride = (String gameId, String chainCommit) => null;
+      addTearDown(() => debugFairSourceOverride = null);
       await _minimalLoseGame(tester);
       final AppLocalizations loc = _locOf(tester);
       final String blob = _blobUnder(tester, find.byType(GameScreen));

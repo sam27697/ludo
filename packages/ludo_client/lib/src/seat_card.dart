@@ -5,8 +5,10 @@
 
 import 'package:flutter/material.dart';
 
+import '../l10n/gen/app_localizations.dart';
 import 'net/snapshot.dart' show SeatState;
 import 'seat_mark.dart';
+import 'seat_names.dart';
 import 'seat_origin_mark.dart';
 import 'theme.dart';
 
@@ -34,6 +36,14 @@ const double kSeatCardOfflineIconGap = kSpace1;
 
 /// The offline icon's own width, on a seat that shows one.
 const double kSeatCardOfflineIconWidth = kSpace5;
+
+/// Whether [seat]'s card shows the dropped-player treatment (the muted tile,
+/// the muted name and the wifi-off icon). A computer seat never does: the
+/// server plays it and it has no socket to lose (docs/PROTOCOL.md section 34
+/// item 1).
+bool seatCardShowsOffline(SeatState seat) {
+  return !seat.connected && seat.bot == null;
+}
 
 /// The width the name `Text` actually gets inside a card [cardWidth] wide,
 /// once the card's own padding, the token disc's slot, the gap after it,
@@ -84,7 +94,8 @@ class SeatCard extends StatelessWidget {
   final String youLabel;
 
   /// C-536: what the card draws instead of `seat.name` when the room holds
-  /// two seats of one name. Null draws the seat's own name.
+  /// two seats of one name. Null draws the seat's own name, which for a
+  /// computer seat is its character's name ([seatShownName]).
   final String? displayName;
 
   /// C-682: the spoken words for how this seat came in (`seat.via`), or null
@@ -95,7 +106,7 @@ class SeatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Color seatColor = LudoColors.seats[seat.seat];
-    final bool offline = !seat.connected;
+    final bool offline = seatCardShowsOffline(seat);
     final Color tileColor = offline
         ? LudoColors.inkMuted.withValues(alpha: 0.08)
         : seatColor.withValues(alpha: 0.16);
@@ -183,7 +194,7 @@ class SeatCard extends StatelessWidget {
                     child: SeatOriginMark(
                       key: Key('seat-origin-${seat.seat}'),
                       seat: seat.seat,
-                      via: seat.via,
+                      via: seatOriginOf(seat),
                       label: origin,
                     ),
                   ),
@@ -201,7 +212,7 @@ class SeatCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  displayName ?? seat.name,
+                  displayName ?? _shownName(context),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: seatCardNameStyle(context, offline: offline),
@@ -251,6 +262,15 @@ class SeatCard extends StatelessWidget {
       ),
     );
     return origin == null ? card : MergeSemantics(child: card);
+  }
+
+  /// The seat's own name when no [displayName] was handed in. Only a
+  /// computer seat needs the app's language for it.
+  String _shownName(BuildContext context) {
+    if (seat.bot == null) {
+      return seat.name;
+    }
+    return seatShownName(AppLocalizations.of(context), seat);
   }
 }
 

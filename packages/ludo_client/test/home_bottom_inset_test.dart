@@ -43,6 +43,8 @@ import 'package:ludo_client/src/deep_link.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/theme.dart' show FeltBackdrop;
 
+import 'support/home_flow.dart';
+
 // --- fixed test surface and inset ------------------------------------------
 
 const Size _kSurfaceSize = Size(360, 420);
@@ -71,43 +73,6 @@ void _useInsetSurface(WidgetTester tester, {required double bottomInset}) {
 
 /// A link id (shape [0-9a-z]{4,10}-[0-9a-z]{6}) that names no code.
 const String _linkId = 't5k2q9a-x7m3pd';
-
-/// The code typed before the link arrives, so Join is in the tree.
-const String _typedCode = 'K7M2QP';
-
-/// A link id fills no field, and on a Home that is the current route it joins
-/// at once, so the scroll under test now belongs to a link that arrives
-/// while a route sits above Home. This types a full code (Join is in the
-/// tree), puts the scroll back at the top with no focus, pushes a probe
-/// route, runs [deliver] (the link), settles, and pops the probe.
-Future<void> _linkUnderRoute(
-  WidgetTester tester, {
-  required void Function() deliver,
-  required Future<void> Function() settle,
-  required void Function() fixtureCheck,
-}) async {
-  await tester.enterText(find.byKey(const Key('room-code-field')), _typedCode);
-  await tester.pump();
-  FocusManager.instance.primaryFocus?.unfocus();
-  await settle();
-  final BuildContext field = tester.element(
-    find.byKey(const Key('room-code-field')),
-  );
-  Scrollable.of(field).position.jumpTo(0);
-  await tester.pump();
-  fixtureCheck();
-
-  Navigator.of(tester.element(find.byType(HomeScreen))).push(
-    MaterialPageRoute<void>(
-      builder: (_) => const Scaffold(key: Key('above-home-probe')),
-    ),
-  );
-  await tester.pumpAndSettle();
-  deliver();
-  await settle();
-  Navigator.of(tester.element(find.byKey(const Key('above-home-probe')))).pop();
-  await tester.pumpAndSettle();
-}
 
 double _viewHeight(WidgetTester tester) =>
     tester.view.physicalSize.height / tester.view.devicePixelRatio;
@@ -166,13 +131,6 @@ Widget _homeScreenApp({
   );
 }
 
-TextField _codeField(WidgetTester tester) {
-  return tester.widget<TextField>(find.byKey(const Key('room-code-field')));
-}
-
-String _codeFieldText(WidgetTester tester) =>
-    _codeField(tester).controller!.text;
-
 /// A well-formed link on this app's own host, shaped `/r/<code>`.
 Uri _roomLink(String code) => Uri.parse('https://$kAppLinkHost/r/$code');
 
@@ -183,10 +141,11 @@ Uri _roomLink(String code) => Uri.parse('https://$kAppLinkHost/r/$code');
 /// IN-END can drag it directly rather than guess at it by type (a guess
 /// that would also catch a TextField's own internal horizontal-scrolling
 /// Scrollable, since more than one exists in this tree).
+///
+/// Order 701: room-code-field is no longer on home; the walk starts from
+/// home-name-field, which sits in the same scroll view.
 Scrollable _homeScrollable(WidgetTester tester) {
-  final BuildContext context = tester.element(
-    find.byKey(const Key('room-code-field')),
-  );
+  final BuildContext context = tester.element(find.byKey(homeNameFieldKey));
   return Scrollable.of(context).widget;
 }
 
@@ -246,7 +205,7 @@ void _expectBottomWithinInset(
 
 void main() {
   testWidgets(
-    'IN-LINK: a warm valid link keeps join-room-button out of a 48px bottom '
+    'IN-LINK: a warm valid link keeps home-name-required out of a 48px bottom '
     'inset',
     (tester) async {
       _useInsetSurface(tester, bottomInset: _kBottomInset);
@@ -257,26 +216,16 @@ void main() {
 
       _expectInsetInEffect(tester, 'IN-LINK', _kBottomInset);
 
-      await _linkUnderRoute(
-        tester,
-        deliver: () => opener.add(_roomLink(_linkId)),
-        settle: () => _settle(tester),
-        fixtureCheck: () {},
-      );
+      // Order 701: with no saved name the link waits on home and shows
+      // `home-name-required`; that line is the last thing the link adds.
+      opener.add(_roomLink(_linkId));
+      await _settle(tester);
 
-      expect(
-        _codeFieldText(tester),
-        _typedCode,
-        reason:
-            'IN-LINK fixture: a link id fills no field, so the typed code '
-            'must still be the field text before this case can measure '
-            'whether join-room-button stayed within the inset',
-      );
       _expectBottomWithinInset(
         tester,
-        key: const Key('join-room-button'),
+        key: homeNameRequiredKey,
         caseId: 'IN-LINK',
-        elementLabel: 'join-room-button',
+        elementLabel: 'home-name-required',
         bottomInset: _kBottomInset,
       );
     },
@@ -293,19 +242,8 @@ void main() {
 
       _expectInsetInEffect(tester, 'IN-END', _kBottomInset);
 
-      // Join is in the tree only with a full-length code (C-523 D3), and it
-      // is then the last control home renders.
-      await tester.enterText(
-        find.byKey(const Key('room-code-field')),
-        'K7M2QP',
-      );
-      await _settle(tester);
-
-      // Read: with no link delivered and no platform storage available in
-      // a widget test (SessionMemory.load's own documented empty-snapshot
-      // fallback), _recentCodes stays empty and the seat-rejoin chip never
-      // appears, so the KeyedSubtree wrapping join-room-button is the last
-      // control the Column in home_screen.dart's build renders. A large
+      // Order 701: home ends with its two buttons; join-game-button, the
+      // second, is the last control home renders. A large
       // negative dy drags the scroll view past its max scroll extent, so
       // the physics settle at the end regardless of exactly how far short
       // of that a single drag falls.
@@ -317,11 +255,11 @@ void main() {
 
       _expectBottomWithinInset(
         tester,
-        key: const Key('join-room-button'),
+        key: joinGameButtonKey,
         caseId: 'IN-END',
         elementLabel:
-            'join-room-button (the last control home_screen.dart renders '
-            'with a full code typed and no recent codes stored)',
+            'join-game-button (the last control home renders since order '
+            '701)',
         bottomInset: _kBottomInset,
       );
     },
@@ -352,7 +290,7 @@ void main() {
   );
 
   testWidgets(
-    "IN-ZERO: a warm valid link keeps join-room-button in view with no "
+    "IN-ZERO: a warm valid link keeps home-name-required in view with no "
     "inset (today's behaviour)",
     (tester) async {
       _useInsetSurface(tester, bottomInset: 0);
@@ -361,26 +299,16 @@ void main() {
       await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
       await tester.pump();
 
-      await _linkUnderRoute(
-        tester,
-        deliver: () => opener.add(_roomLink(_linkId)),
-        settle: () => _settle(tester),
-        fixtureCheck: () {},
-      );
+      // Order 701: with no saved name the link waits on home and shows
+      // `home-name-required`; that line is the last thing the link adds.
+      opener.add(_roomLink(_linkId));
+      await _settle(tester);
 
-      expect(
-        _codeFieldText(tester),
-        _typedCode,
-        reason:
-            'IN-ZERO fixture: a link id fills no field, so the typed code '
-            'must still be the field text before this case can measure '
-            'whether join-room-button stayed within the inset',
-      );
       _expectBottomWithinInset(
         tester,
-        key: const Key('join-room-button'),
+        key: homeNameRequiredKey,
         caseId: 'IN-ZERO',
-        elementLabel: 'join-room-button',
+        elementLabel: 'home-name-required',
         bottomInset: 0,
       );
     },
@@ -397,26 +325,16 @@ void main() {
 
     _expectInsetInEffect(tester, 'IN-AR', _kBottomInset);
 
-    await _linkUnderRoute(
-      tester,
-      deliver: () => opener.add(_roomLink(_linkId)),
-      settle: () => _settle(tester),
-      fixtureCheck: () {},
-    );
+    // Order 701: with no saved name the link waits on home and shows
+    // `home-name-required`; that line is the last thing the link adds.
+    opener.add(_roomLink(_linkId));
+    await _settle(tester);
 
-    expect(
-      _codeFieldText(tester),
-      _typedCode,
-      reason:
-          'IN-AR fixture: a link id fills no field, so the typed code '
-          'must still be the field text before this case can measure '
-          'whether join-room-button stayed within the inset',
-    );
     _expectBottomWithinInset(
       tester,
-      key: const Key('join-room-button'),
+      key: homeNameRequiredKey,
       caseId: 'IN-AR',
-      elementLabel: 'join-room-button',
+      elementLabel: 'home-name-required',
       bottomInset: _kBottomInset,
     );
   });

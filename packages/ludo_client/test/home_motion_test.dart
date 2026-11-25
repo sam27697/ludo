@@ -11,6 +11,8 @@ import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/theme.dart';
 
+import 'support/home_flow.dart';
+
 RoomController _neverConnectsControllerFactory() {
   return RoomController(
     serverUrl: Uri.parse('wss://home-motion-test.invalid/ws'),
@@ -146,14 +148,12 @@ void main() {
       findsOneWidget,
       reason: 'Create Room must remain after enter',
     );
-    // Join is in the tree only with a full-length code (C-523 D3).
-    await tester.enterText(find.byKey(const Key('room-code-field')), 'K7M2QP');
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
+    // Order 701: home's join control is join-game-button; the code field
+    // and join-room-button moved into its sheet.
     expect(
-      find.byKey(const Key('join-room-button')),
+      find.byKey(joinGameButtonKey),
       findsOneWidget,
-      reason: 'Join Room must remain after enter',
+      reason: 'Join must remain after enter',
     );
   });
 }

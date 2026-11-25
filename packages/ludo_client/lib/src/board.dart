@@ -765,6 +765,9 @@ class LudoBoard extends StatefulWidget {
     this.seatPlaces = const <int, int>{},
     this.onAwayTap,
     this.awayTapSeats = const <int>{},
+    this.onNameTap,
+    this.nameTapSeats = const <int>{},
+    this.computerSeats = const <int>{},
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -939,6 +942,21 @@ class LudoBoard extends StatefulWidget {
   /// Which of the [awaySeats] [onAwayTap] applies to. A seat outside it keeps
   /// its plain mark.
   final Set<int> awayTapSeats;
+
+  /// Host only (C-708): a tap on a seat's name chip. When set, each seat in
+  /// [nameTapSeats] gets a tap target of at least 48 dp over its chip
+  /// (`board-seat-name-<seat>` is the chip it covers); null, or a seat
+  /// outside the set, leaves the chip untouchable as before. An away mark's
+  /// own target sits above it and keeps [onAwayTap].
+  final void Function(int seat)? onNameTap;
+
+  /// Which seats [onNameTap] applies to.
+  final Set<int> nameTapSeats;
+
+  /// C-708 (doctrine P3): the seats a computer plays. Their name chips carry
+  /// the robot mark beside the name, with its spoken words, so a computer is
+  /// never taken for a person. The name gives up room before the mark does.
+  final Set<int> computerSeats;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -1772,6 +1790,14 @@ class _LudoBoardState extends State<LudoBoard> {
     final String? awayLine = widget.awaySeats[seat];
     final int? place = widget.seatPlaces[seat];
     final bool retired = widget.retiredSeats.contains(seat);
+    final bool computer = widget.computerSeats.contains(seat);
+    final bool nameTappable =
+        widget.onNameTap != null && widget.nameTapSeats.contains(seat);
+    // The host's name target follows the chip at the slot's own size.
+    _nameTapSizes[seat] = Size(
+      math.max(_kAwayTapTarget, chipWidth - cellSize * 0.4),
+      math.max(_kAwayTapTarget, chipHeight),
+    );
     final bool awayTappable =
         awayLine != null &&
         widget.onAwayTap != null &&
@@ -1783,6 +1809,7 @@ class _LudoBoardState extends State<LudoBoard> {
           cellSize * 0.15 -
           (you != null ? cellSize * 0.15 : 0.0) -
           (awayLine != null ? nameDiscSize + cellSize * 0.15 : 0.0) -
+          (computer ? nameDiscSize + cellSize * 0.15 : 0.0) -
           (place != null || retired ? nameDiscSize + cellSize * 0.15 : 0.0),
     );
     final ({double name, double? you}) fittedFontSizes = _fittedChipFontSizes(
@@ -1816,96 +1843,115 @@ class _LudoBoardState extends State<LudoBoard> {
               serial: (pop != null && pop.seat == seat) ? pop.serial : null,
               child: _awayChip(
                 awayLine,
-                child: DecoratedBox(
-                  key: Key('board-seat-name-$seat'),
-                  decoration: BoxDecoration(
-                    color: seatColor,
-                    borderRadius: BorderRadius.circular(chipHeight),
-                    // C-639 D7: the chip now sits on a band of its own
-                    // colour, the rim keeps it a separate object.
-                    border: Border.all(color: LudoColors.dieFace, width: 1.5),
-                  ),
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: cellSize * 0.3,
-                      vertical: chipHeight * 0.08,
+                child: _nameTapAnchor(
+                  seat,
+                  nameTappable,
+                  child: DecoratedBox(
+                    key: Key('board-seat-name-$seat'),
+                    decoration: BoxDecoration(
+                      color: seatColor,
+                      borderRadius: BorderRadius.circular(chipHeight),
+                      // C-639 D7: the chip now sits on a band of its own
+                      // colour, the rim keeps it a separate object.
+                      border: Border.all(color: LudoColors.dieFace, width: 1.5),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Container(
-                          key: Key('board-seat-name-$seat-mark'),
-                          width: nameDiscSize,
-                          height: nameDiscSize,
-                          decoration: BoxDecoration(
-                            color: seatColor,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Center(
-                            child: SeatMark(
-                              seat: seat,
-                              size: nameDiscSize * 0.5,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: cellSize * 0.3,
+                        vertical: chipHeight * 0.08,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Container(
+                            key: Key('board-seat-name-$seat-mark'),
+                            width: nameDiscSize,
+                            height: nameDiscSize,
+                            decoration: BoxDecoration(
+                              color: seatColor,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: SeatMark(
+                                seat: seat,
+                                size: nameDiscSize * 0.5,
+                              ),
                             ),
                           ),
-                        ),
-                        SizedBox(width: cellSize * 0.15),
-                        Flexible(
-                          child: Text(
-                            name,
-                            maxLines: 1,
-                            softWrap: false,
-                            overflow: TextOverflow.ellipsis,
-                            // C-339 decision 1: pinned to the board's own
-                            // measure, never the system text scale.
-                            textScaler: TextScaler.noScaling,
-                            style: TextStyle(
-                              color: ink,
-                              fontFamily: kLudoFontFamily,
-                              fontFamilyFallback: kLudoFontFallbacks,
-                              fontSize: nameFontSize,
-                              fontWeight: FontWeight.w600,
+                          SizedBox(width: cellSize * 0.15),
+                          if (computer) ...<Widget>[
+                            _computerMark(seat, nameDiscSize, ink),
+                            SizedBox(width: cellSize * 0.15),
+                          ],
+                          Flexible(
+                            child: Text(
+                              name,
+                              maxLines: 1,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
+                              // C-339 decision 1: pinned to the board's own
+                              // measure, never the system text scale.
+                              textScaler: TextScaler.noScaling,
+                              style: TextStyle(
+                                color: ink,
+                                fontFamily: kLudoFontFamily,
+                                fontFamilyFallback: kLudoFontFallbacks,
+                                fontSize: nameFontSize,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
-                        ),
-                        if (you != null) ...<Widget>[
-                          SizedBox(width: cellSize * 0.15),
-                          // Not `Flexible`: `_fittedChipFontSizes` already sized
-                          // this and the name above it to share the chip's
-                          // width honestly (by how wide each actually is at its
-                          // own font size), not by `Flex`'s own equal-by-default
-                          // split of whatever is left -- a plain child takes
-                          // exactly the natural width that sizing computed, and
-                          // the name's own `Flexible` absorbs whatever is left
-                          // over (or, past the 10-character guarantee, still
-                          // ellipsizes).
-                          Text(
-                            you,
-                            key: const Key('board-seat-you'),
-                            maxLines: 1,
-                            softWrap: false,
-                            overflow: TextOverflow.ellipsis,
-                            textScaler: TextScaler.noScaling,
-                            style: TextStyle(
-                              color: ink,
-                              fontFamily: kLudoFontFamily,
-                              fontFamilyFallback: kLudoFontFallbacks,
-                              fontSize: youFontSize,
+                          if (you != null) ...<Widget>[
+                            SizedBox(width: cellSize * 0.15),
+                            // Not `Flexible`: `_fittedChipFontSizes` already sized
+                            // this and the name above it to share the chip's
+                            // width honestly (by how wide each actually is at its
+                            // own font size), not by `Flex`'s own equal-by-default
+                            // split of whatever is left -- a plain child takes
+                            // exactly the natural width that sizing computed, and
+                            // the name's own `Flexible` absorbs whatever is left
+                            // over (or, past the 10-character guarantee, still
+                            // ellipsizes).
+                            Text(
+                              you,
+                              key: const Key('board-seat-you'),
+                              maxLines: 1,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
+                              textScaler: TextScaler.noScaling,
+                              style: TextStyle(
+                                color: ink,
+                                fontFamily: kLudoFontFamily,
+                                fontFamilyFallback: kLudoFontFallbacks,
+                                fontSize: youFontSize,
+                              ),
                             ),
-                          ),
-                        ],
-                        if (place != null) ...<Widget>[
-                          SizedBox(width: cellSize * 0.15),
-                          _placeBadge(seat, place, nameDiscSize),
-                        ] else if (retired) ...<Widget>[
-                          SizedBox(width: cellSize * 0.15),
-                          _outMark(seat, nameDiscSize, ink),
-                        ],
-                        if (awayLine != null) ...<Widget>[
-                          SizedBox(width: cellSize * 0.15),
-                          if (awayTappable)
-                            CompositedTransformTarget(
-                              link: _awayLinkFor(seat),
-                              child: SizedBox(
+                          ],
+                          if (place != null) ...<Widget>[
+                            SizedBox(width: cellSize * 0.15),
+                            _placeBadge(seat, place, nameDiscSize),
+                          ] else if (retired) ...<Widget>[
+                            SizedBox(width: cellSize * 0.15),
+                            _outMark(seat, nameDiscSize, ink),
+                          ],
+                          if (awayLine != null) ...<Widget>[
+                            SizedBox(width: cellSize * 0.15),
+                            if (awayTappable)
+                              CompositedTransformTarget(
+                                link: _awayLinkFor(seat),
+                                child: SizedBox(
+                                  width: nameDiscSize,
+                                  height: nameDiscSize,
+                                  child: Icon(
+                                    Icons.wifi_off_rounded,
+                                    size: nameDiscSize,
+                                    color: ink,
+                                  ),
+                                ),
+                              )
+                            else
+                              SizedBox(
+                                key: Key('board-seat-away-$seat'),
                                 width: nameDiscSize,
                                 height: nameDiscSize,
                                 child: Icon(
@@ -1914,26 +1960,72 @@ class _LudoBoardState extends State<LudoBoard> {
                                   color: ink,
                                 ),
                               ),
-                            )
-                          else
-                            SizedBox(
-                              key: Key('board-seat-away-$seat'),
-                              width: nameDiscSize,
-                              height: nameDiscSize,
-                              child: Icon(
-                                Icons.wifi_off_rounded,
-                                size: nameDiscSize,
-                                color: ink,
-                              ),
-                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  final Map<int, LayerLink> _nameLinks = <int, LayerLink>{};
+
+  /// The size each seat's name target takes, set where its chip is laid out.
+  final Map<int, Size> _nameTapSizes = <int, Size>{};
+
+  LayerLink _nameLinkFor(int seat) =>
+      _nameLinks.putIfAbsent(seat, LayerLink.new);
+
+  /// C-708: a chip the host may tap is linked to its target; any other chip
+  /// is drawn as it always was.
+  Widget _nameTapAnchor(int seat, bool tappable, {required Widget child}) {
+    if (!tappable) {
+      return child;
+    }
+    return CompositedTransformTarget(link: _nameLinkFor(seat), child: child);
+  }
+
+  /// C-708: the host's tap target for a seat's name chip, centred on the
+  /// chip through a [LayerLink] so it stays on it wherever the chip sits or
+  /// pops, and never smaller than [_kAwayTapTarget] either way.
+  Widget _nameTapTarget(int seat) {
+    final Size size =
+        _nameTapSizes[seat] ?? const Size(_kAwayTapTarget, _kAwayTapTarget);
+    return CompositedTransformFollower(
+      key: ValueKey<String>('board-seat-name-follower-$seat'),
+      link: _nameLinkFor(seat),
+      showWhenUnlinked: false,
+      targetAnchor: Alignment.center,
+      followerAnchor: Alignment.center,
+      child: Semantics(
+        button: true,
+        label: widget.seatNames?[seat],
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => widget.onNameTap?.call(seat),
+          child: SizedBox(width: size.width, height: size.height),
+        ),
+      ),
+    );
+  }
+
+  /// C-708: the robot mark on a computer seat's name chip, a disc-sized glyph
+  /// in the chip's ink, spoken as the words the lobby uses for it.
+  Widget _computerMark(int seat, double size, Color ink) {
+    return Semantics(
+      key: Key('board-seat-bot-$seat'),
+      label: AppLocalizations.of(context).seatOriginBot,
+      child: ExcludeSemantics(
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: Icon(Icons.smart_toy_rounded, size: size, color: ink),
         ),
       ),
     );
@@ -2069,6 +2161,13 @@ class _LudoBoardState extends State<LudoBoard> {
                   ..._safeSquareMarks(cellSize, widget.mySeat),
                   for (final seat in widget.seatsInPlay)
                     ..._seatIdentityLayer(seat: seat, cellSize: cellSize),
+                  // C-708: below the away marks' own targets, so an away
+                  // mark keeps its tap.
+                  if (widget.onNameTap != null)
+                    for (final int seat in widget.seatsInPlay)
+                      if (widget.nameTapSeats.contains(seat) &&
+                          widget.seatNames?[seat] != null)
+                        _nameTapTarget(seat),
                   if (widget.onAwayTap != null)
                     for (final int seat in widget.seatsInPlay)
                       if (widget.awayTapSeats.contains(seat) &&

@@ -28,6 +28,7 @@ import 'package:ludo_client/src/server_config.dart';
 import 'package:path/path.dart' as p;
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 // --- shared fixtures --------------------------------------------------
 
@@ -260,6 +261,23 @@ String _codeFieldText(WidgetTester tester, {bool skipOffstage = true}) {
     reason: 'fixture is broken: room-code-field has no controller attached',
   );
   return controller!.text;
+}
+
+/// Order 701: home has no room code field; it lives in the join sheet. A
+/// link fills no field because there is none on home to fill.
+void _expectNoCodeFieldOnHome(WidgetTester tester, String why) {
+  expect(
+    find.byKey(const Key('room-code-field'), skipOffstage: false),
+    findsNothing,
+    reason: '$why: home has no room-code-field since order 701',
+  );
+}
+
+/// Order 701: a name, then the join sheet's code entry, so a test can type
+/// into the room code field the way it used to type into it on home.
+Future<void> _openCodeEntryWithName(WidgetTester tester) async {
+  await enterName(tester, 'Player');
+  await openCodeEntry(tester);
 }
 
 String? _codeFieldError(WidgetTester tester, {bool skipOffstage = true}) {
@@ -664,9 +682,12 @@ void main() {
 
       reader.complete(_validLink(_linkId));
       await _settleLinkJoin(tester);
+      // Order 701 (X226): a first-time player has no name; the link waits on
+      // home until one is submitted from the keyboard.
+      await submitName(tester, 'Player');
+      await _settleLinkJoin(tester);
 
-      expect(_codeFieldText(tester, skipOffstage: false), isEmpty);
-      expect(_codeFieldError(tester, skipOffstage: false), isNull);
+      _expectNoCodeFieldOnHome(tester, 'item 10 HomeScreen');
       expect(observer.pushCount, pushesBefore + 1);
       expect(observer.popCount, popsBefore);
       expect(find.byType(LobbyScreen), findsOneWidget);
@@ -684,9 +705,11 @@ void main() {
 
         reader.complete(_validLink(_linkId));
         await _settleLinkJoin(tester);
+        // Order 701 (X226): the link waits for a submitted name.
+        await submitName(tester, 'Player');
+        await _settleLinkJoin(tester);
 
-        expect(_codeFieldText(tester, skipOffstage: false), isEmpty);
-        expect(_codeFieldError(tester, skipOffstage: false), isNull);
+        _expectNoCodeFieldOnHome(tester, 'item 10 LudoApp');
         expect(find.byType(LobbyScreen), findsOneWidget);
         // LudoApp builds its own controller on the real connector, whose
         // socket the test binding refuses; unmount so the lobby's controller
@@ -718,6 +741,7 @@ void main() {
         );
         await tester.pump();
 
+        await _openCodeEntryWithName(tester);
         await tester.enterText(
           find.byKey(const Key('room-code-field')),
           'ZQ77KM',
@@ -741,7 +765,9 @@ void main() {
         );
         final BuildContext context = tester.element(find.byType(HomeScreen));
         final AppLocalizations loc = AppLocalizations.of(context);
-        expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
+        // Order 701: the line a link raises is painted on home, outside the
+        // sheet's field.
+        expect(find.text(loc.homeRoomCodeInvalid), findsOneWidget);
         expect(observer.pushCount, pushesBefore);
         expect(observer.popCount, popsBefore);
       },
@@ -760,6 +786,7 @@ void main() {
         );
         await tester.pump();
 
+        await _openCodeEntryWithName(tester);
         await tester.enterText(
           find.byKey(const Key('room-code-field')),
           'ZQ77KM',
@@ -801,6 +828,8 @@ void main() {
       reader.complete(null);
       await tester.pump();
 
+      _expectNoCodeFieldOnHome(tester, 'item 12');
+      await _openCodeEntryWithName(tester);
       expect(_codeFieldText(tester), isEmpty);
       expect(_codeFieldError(tester), isNull);
     });
@@ -824,9 +853,11 @@ void main() {
 
         opener.add(_validLink(_linkId));
         await _settleLinkJoin(tester);
+        // Order 701 (X226): the link waits for a submitted name.
+        await submitName(tester, 'Player');
+        await _settleLinkJoin(tester);
 
-        expect(_codeFieldText(tester, skipOffstage: false), isEmpty);
-        expect(_codeFieldError(tester, skipOffstage: false), isNull);
+        _expectNoCodeFieldOnHome(tester, 'item 13');
         expect(find.byType(LobbyScreen), findsOneWidget);
         await _disposeLinkJoin(tester);
       },
@@ -850,14 +881,17 @@ void main() {
 
         opener.add(_validLink(_linkId));
         await _settleLinkJoin(tester);
-        expect(_codeFieldText(tester, skipOffstage: false), isEmpty);
+        // Order 701 (X226): the link waits for a submitted name.
+        await submitName(tester, 'Player');
+        await _settleLinkJoin(tester);
+        _expectNoCodeFieldOnHome(tester, 'item 14 first link');
         expect(find.byType(LobbyScreen), findsOneWidget);
         final int pushesAfterFirst = observer.pushCount;
 
         opener.add(_validLink(_linkId2));
         await _settleLinkJoin(tester);
 
-        expect(_codeFieldText(tester, skipOffstage: false), isEmpty);
+        _expectNoCodeFieldOnHome(tester, 'item 14 second link');
         expect(find.byType(LobbyScreen), findsOneWidget);
         expect(observer.pushCount, pushesAfterFirst);
         await _disposeLinkJoin(tester);
@@ -872,6 +906,7 @@ void main() {
         await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
         await tester.pump();
 
+        await _openCodeEntryWithName(tester);
         await tester.enterText(
           find.byKey(const Key('room-code-field')),
           'KEEPME',
@@ -886,7 +921,9 @@ void main() {
         expect(_codeFieldText(tester), 'KEEPME');
         final BuildContext context = tester.element(find.byType(HomeScreen));
         final AppLocalizations loc = AppLocalizations.of(context);
-        expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
+        // Order 701: the line a link raises is painted on home, outside the
+        // sheet's field.
+        expect(find.text(loc.homeRoomCodeInvalid), findsOneWidget);
       },
     );
 
@@ -898,6 +935,7 @@ void main() {
         await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
         await tester.pump();
 
+        await _openCodeEntryWithName(tester);
         await tester.enterText(
           find.byKey(const Key('room-code-field')),
           'KEEPME',
@@ -1111,9 +1149,10 @@ void main() {
         opener.add(_validLink(_linkId));
         await tester.pump();
 
+        _expectNoCodeFieldOnHome(tester, 'B5');
         expect(
-          _codeFieldText(tester, skipOffstage: false),
-          isEmpty,
+          find.byType(LobbyScreen),
+          findsNothing,
           reason:
               'declaration rule B5: a link id fills no field, and the home '
               'screen underneath a pushed route must not join on it; a '
@@ -1196,8 +1235,7 @@ void main() {
         await tester.pump();
         await tester.pump();
 
-        expect(_codeFieldText(tester), isEmpty);
-        expect(_codeFieldError(tester), isNull);
+        _expectNoCodeFieldOnHome(tester, 'item 20 HomeScreen');
         expect(
           messagesTouched,
           isFalse,
@@ -1232,8 +1270,7 @@ void main() {
         await tester.pump();
         await tester.pump();
 
-        expect(_codeFieldText(tester), isEmpty);
-        expect(_codeFieldError(tester), isNull);
+        _expectNoCodeFieldOnHome(tester, 'item 20 LudoApp');
         expect(messagesTouched, isFalse);
         expect(eventsTouched, isFalse);
       },

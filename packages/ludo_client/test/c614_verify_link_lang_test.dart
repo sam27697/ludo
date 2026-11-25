@@ -26,6 +26,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
+import 'package:ludo_client/src/account.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
@@ -38,6 +39,14 @@ import 'net/fake_transport.dart';
 
 const Key _verifyKey = Key('game-screen-verify-button');
 const Key _homeLastGameCheckKey = Key('home-last-game-check');
+
+/// Order 701: home shows the last-game card only to a player signed in with
+/// Google. The cases that open it sign in through the account test seam and
+/// sign out again when they end.
+void _signInForLastGameCard() {
+  debugGoogleSignedInOverride = true;
+  addTearDown(() => debugGoogleSignedInOverride = null);
+}
 
 const String _testUrl = 'wss://c614-verify-link-test.invalid/ws';
 
@@ -467,6 +476,7 @@ void main() {
     testWidgets('home recent game, app ar on an en phone, opens lang=ar', (
       tester,
     ) async {
+      _signInForLastGameCard();
       const String scenario = 'home recent game, app ar, phone en';
       _setPhoneLocale(tester, const Locale('en', 'US'));
       await _mountHomeWithLastGame(
@@ -488,6 +498,7 @@ void main() {
     testWidgets('home recent game, app en on an ar phone, opens lang=en', (
       tester,
     ) async {
+      _signInForLastGameCard();
       const String scenario = 'home recent game, app en, phone ar';
       _setPhoneLocale(tester, const Locale('ar', 'AE'));
       await _mountHomeWithLastGame(
@@ -509,6 +520,7 @@ void main() {
     testWidgets('home recent game, stored link says lang=en, app ar wins', (
       tester,
     ) async {
+      _signInForLastGameCard();
       const String scenario = 'home recent game, link lang=en, app ar';
       _setPhoneLocale(tester, const Locale('en'));
       await _mountHomeWithLastGame(

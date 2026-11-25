@@ -1,5 +1,9 @@
 // Name plate, join divider and code slot for C-278.
 //
+// Order 701 removed the join divider and moved the code slot and Join into
+// the join sheet's code entry: the divider cases now pin its absence, and
+// every code-slot case opens the code entry (a name first, X226).
+//
 // HomeScreen is mounted the way test/home_rule_toggles_test.dart mounts it
 // when a case does not need a live socket: HomeScreen inside MaterialApp,
 // with a controllerFactory whose connect throws. One mount per case.
@@ -17,6 +21,8 @@ import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/home_flow.dart';
 
 const Key _nameKey = Key('home-name-field');
 const Key _codeKey = Key('room-code-field');
@@ -129,35 +135,30 @@ void _expectNamePlate(WidgetTester tester, String hint) {
   );
 }
 
-void _expectDivider(WidgetTester tester, String text) {
-  final Finder divider = find.byKey(_dividerKey);
+/// Order 701: home-join-divider is removed from home, and its copy is
+/// painted nowhere.
+void _expectNoDivider(WidgetTester tester, String text) {
   expect(
-    divider,
-    findsOneWidget,
-    reason: 'home-join-divider must be on screen for "$text"',
+    find.byKey(_dividerKey, skipOffstage: false),
+    findsNothing,
+    reason: 'order 701: home-join-divider must be gone from home',
   );
   expect(
-    find.descendant(of: divider, matching: find.text(text)),
-    findsOneWidget,
-    reason: 'home-join-divider must read "$text"',
-  );
-  final Rect gap = tester.getRect(divider);
-  final Rect create = tester.getRect(find.byKey(_createKey));
-  final Rect code = tester.getRect(find.byKey(_codeKey));
-  expect(
-    gap.top,
-    greaterThanOrEqualTo(create.bottom),
-    reason:
-        'home-join-divider ("$text") must start at or below Create; '
-        'divider top ${gap.top}, Create bottom ${create.bottom}',
+    find.text(text, skipOffstage: false),
+    findsNothing,
+    reason: 'order 701: the divider copy "$text" must be painted nowhere',
   );
   expect(
-    gap.bottom,
-    lessThanOrEqualTo(code.top),
-    reason:
-        'home-join-divider ("$text") must end at or above the code '
-        'field; divider bottom ${gap.bottom}, code top ${code.top}',
+    find.byKey(_codeKey, skipOffstage: false),
+    findsNothing,
+    reason: 'order 701: room-code-field must be gone from home',
   );
+}
+
+/// Order 701: a name, then the join sheet's code entry.
+Future<void> _openEntry(WidgetTester tester) async {
+  await enterOldDefaultName(tester);
+  await openCodeEntry(tester);
 }
 
 /// C-447 D7: a seat record as v1.18.0 and older wrote it, `session.seat`
@@ -290,8 +291,7 @@ void main() {
   });
 
   testWidgets(
-    'en: home-join-divider reads "or join with a code" between Create '
-    'and the code field',
+    'en: home-join-divider ("or join with a code") is gone from home',
     (WidgetTester tester) async {
       await _pumpHome(tester);
       expect(
@@ -299,23 +299,21 @@ void main() {
         'en',
         reason: 'fixture: this case is English',
       );
-      _expectDivider(tester, _dividerEn);
+      _expectNoDivider(tester, _dividerEn);
     },
   );
 
-  testWidgets(
-    'ar: home-join-divider reads "أو انضم برمز" between Create and the '
-    'code field',
-    (WidgetTester tester) async {
-      await _pumpHome(tester, locale: const Locale('ar'));
-      expect(
-        _loc(tester).localeName,
-        'ar',
-        reason: 'fixture: this case is Arabic',
-      );
-      _expectDivider(tester, _dividerAr);
-    },
-  );
+  testWidgets('ar: home-join-divider ("أو انضم برمز") is gone from home', (
+    WidgetTester tester,
+  ) async {
+    await _pumpHome(tester, locale: const Locale('ar'));
+    expect(
+      _loc(tester).localeName,
+      'ar',
+      reason: 'fixture: this case is Arabic',
+    );
+    _expectNoDivider(tester, _dividerAr);
+  });
 
   testWidgets(
     'code slot has no floating label, hints "Room code", has no helper '
@@ -331,6 +329,7 @@ void main() {
         reason: 'fixture: homeRoomCodeFieldLabel must be "$_codeLabelEn"',
       );
 
+      await _openEntry(tester);
       final InputDecoration? decoration = _field(tester, _codeKey).decoration;
       final List<String> problems = <String>[];
       if (decoration?.labelText != null) {
@@ -361,6 +360,7 @@ void main() {
 
       // A full-length code that fails isValidRoomCode: Join is in the tree
       // for it (C-523 D3), and a shorter one would have no Join to tap.
+      await _openEntry(tester);
       await tester.enterText(find.byKey(_codeKey), 'k7m2#0');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
@@ -394,6 +394,7 @@ void main() {
   ) async {
     await _pumpHome(tester);
     // Join is in the tree only with a full-length code (C-523 D3).
+    await _openEntry(tester);
     await tester.enterText(find.byKey(_codeKey), 'K7M2QP');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
@@ -434,9 +435,11 @@ void main() {
 
   testWidgets(
     'control: an empty code keeps elevated Create and no Join, and a valid '
-    'code brings Join in elevated with Create outlined',
+    'code brings Join in elevated (order 701: in the code entry, while '
+    'Create on home stays primary)',
     (WidgetTester tester) async {
       await _pumpHome(tester);
+      await _openEntry(tester);
 
       expect(
         tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
@@ -475,12 +478,13 @@ void main() {
             'is valid; found '
             '${tester.widget(find.byKey(_joinKey)).runtimeType}',
       );
+      // Order 701: Create is home's primary button whatever the sheet
+      // holds; the old swap to outlined is gone with the code field.
       expect(
         tester.widget(find.byKey(_createKey)),
-        isA<OutlinedButton>(),
+        isA<ElevatedButton>(),
         reason:
-            'create-room-button must be an OutlinedButton once the code '
-            'is valid; found '
+            'create-room-button stays an ElevatedButton on home; found '
             '${tester.widget(find.byKey(_createKey)).runtimeType}',
       );
     },
@@ -498,6 +502,7 @@ void main() {
       );
 
       // Full length, so Join is in the tree to tap (C-523 D3).
+      await _openEntry(tester);
       await tester.enterText(find.byKey(_codeKey), 'k7m2#0');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));

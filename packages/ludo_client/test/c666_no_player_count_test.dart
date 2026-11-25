@@ -57,6 +57,7 @@ import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://c666-test.invalid/ws';
 
@@ -312,7 +313,7 @@ List<String> _paintedStrings([Element? root]) {
 
 Future<void> _scrollHomeToEnd(WidgetTester tester) async {
   final ScrollPosition position = Scrollable.of(
-    tester.element(find.byKey(const Key('room-code-field'))),
+    tester.element(find.byKey(_createKey)),
   ).position;
   position.jumpTo(position.maxScrollExtent);
   await tester.pump();
@@ -325,7 +326,7 @@ Future<Map<String, Object?>> _tapCreateAndRead(
   String repro,
 ) async {
   await tester.ensureVisible(find.byKey(_createKey));
-  await tester.tap(find.byKey(_createKey));
+  await tapCreateRoom(tester);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   expect(
@@ -831,6 +832,12 @@ void main() {
           locale: locale,
           controllerFactory: factory.call,
         );
+        // Order 701 (X226): Create needs a name; the default the old field
+        // held.
+        await enterName(
+          tester,
+          locale.languageCode == 'ar' ? 'لاعب' : 'Player',
+        );
         final Map<String, Object?> data = await _tapCreateAndRead(
           tester,
           factory,
@@ -927,7 +934,7 @@ void main() {
         await tester.enterText(find.byKey(_nameKey), 'Rima');
         await tester.pump();
         await tester.ensureVisible(find.byKey(_createKey));
-        await tester.tap(find.byKey(_createKey));
+        await tapCreateRoom(tester);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 50));
         final FakeTransport transport = factory.transports.single;

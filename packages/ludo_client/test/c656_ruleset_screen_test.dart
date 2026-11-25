@@ -2950,8 +2950,11 @@ void main() {
     }
   }
 
-  testWidgets('C-656t S6 the sheet closes on a presence frame that reconnects '
-      'its seat, and only on that seat\'s', (tester) async {
+  // C-708 (PROTOCOL 33 item 8): the host may remove a connected seat too, so
+  // a seat coming back no longer takes its sheet away. The sheet goes when
+  // its seat stops being in play.
+  testWidgets('C-656t S6 the sheet stays when its seat reconnects and closes '
+      'when that seat leaves the game', (tester) async {
     final _G g = await _open(
       tester,
       scenario: 'S6 closes on reconnect',
@@ -2978,8 +2981,27 @@ void main() {
       await g.pump(400);
       expect(
         find.byKey(_kickSheetKey(1)),
+        findsOneWidget,
+        reason: g.why(
+          'seat 1 reconnecting keeps its sheet: a connected seat may be '
+          'removed too',
+        ),
+      );
+      expect(
+        g.sent('kick'),
+        isEmpty,
+        reason: g.why('a seat coming back sends nothing'),
+      );
+      await g.push('seat_retired', <String, Object?>{
+        'seat': 1,
+        'reason': 'left',
+        'host_seat': 0,
+      });
+      await g.pump(400);
+      expect(
+        find.byKey(_kickSheetKey(1)),
         findsNothing,
-        reason: g.why('seat 1 reconnecting closes its sheet'),
+        reason: g.why('seat 1 leaving the game closes its sheet'),
       );
       expect(
         g.sent('kick'),
@@ -2991,8 +3013,8 @@ void main() {
     }
   });
 
-  testWidgets('C-656t S6 the sheet closes on a snapshot that reconnects its '
-      'seat', (tester) async {
+  testWidgets('C-656t S6 the sheet stays on a snapshot that reconnects its '
+      'seat and closes on one that retires it', (tester) async {
     final _G g = await _open(
       tester,
       scenario: 'S6 closes on snapshot reconnect',
@@ -3003,43 +3025,53 @@ void main() {
     );
     try {
       await _openKickSheet(g, 1);
-      await g.push('room', <String, Object?>{
-        'code': 'K7M2QP',
-        'state': 'PLAYING',
-        'host_seat': 0,
-        'players': 3,
-        'rules': <String, Object?>{
-          'blocks': true,
-          'capture_bonus': true,
-          'turn_seconds': 45,
-          'ruleset': _ruleset,
-        },
-        'chain_commit': 'a' * 64,
-        'chain_index': 0,
-        'game_id': null,
-        'client_seeds': null,
-        'seats': <Map<String, Object?>>[
-          for (final int s in <int>[0, 1, 2])
-            _seatJson(
-              s,
-              name: s == 0 ? _myName : _names[s]!,
-              connected: true,
-              tokens: _yard,
-              ruleset: true,
-            ),
-        ],
-        'turn': _turnJson(2, 'await_roll'),
-        'winner': null,
-        'placings': <int>[],
-        'retired': <int>[],
-      });
+      Map<String, Object?> snapshot({required List<int> retired}) =>
+          <String, Object?>{
+            'code': 'K7M2QP',
+            'state': 'PLAYING',
+            'host_seat': 0,
+            'players': 3,
+            'rules': <String, Object?>{
+              'blocks': true,
+              'capture_bonus': true,
+              'turn_seconds': 45,
+              'ruleset': _ruleset,
+            },
+            'chain_commit': 'a' * 64,
+            'chain_index': 0,
+            'game_id': null,
+            'client_seeds': null,
+            'seats': <Map<String, Object?>>[
+              for (final int s in <int>[0, 1, 2])
+                _seatJson(
+                  s,
+                  name: s == 0 ? _myName : _names[s]!,
+                  connected: true,
+                  tokens: _yard,
+                  ruleset: true,
+                ),
+            ],
+            'turn': _turnJson(2, 'await_roll'),
+            'winner': null,
+            'placings': <int>[],
+            'retired': retired,
+          };
+      await g.push('room', snapshot(retired: <int>[]));
+      await g.pump(400);
+      expect(
+        find.byKey(_kickSheetKey(1)),
+        findsOneWidget,
+        reason: g.why(
+          'a snapshot that shows seat 1 connected keeps its sheet: a '
+          'connected seat may be removed too',
+        ),
+      );
+      await g.push('room', snapshot(retired: <int>[1]));
       await g.pump(400);
       expect(
         find.byKey(_kickSheetKey(1)),
         findsNothing,
-        reason: g.why(
-          'a snapshot that shows seat 1 connected closes its sheet',
-        ),
+        reason: g.why('a snapshot that shows seat 1 retired closes its sheet'),
       );
     } finally {
       await _close(g);
@@ -3068,12 +3100,32 @@ void main() {
         findsNothing,
         reason: g.why('no kick sheet for a non-host'),
       );
+      // C-708: the name plates are the host's way to a connected seat; a
+      // non-host gets nothing from them, away or connected.
+      for (final int s in <int>[0, 1]) {
+        await g.tester.tap(find.byKey(_nameChipKey(s)), warnIfMissed: false);
+        await g.tester.pump();
+        await g.pump(400);
+        expect(
+          find.byKey(_kickSheetKey(s)),
+          findsNothing,
+          reason: g.why(
+            'no kick sheet for a non-host from the name plate of '
+            'seat $s',
+          ),
+        );
+      }
+      expect(g.sent('kick'), isEmpty, reason: g.why('no kick request'));
     } finally {
       await _close(g);
     }
   });
 
-  testWidgets('C-656t S6 not offered for a connected seat', (tester) async {
+  // C-708 (PROTOCOL 33 item 8): the host may remove a connected seat too,
+  // and reaches it from the seat's name plate.
+  testWidgets('C-656t S6 offered for a connected seat from its name plate', (
+    tester,
+  ) async {
     final _G g = await _open(
       tester,
       scenario: 'S6 connected seat',
@@ -3088,13 +3140,25 @@ void main() {
         await g.pump(400);
         expect(
           find.byKey(_kickSheetKey(s)),
-          findsNothing,
+          findsOneWidget,
           reason: g.why(
-            'no kick sheet from the name chip of connected seat $s',
+            'kick-sheet-$s from the name plate of connected seat $s',
           ),
         );
+        await g.tester.tap(find.byKey(const Key('kick-sheet-wait')));
+        await g.tester.pump();
+        await g.pump(400);
+        expect(
+          find.byKey(_kickSheetKey(s)),
+          findsNothing,
+          reason: g.why('Wait closes the sheet of seat $s'),
+        );
       }
-      expect(g.sent('kick'), isEmpty, reason: g.why('no kick request'));
+      expect(
+        g.sent('kick'),
+        isEmpty,
+        reason: g.why('opening and closing the sheet sends no kick'),
+      );
     } finally {
       await _close(g);
     }

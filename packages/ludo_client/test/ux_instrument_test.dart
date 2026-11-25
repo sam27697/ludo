@@ -29,6 +29,7 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://ux-instrument.invalid/ws';
 const Size _phone = Size(390, 844);
@@ -77,6 +78,7 @@ Map<String, Object?> _roomJson({
   Map<String, Object?>? turn,
 }) => <String, Object?>{
   'code': code,
+  'open': false,
   'state': state,
   'host_seat': 0,
   'players': players,
@@ -196,16 +198,25 @@ void main() {
 
     expect(find.byType(HomeScreen), findsOneWidget);
     expect(find.byKey(const Key('create-room-button')), findsOneWidget);
+    // Order 701: home's join control is join-game-button; the code field and
+    // join-room-button are in the join sheet's code entry, measured there
+    // and closed again before the home guidelines and shots.
+    expect(find.byKey(joinGameButtonKey), findsOneWidget);
+    await enterName(tester, 'Player');
+    await openCodeEntry(tester);
     // Join is in the tree only with a full-length code (C-523 D3).
     await tester.enterText(find.byKey(const Key('room-code-field')), 'K7M2QP');
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('join-room-button')), findsOneWidget);
+    _printSize(tester, const Key('join-room-button'), 'join-room');
+    _printSize(tester, const Key('room-code-field'), 'code-field');
+    await backOutOfSheet(tester, joinSheetKey);
+    await tester.pumpAndSettle();
 
     _printSize(tester, const Key('create-room-button'), 'create-room');
-    _printSize(tester, const Key('join-room-button'), 'join-room');
+    _printSize(tester, joinGameButtonKey, 'join-game');
     _printSize(tester, const Key('locale-toggle-button'), 'locale-toggle');
     _printSize(tester, const Key('home-name-field'), 'name-field');
-    _printSize(tester, const Key('room-code-field'), 'code-field');
     // C-666 D1: the players control is gone, so there is no size to print.
     expect(find.byKey(const Key('home-players-button')), findsNothing);
 
@@ -242,7 +253,8 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const Key('home-name-field')), 'Priya');
-    await tester.tap(find.byKey(const Key('create-room-button')));
+    // Order 701: Create opens the sheet; the friends-only tile creates.
+    await tapCreateRoom(tester);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
@@ -251,8 +263,22 @@ void main() {
     final FakeTransport transport = factory.transports.single;
     addTearDown(controller.dispose);
 
-    final String createId = _idOf(
-      transport.sentRaw.singleWhere((s) => _typeOf(s) == 'create_room'),
+    final String createSent = transport.sentRaw.singleWhere(
+      (s) => _typeOf(s) == 'create_room',
+    );
+    final String createId = _idOf(createSent);
+    // The server answers with the seat count the create asked for (section
+    // 33 item 1: and with `open` on the snapshot); the create sheet's
+    // friends-only tile asks for a closed room.
+    final Map<String, Object?> createData =
+        _decode(createSent)['d']! as Map<String, Object?>;
+    final int players = createData['players']! as int;
+    expect(
+      createData['open'],
+      false,
+      reason:
+          'create-friends-tile must send create_room with open: false; '
+          'sent $createSent',
     );
     transport.pushText(
       _frame(
@@ -266,7 +292,7 @@ void main() {
         re: createId,
         data: _roomJson(
           code: 'PLAY42',
-          players: 2,
+          players: players,
           seats: <Map<String, Object?>>[_seatJson(0, name: 'Priya')],
           seq: 1,
         ),
@@ -274,13 +300,37 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    transport.pushText(
-      _frame(
-        type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
-      ),
+    const List<String> guests = <String>['Karim', 'Lena', 'Omar'];
+    for (int seat = 1; seat < players; seat++) {
+      transport.pushText(
+        _frame(
+          type: 'player_joined',
+          data: <String, Object?>{
+            'seat': seat,
+            'name': guests[seat - 1],
+            'seq': seat + 1,
+          },
+        ),
+      );
+    }
+    // The lobby's route is at rest by now (the create sheet's close waited it
+    // out), so nothing else schedules a frame: wait on the frame that shows
+    // the full room instead of a fixed pump count.
+    await pumpUntilFound(
+      tester,
+      find.byKey(const Key('lobby-start-button')),
+      what:
+          'lobby-start-button for the host once all $players seats of '
+          'PLAY42 are taken (room seq 1, player_joined seq 2..$players)',
     );
-    await tester.pump();
+
+    // The guests' seat cards come in with an entrance animation; the shot
+    // below is of the lobby at rest, every seat card in place.
+    await pumpUntilAtRest(
+      tester,
+      find.byKey(Key('lobby-seat-${players - 1}')),
+      what: 'lobby-seat-${players - 1} after player_joined seq $players',
+    );
 
     expect(find.byType(LobbyScreen), findsOneWidget);
     expect(find.byKey(const Key('lobby-room-code')), findsOneWidget);
@@ -302,7 +352,7 @@ void main() {
           'turn': 0,
           'game_id': 'e' * 16,
           'client_seeds': '0:seed',
-          'seq': 3,
+          'seq': players + 1,
         },
       ),
     );

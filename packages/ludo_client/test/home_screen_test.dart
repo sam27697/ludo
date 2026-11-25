@@ -44,6 +44,7 @@ import 'package:ludo_client/src/server_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 /// A [RoomControllerFactory] that never opens a transport, real or fake.
 ///
@@ -111,6 +112,15 @@ Widget _homeScreenApp({
 /// file makes on it is a static constructor argument (action, players,
 /// code, playerName), not anything that depends on which RoomPhase the
 /// controller has reached, so nothing here needs the tree to fully settle.
+/// The two-button home (order 701): Create opens a sheet and the friends-only
+/// tile creates the room. Same bounded pumps as [_tapAndAwaitPushedRoute]
+/// after the tile tap.
+Future<void> _createAndAwaitPushedRoute(WidgetTester tester) async {
+  await tapCreateRoom(tester);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
 Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
   // Join enters with a full code (C-523 D3), through a 200 ms AnimatedSize at
   // most: let it reach its final rect before the tap.
@@ -302,7 +312,10 @@ void main() {
     expect(find.text(loc.appTitle), findsOneWidget);
     expect(find.byKey(const Key('create-room-button')), findsOneWidget);
     expect(find.text(loc.homeCreateRoomButton), findsOneWidget);
-    // Join is in the tree only with a full-length code (C-523 D3).
+    // Join is in the tree only with a full-length code (C-523 D3). Order 701:
+    // the code field is behind the join sheet's code tile.
+    await enterName(tester, 'Player');
+    await openCodeEntry(tester);
     await tester.enterText(find.byKey(const Key('room-code-field')), 'K7M2QP');
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('join-room-button')), findsOneWidget);
@@ -317,7 +330,8 @@ void main() {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
-      await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+      await enterName(tester, 'Player');
+      await _createAndAwaitPushedRoute(tester);
 
       final LobbyScreen pushed = _pushedLobbyScreen(tester);
       expect(
@@ -345,6 +359,8 @@ void main() {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
+      await enterName(tester, 'Player');
+      await openCodeEntry(tester);
       await tester.enterText(
         find.byKey(const Key('room-code-field')),
         'ab2-3cd',
@@ -379,6 +395,8 @@ void main() {
       final context = tester.element(find.byType(Scaffold));
       final loc = AppLocalizations.of(context);
 
+      await enterName(tester, 'Player');
+      await openCodeEntry(tester);
       await tester.enterText(
         find.byKey(const Key('room-code-field')),
         'AB#1CD',
@@ -454,61 +472,58 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byKey(const Key('home-name-field')), 'Priya');
-      await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+      await _createAndAwaitPushedRoute(tester);
 
       final LobbyScreen pushed = _pushedLobbyScreen(tester);
       expect(pushed.playerName, 'Priya');
     });
 
+    // Order 701 (X226): the localised default name is no longer a silent
+    // fallback. An empty or blank name opens no sheet and pushes no lobby;
+    // the field asks for a name with home-name-required.
+    testWidgets('an empty name field opens nothing, pushes no lobby, and shows '
+        'home-name-required', (tester) async {
+      await tester.pumpWidget(_homeScreenApp());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(createRoomButtonKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(
+        find.byKey(createRoomSheetKey),
+        findsNothing,
+        reason: 'X226: Create with an empty name must not open the sheet',
+      );
+      expect(
+        find.byType(LobbyScreen),
+        findsNothing,
+        reason: 'X226: an empty name must never reach a pushed LobbyScreen',
+      );
+      expect(find.byKey(homeNameRequiredKey), findsOneWidget);
+    });
+
     testWidgets(
-      'an empty name field falls back to the localised default name, and '
-      'an empty string is never passed',
+      'a name field containing only whitespace is empty after trim: nothing '
+      'opens and home-name-required shows',
       (tester) async {
         await tester.pumpWidget(_homeScreenApp());
         await tester.pumpAndSettle();
-
-        final context = tester.element(find.byType(Scaffold));
-        final String defaultName = AppLocalizations.of(context)
-            .homeDefaultPlayerName;
-        expect(
-          defaultName,
-          isNotEmpty,
-          reason:
-              'fixture is broken: homeDefaultPlayerName itself must not be '
-              'empty or this test proves nothing',
-        );
-
-        await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-
-        final LobbyScreen pushed = _pushedLobbyScreen(tester);
-        expect(pushed.playerName, isNotEmpty);
-        expect(pushed.playerName, defaultName);
-      },
-    );
-
-    testWidgets(
-      'a name field containing only whitespace also falls back to the '
-      'localised default, not to a blank string',
-      (tester) async {
-        await tester.pumpWidget(_homeScreenApp());
-        await tester.pumpAndSettle();
-
-        final context = tester.element(find.byType(Scaffold));
-        final String defaultName = AppLocalizations.of(context)
-            .homeDefaultPlayerName;
 
         await tester.enterText(find.byKey(const Key('home-name-field')), '   ');
-        await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+        await tester.tap(find.byKey(createRoomButtonKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
 
-        final LobbyScreen pushed = _pushedLobbyScreen(tester);
         expect(
-          pushed.playerName,
-          defaultName,
+          find.byKey(createRoomSheetKey),
+          findsNothing,
           reason:
-              'a name of only whitespace must be trimmed to empty and then '
-              'fall back, the same as a genuinely empty field; got '
-              '"${pushed.playerName}"',
+              'X226: a name of only whitespace is empty after trim; Create '
+              'must not open the sheet',
         );
+        expect(find.byType(LobbyScreen), findsNothing);
+        expect(find.byKey(homeNameRequiredKey), findsOneWidget);
       },
     );
   });
@@ -538,7 +553,8 @@ void main() {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
-      await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+      await enterName(tester, 'Player');
+      await _createAndAwaitPushedRoute(tester);
 
       final LobbyScreen pushed = _pushedLobbyScreen(tester);
       expect(
@@ -565,10 +581,8 @@ void main() {
           );
           await tester.pumpAndSettle();
 
-          await _tapAndAwaitPushedRoute(
-            tester,
-            const Key('create-room-button'),
-          );
+          await enterName(tester, 'Player');
+          await _createAndAwaitPushedRoute(tester);
           await tester.pump();
 
           expect(
@@ -665,6 +679,8 @@ void main() {
           );
           await tester.pumpAndSettle();
 
+          await enterName(tester, 'Player');
+          await openCodeEntry(tester);
           await tester.enterText(
             find.byKey(const Key('room-code-field')),
             'AB23CD',
@@ -757,10 +773,8 @@ void main() {
           );
           await tester.pumpAndSettle();
 
-          await _tapAndAwaitPushedRoute(
-            tester,
-            const Key('create-room-button'),
-          );
+          await enterName(tester, 'Player');
+          await _createAndAwaitPushedRoute(tester);
           await tester.pump();
 
           final RoomController? controller = factory.controller;
@@ -816,10 +830,8 @@ void main() {
           );
           await tester.pumpAndSettle();
 
-          await _tapAndAwaitPushedRoute(
-            tester,
-            const Key('create-room-button'),
-          );
+          await enterName(tester, 'Player');
+          await _createAndAwaitPushedRoute(tester);
           await tester.pump();
 
           final RoomController controller = factory.controllers.single;
