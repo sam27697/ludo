@@ -1611,6 +1611,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (result == GameScreenResult.gameGone ||
         result == GameScreenResult.removed) {
       _showNoticeFor(result);
+      // C-708: a host's kick in play shows its own notice and ban card here
+      // as on the join paths; a gone room keeps the notice set above.
+      _noteKnockOutcome(controller);
       if (mounted && _seatRecord?.code == record.code) {
         setState(() {
           _setSeat(null, null);
