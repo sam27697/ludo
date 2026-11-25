@@ -68,6 +68,8 @@ JwksFetcher httpJwksFetcher(Uri url) {
 
 Future<JwksResponse> _fetchOnce(HttpClient client, Uri url) async {
   final HttpClientRequest request = await client.getUrl(url);
+  // A redirect is a failed fetch: it is answered with its 3xx status below.
+  request.followRedirects = false;
   final HttpClientResponse response = await request.close();
   if (response.statusCode != 200) {
     throw HttpException('key set fetch answered ${response.statusCode}');
@@ -146,7 +148,7 @@ class GoogleTokenVerifier {
 
   Map<String, RSAPublicKey> _keys = <String, RSAPublicKey>{};
   DateTime? _keysExpire;
-  DateTime? _lastMissRefetch;
+  DateTime? _lastAttempt;
   Future<bool>? _inFlight;
 
   /// Checks [token] against section 36.3, in its order; the first failure
@@ -272,15 +274,12 @@ class GoogleTokenVerifier {
   // --- key set -----------------------------------------------------------
 
   Future<_KeyLookup> _keyFor(String kid) async {
-    final DateTime now = _clock.now;
     final DateTime? expires = _keysExpire;
-    bool loadedHere = false;
-    if (expires == null || !now.isBefore(expires)) {
-      loadedHere = true;
+    if (expires == null || !_clock.now.isBefore(expires)) {
       // Nothing cached, or the cache has outlived its max-age: load. A failed
       // load leaves a stale set in place, and with no set at all nothing can
       // be verified.
-      await _load();
+      await _refresh();
       if (_keysExpire == null) {
         return const _KeyLookup.unavailable();
       }
@@ -289,17 +288,31 @@ class GoogleTokenVerifier {
     if (key != null) {
       return _KeyLookup(key);
     }
-    final DateTime? last = _lastMissRefetch;
-    final DateTime at = _clock.now;
-    // A set fetched a moment ago in this very call is as fresh as a refetch
-    // would make it, so it is not fetched twice for one token.
-    if (!loadedHere &&
-        (last == null || at.difference(last) >= _missRefetchEvery)) {
-      _lastMissRefetch = at;
-      await _load();
-      key = _keys[kid];
-    }
+    // An unknown kid: a fetch already running is awaited and the set read
+    // again; with none running, one starts only when the 60 second window
+    // allows it, else the answer is immediate.
+    await _refresh();
+    key = _keys[kid];
     return _KeyLookup(key);
+  }
+
+  /// Section 36.3.1: at most one fetch per 60 seconds for the whole process,
+  /// whether it is the first load, an expiry reload or a miss refetch, and
+  /// whether or not the last one worked. A caller arriving while a fetch is
+  /// running awaits that fetch instead.
+  Future<void> _refresh() async {
+    final Future<bool>? running = _inFlight;
+    if (running != null) {
+      await running;
+      return;
+    }
+    final DateTime now = _clock.now;
+    final DateTime? last = _lastAttempt;
+    if (last != null && now.difference(last) < _missRefetchEvery) {
+      return;
+    }
+    _lastAttempt = now;
+    await _load();
   }
 
   /// One fetch at a time: callers arriving while one is running share it.

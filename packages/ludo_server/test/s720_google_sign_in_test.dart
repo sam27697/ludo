@@ -311,6 +311,10 @@ void main() {
       expect(fetches, 1);
       await signIn(_token(clock));
       expect(fetches, 1);
+      // The first load counts against the same 60 s clock: no refetch yet.
+      await signIn(_token(clock, header: {'kid': 'zzz'}));
+      expect(fetches, 1);
+      clock.advance(const Duration(seconds: 61));
       await signIn(_token(clock, header: {'kid': 'zzz'}));
       expect(fetches, 2);
       await signIn(_token(clock, header: {'kid': 'zzz'}));

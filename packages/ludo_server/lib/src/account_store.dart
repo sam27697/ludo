@@ -29,16 +29,28 @@ class AccountStore {
   })  : _dir = dir,
         _hmac = Hmac(sha256, utf8.encode(salt)),
         _clock = clock {
-    if (!_dir.existsSync()) {
-      _dir.createSync(recursive: true);
-      _chmod('700', _dir.path);
-    }
+    _prepare();
   }
 
   final Directory _dir;
   final Hmac _hmac;
   final Clock _clock;
   final Random _random = Random.secure();
+
+  /// Start-time preparation: the directory exists, is mode 0700 whether it is
+  /// new or old, and takes a file (a probe is created and removed). Any
+  /// failure is a [FileSystemException] (a missing or failing chmod included).
+  void _prepare() {
+    if (!_dir.existsSync()) {
+      _dir.createSync(recursive: true);
+    }
+    _chmod('700', _dir.path);
+    final File probe = File('${_dir.path}/.probe-${_token()}');
+    probe.writeAsStringSync('', flush: true);
+    probe.deleteSync();
+  }
+
+  String _token() => _random.nextInt(1 << 32).toRadixString(16);
 
   /// Section 36.1.3: the account's file name, 64 lowercase hex characters.
   String hashOf(String sub) =>
@@ -57,11 +69,13 @@ class AccountStore {
       'created_ms': created,
       'last_ms': now,
     });
-    final File temporary =
-        File('${_dir.path}/.tmp-${_random.nextInt(1 << 32).toRadixString(16)}');
+    final File temporary = File('${_dir.path}/.tmp-${_token()}');
     try {
-      temporary.writeAsStringSync(body, flush: true);
+      // Empty and mode 0600 before any content exists, so the JSON is never
+      // readable by others.
+      temporary.createSync(exclusive: true);
       _chmod('600', temporary.path);
+      temporary.writeAsStringSync(body, flush: true);
       temporary.renameSync(target.path);
     } on Object {
       if (temporary.existsSync()) {
@@ -105,7 +119,12 @@ class AccountStore {
   /// Dart has no chmod of its own; the image carries coreutils. A failure is
   /// an I/O failure like any other.
   void _chmod(String mode, String path) {
-    final ProcessResult result = Process.runSync('chmod', <String>[mode, path]);
+    final ProcessResult result;
+    try {
+      result = Process.runSync('chmod', <String>[mode, path]);
+    } on ProcessException {
+      throw FileSystemException('chmod could not run', path);
+    }
     if (result.exitCode != 0) {
       throw FileSystemException('chmod failed', path);
     }
