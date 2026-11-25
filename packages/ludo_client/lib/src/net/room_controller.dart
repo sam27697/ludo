@@ -2259,11 +2259,14 @@ class RoomController extends ChangeNotifier {
   /// unconditional: a resync already running or no room held yet both leave
   /// the frame changing nothing here, before any per-type rule ever runs.
   void _reduce(Frame frame) {
-    // Section 35 ruling 7 (f): my own seat's retire is final whatever came
-    // before it, a resync in flight included.
+    // Section 35 ruling 7 (f): my own seat's retire for a kick or a leave is
+    // final whatever came before it, a resync in flight included. Any other
+    // retire of my seat (`absent`, met by a socket that came back) is reduced
+    // like any seat's, gap check included, and the watching view goes on.
     if (frame.type == 'seat_retired' &&
         _cachedSeat != null &&
-        _asInt(frame.data, 'seat') == _cachedSeat) {
+        _asInt(frame.data, 'seat') == _cachedSeat &&
+        (frame.data['reason'] == 'kicked' || frame.data['reason'] == 'left')) {
       _reduceOwnRetire(frame);
       return;
     }
