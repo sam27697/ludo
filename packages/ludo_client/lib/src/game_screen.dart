@@ -7804,34 +7804,32 @@ class _GameScreenState extends State<GameScreen> {
                       Icon(Icons.wifi_off, size: kSpace4, color: seatColor),
                       const SizedBox(width: kSpace1),
                     ],
-                    // C-708 (doctrine P3): a computer's turn says so, so it
-                    // is never read as a person's.
-                    if (turnIsComputer) ...[
-                      Semantics(
-                        key: const Key('game-header-chip-bot'),
-                        label: loc.seatOriginBot,
-                        child: ExcludeSemantics(
-                          child: Icon(
-                            Icons.smart_toy_rounded,
-                            size: kSpace4,
-                            color: seatColor,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: kSpace1),
-                    ],
                     Expanded(
-                      child: Text(
+                      child: _turnLineText(
                         bannerText,
-                        key: const Key('game-screen-turn-banner'),
+                        // C-708 (doctrine P3): a computer's turn line starts
+                        // with the robot mark, so its turn is never read as
+                        // a person's.
+                        computerMark: turnIsComputer
+                            ? Semantics(
+                                key: const Key('game-header-chip-bot'),
+                                label: loc.seatOriginBot,
+                                child: ExcludeSemantics(
+                                  child: Icon(
+                                    Icons.smart_toy_rounded,
+                                    size: kSpace4,
+                                    color: seatColor,
+                                  ),
+                                ),
+                              )
+                            : null,
                         maxLines: bannerMaxLines,
-                        overflow: TextOverflow.ellipsis,
                         // C-391 decision 2: the banner's own text is laid
                         // out at the clamped scale, not the ring's or the
                         // board's ambient one, so it never asks this row
                         // for more than `_headerRowHeightFor` already
                         // measured it at.
-                        textScaler: scaler,
+                        scaler: scaler,
                         style: TextStyle(
                           fontWeight: myTurn
                               ? FontWeight.w700
@@ -9696,6 +9694,44 @@ SeatState? _offlineTurnSeat(RoomSnapshot room) {
     }
   }
   return null;
+}
+
+/// The turn line as drawn (`game-screen-turn-banner`) from the words
+/// [_turnBannerText] chose. With [computerMark] the mark leads the line
+/// inside the same text, so it wraps and mirrors with it; without one it is
+/// the plain text it has always been.
+Widget _turnLineText(
+  String text, {
+  Widget? computerMark,
+  required int maxLines,
+  required TextScaler scaler,
+  required TextStyle style,
+}) {
+  const Key key = Key('game-screen-turn-banner');
+  if (computerMark == null) {
+    return Text(
+      text,
+      key: key,
+      maxLines: maxLines,
+      overflow: TextOverflow.ellipsis,
+      textScaler: scaler,
+      style: style,
+    );
+  }
+  return Text.rich(
+    TextSpan(
+      children: <InlineSpan>[
+        WidgetSpan(alignment: PlaceholderAlignment.middle, child: computerMark),
+        const WidgetSpan(child: SizedBox(width: kSpace1)),
+        TextSpan(text: text),
+      ],
+    ),
+    key: key,
+    maxLines: maxLines,
+    overflow: TextOverflow.ellipsis,
+    textScaler: scaler,
+    style: style,
+  );
 }
 
 /// C-708: a seat drawn as away, its phone down. A computer seat is played by
