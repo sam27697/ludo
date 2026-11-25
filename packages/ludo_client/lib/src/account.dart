@@ -111,12 +111,19 @@ class AccountService extends ChangeNotifier {
     }
     notifyListeners();
     String? id;
+    ({int status, String body})? answer;
     try {
-      final ({int status, String body}) answer = await _http(
+      answer = await _http(
         'GET',
         _origin.resolve('/auth/config'),
       ).timeout(kAccountTimeout);
-      if (answer.status == 200) {
+    } on Object {
+      // Whatever the call itself threw (network, timeout, a broken transport)
+      // reads as "not offered".
+      answer = null;
+    }
+    if (answer != null && answer.status == 200) {
+      try {
         final Object? decoded = jsonDecode(answer.body);
         if (decoded is Map<String, Object?>) {
           final Object? value = decoded['google_client_id'];
@@ -124,9 +131,14 @@ class AccountService extends ChangeNotifier {
             id = value.trim();
           }
         }
+      } on Object catch (error, stack) {
+        id = null;
+        // A body that is not JSON is an expected "not offered". Anything else
+        // is a bug in reading the answer and is reported, not eaten.
+        if (error is! FormatException) {
+          _reportAccountError(error, stack, 'reading the sign-in config');
+        }
       }
-    } on Object {
-      id = null;
     }
     _clientId = id;
     notifyListeners();
@@ -155,12 +167,13 @@ class AccountService extends ChangeNotifier {
     if (answer == null || answer.status != 200) {
       return AccountOutcome.failed;
     }
-    String name = '';
+    final String name;
     try {
       final Object? decoded = jsonDecode(answer.body);
-      if (decoded is Map<String, Object?> && decoded['name'] is String) {
-        name = (decoded['name']! as String).trim();
+      if (decoded is! Map<String, Object?> || decoded['name'] is! String) {
+        return AccountOutcome.failed;
       }
+      name = (decoded['name']! as String).trim();
     } on FormatException {
       return AccountOutcome.failed;
     }
@@ -196,6 +209,14 @@ class AccountService extends ChangeNotifier {
       token,
     );
     if (answer == null || answer.status != 200) {
+      return AccountOutcome.failed;
+    }
+    try {
+      final Object? decoded = jsonDecode(answer.body);
+      if (decoded is! Map<String, Object?> || decoded['deleted'] is! bool) {
+        return AccountOutcome.failed;
+      }
+    } on FormatException {
       return AccountOutcome.failed;
     }
     await signOut();
@@ -235,11 +256,22 @@ class AccountService extends ChangeNotifier {
         await prefs.remove(kAccountSignedInKey);
         await prefs.remove(kAccountNameKey);
       }
-    } on Object {
+    } on Object catch (error, stack) {
       // The record is a convenience; this run still holds the true answer in
-      // memory, and the next run reads signed out.
-      return;
+      // memory, and the next run reads signed out. The failure is reported.
+      _reportAccountError(error, stack, 'writing the account record');
     }
+  }
+
+  void _reportAccountError(Object error, StackTrace stack, String context) {
+    FlutterError.reportError(
+      FlutterErrorDetails(
+        exception: error,
+        stack: stack,
+        library: 'account service',
+        context: ErrorDescription(context),
+      ),
+    );
   }
 }
 
