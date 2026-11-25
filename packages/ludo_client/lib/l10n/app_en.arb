@@ -1505,5 +1505,66 @@
   "lobbyFillComputer": "Fill with computer",
   "@lobbyFillComputer": {
     "description": "Lobby, host only, shown after about a minute in an open room with empty seats: seats computer players and starts."
+  },
+  "accountSignInButton": "Sign in with Google",
+  "@accountSignInButton": {
+    "description": "Home, beside the name field: starts the optional Google sign-in."
+  },
+  "accountChipLabel": "Signed in with Google. Open your account.",
+  "@accountChipLabel": {
+    "description": "Screen reader label of the small signed-in mark beside the name field on home."
+  },
+  "accountSheetTitle": "Your account",
+  "@accountSheetTitle": {
+    "description": "Title of the account sheet."
+  },
+  "accountSignedInAs": "Signed in as {name}",
+  "@accountSignedInAs": {
+    "description": "Account sheet line naming the Google name.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "accountSignedInNoName": "Signed in with Google",
+  "@accountSignedInNoName": {
+    "description": "Account sheet line when Google gave no name."
+  },
+  "accountSignOut": "Sign out",
+  "@accountSignOut": {
+    "description": "Account sheet action: signs out on this phone only."
+  },
+  "accountDelete": "Delete my account",
+  "@accountDelete": {
+    "description": "Account sheet action that opens the delete confirmation."
+  },
+  "accountDeleteTitle": "Delete your account?",
+  "@accountDeleteTitle": {
+    "description": "Title of the delete confirmation."
+  },
+  "accountDeleteBody": "This removes your name and your sign-in from our server. It cannot be undone. Games you already played stay checkable.",
+  "@accountDeleteBody": {
+    "description": "Delete confirmation text: what goes, that it is final, that played games stay checkable."
+  },
+  "accountDeleteConfirm": "Delete for good",
+  "@accountDeleteConfirm": {
+    "description": "Red confirm action of the delete step."
+  },
+  "accountDeleteCancel": "Keep my account",
+  "@accountDeleteCancel": {
+    "description": "Cancel action of the delete step."
+  },
+  "accountFailed": "That did not work. Check your connection and try again.",
+  "@accountFailed": {
+    "description": "Line shown when sign-in or deletion failed."
+  },
+  "accountUnavailable": "Sign-in is not available right now.",
+  "@accountUnavailable": {
+    "description": "Line shown when the server does not offer sign-in."
+  },
+  "accountDeletedNotice": "Your account is deleted.",
+  "@accountDeletedNotice": {
+    "description": "Home notice after the account was deleted."
   }
 }

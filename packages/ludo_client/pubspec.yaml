@@ -75,6 +75,7 @@ dependencies:
   # game with the same chain and draw the server rolls with (C-704).
   fair_dice:
     path: ../fair_dice
+  google_sign_in: ^7.0.0
 
 dev_dependencies:
   flutter_test:
