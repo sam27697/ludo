@@ -1634,6 +1634,9 @@ void main() {
           ),
           transport,
         );
+        final firstData = _dataOf(
+          transport.sentRaw.singleWhere((s) => _typeOf(s) == 'create_room'),
+        );
         await _resolveFailed(tester, transport, id, code: 'RATE_LIMITED');
         expect(controller.phase, RoomPhase.failed);
 
@@ -1670,10 +1673,21 @@ void main() {
             // toggles, and a LobbyScreen built without them carries the
             // defaults, never turn_seconds.
             'rules': <String, Object?>{'capture_bonus': true},
+            // Section 33 item 1: a LobbyScreen built without `open` creates
+            // a closed room, and says so on the wire.
+            'open': false,
           },
           reason:
               'rule 7: retry must re-issue the same request with the same '
               'arguments initState issued; got $sentData',
+        );
+        expect(
+          sentData,
+          firstData,
+          reason:
+              'rule 7: the retry create_room must equal the first one, '
+              'field for field (install and open included); first '
+              '$firstData, retry $sentData',
         );
 
         // Resolve the retry's request, so addTearDown's dispose does not
