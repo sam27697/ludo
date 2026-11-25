@@ -441,6 +441,21 @@ renamed `strikes.json.bad-<epoch ms>` and the server starts empty. The image
 must create `/data/strikes` owned by `10001:10001`, as it does `/data/verify`,
 or the server cannot write there.
 
+## Account records
+
+Optional Google sign-in (docs/PROTOCOL.md section 36) keeps one small JSON
+file per account at `/data/accounts` on the named volume `account-data`
+(`ludo-staging_account-data` and `ludo-production_account-data`). The file
+name is a keyed hash of the Google account number; the file holds the display
+name and two times, and never an email address. `LUDO_GOOGLE_CLIENT_ID` and
+`LUDO_ACCOUNT_SALT` are set in `.env` (`env.example` says how); with both
+empty sign-in is off and the server plays as before. With a client id set,
+a salt shorter than 32 characters stops the container at start and the log
+names the variable. The image must create `/data/accounts` owned by
+`10001:10001` and mode 0700, as it does `/data/strikes`, or the server cannot
+write there. Deleting the volume forgets every account; changing the salt
+makes the existing ones unfindable.
+
 ## Out of scope here
 
 TLS, the reverse proxy configuration, and the Android release build are
