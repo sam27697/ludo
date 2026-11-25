@@ -9,6 +9,18 @@ import 'net/ws_transport.dart';
 /// The deployed game server. Production, which is live and current.
 const String kDefaultServerUrl = 'wss://ludo.provefair.app';
 
+/// The HTTPS origin of [kDefaultServerUrl], where the account routes of
+/// docs/PROTOCOL.md section 36 live next to `/health`: `wss` becomes `https`
+/// and `ws` becomes `http`, host and port kept.
+Uri accountOrigin() {
+  final Uri socket = Uri.parse(kDefaultServerUrl);
+  return Uri(
+    scheme: socket.scheme == 'ws' ? 'http' : 'https',
+    host: socket.host,
+    port: socket.hasPort ? socket.port : null,
+  );
+}
+
 int? _clientBuild;
 
 /// The build number [defaultRoomControllerFactory] puts on every upgrade.

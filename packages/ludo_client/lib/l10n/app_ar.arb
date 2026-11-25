@@ -329,5 +329,19 @@
   "botName4": "بوبو",
   "botName5": "توتو",
   "botName6": "ميمي",
-  "lobbyFillComputer": "كمّل بكومبيوتر"
+  "lobbyFillComputer": "كمّل بكومبيوتر",
+  "accountSignInButton": "سجّل الدخول بحساب Google",
+  "accountChipLabel": "مسجّل الدخول بحساب Google. افتح حسابك.",
+  "accountSheetTitle": "حسابك",
+  "accountSignedInAs": "مسجّل الدخول باسم {name}",
+  "accountSignedInNoName": "مسجّل الدخول بحساب Google",
+  "accountSignOut": "تسجيل الخروج",
+  "accountDelete": "احذف حسابي",
+  "accountDeleteTitle": "تحذف حسابك؟",
+  "accountDeleteBody": "هيك بنمسح اسمك وتسجيل دخولك من عندنا. ما فيك ترجع عنها. الألعاب اللي لعبتها بتضل قابلة للتحقق.",
+  "accountDeleteConfirm": "احذف نهائيًا",
+  "accountDeleteCancel": "خلّي حسابي",
+  "accountFailed": "ما زبطت. تأكد من الاتصال وجرّب مرة تانية.",
+  "accountUnavailable": "تسجيل الدخول مو متاح هلق.",
+  "accountDeletedNotice": "انحذف حسابك."
 }

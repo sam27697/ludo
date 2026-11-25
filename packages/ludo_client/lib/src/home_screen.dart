@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'account.dart';
+import 'account_sheet.dart';
 import 'code_ban_notice.dart';
 import 'create_room_sheet.dart';
 import 'deep_link.dart';
@@ -78,6 +79,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 /// C-682: the lines home can show after a join that ended without a seat.
+enum _AccountNotice { failed, unavailable, deleted }
+
 enum _KnockNotice { notJoined, full, switchedOff, kicked }
 
 class _HomeScreenState extends State<HomeScreen>
@@ -115,6 +118,11 @@ class _HomeScreenState extends State<HomeScreen>
   // Section 32 item 12: the ban a typed-code join, a rejected knock or a host
   // removal just told this phone about. Null when there is none to show.
   CodeBan? _codeBan;
+  // Section 36.6: the account service this screen listens to, whether a
+  // sign-in or a deletion is in flight, and the line the last one left.
+  late final AccountService _account;
+  bool _accountBusy = false;
+  _AccountNotice? _accountNotice;
   // C-701: the ban a CODE_BANNED answer gave the code typed in the join
   // sheet. Shown in the sheet, where the code was typed, while it is up.
   final ValueNotifier<CodeBan?> _sheetCodeBan = ValueNotifier<CodeBan?>(null);
@@ -212,6 +220,8 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.addObserver(this);
     _codeController.addListener(_clearErrorOnEdit);
     _nameController.addListener(_onNameEdited);
+    _account = accountService;
+    _account.addListener(_onAccountChanged);
     _nameShake = AnimationController(vsync: this, duration: kNameShakeDuration);
     unawaited(_restoreSessionMemory());
     // Duration and reduced-motion short-circuit need Theme / MediaQuery, which
@@ -627,6 +637,7 @@ class _HomeScreenState extends State<HomeScreen>
     _autoResumeWaiting = null;
     _codeController.removeListener(_clearErrorOnEdit);
     _nameController.removeListener(_onNameEdited);
+    _account.removeListener(_onAccountChanged);
     final Route<Object?>? sheet = _joinSheetRoute;
     if (_joinSheetUp && sheet != null) {
       // Released in [_onJoinTapped] once the sheet's future completes.
@@ -997,6 +1008,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   bool get _hasNotice =>
+      _accountNotice != null ||
       _removedNotice ||
       _gameGoneNotice ||
       _roomClosedNotice != null ||
@@ -1006,6 +1018,7 @@ class _HomeScreenState extends State<HomeScreen>
       _codeBan != null;
 
   bool get _hasPlainNotice =>
+      _accountNotice != null ||
       _removedNotice ||
       _gameGoneNotice ||
       _roomClosedNotice != null ||
@@ -1021,6 +1034,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   /// Every home notice off. Called inside setState.
   void _clearNotices() {
+    _accountNotice = null;
     _removedNotice = false;
     _gameGoneNotice = false;
     _roomClosedNotice = null;
@@ -1747,6 +1761,115 @@ class _HomeScreenState extends State<HomeScreen>
     return HomeGoldFrame(strong: primary, child: button);
   }
 
+  void _onAccountChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// The sign-in control. A backed-out Google screen says nothing; a failure
+  /// or a server that does not offer sign-in says so in the home notice.
+  Future<void> _onGoogleSignIn() async {
+    if (_accountBusy) {
+      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+      return;
+    }
+    FeedbackScope.of(context).play(FeedbackCue.tap);
+    setState(() {
+      _accountBusy = true;
+      _accountNotice = null;
+    });
+    final AccountOutcome outcome = await _account.signIn();
+    if (!mounted) {
+      return;
+    }
+    final String name = clipPlayerName(_account.name);
+    setState(() {
+      _accountBusy = false;
+      switch (outcome) {
+        case AccountOutcome.ok:
+          if (name.isNotEmpty) {
+            _nameController.text = name;
+          }
+        case AccountOutcome.cancelled:
+          break;
+        case AccountOutcome.failed:
+          _accountNotice = _AccountNotice.failed;
+        case AccountOutcome.unavailable:
+          _accountNotice = _AccountNotice.unavailable;
+      }
+    });
+    if (outcome == AccountOutcome.failed ||
+        outcome == AccountOutcome.unavailable) {
+      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+    }
+  }
+
+  Future<void> _onAccountChip() async {
+    FeedbackScope.of(context).play(FeedbackCue.tap);
+    final AccountSheetResult? result = await showAccountSheet(
+      context,
+      service: _account,
+    );
+    if (!mounted || result != AccountSheetResult.deleted) {
+      return;
+    }
+    setState(() {
+      _clearNotices();
+      _accountNotice = _AccountNotice.deleted;
+    });
+  }
+
+  /// The small signed-in mark at the end of the name field. It opens the
+  /// account sheet. Its screen reader label says what it is.
+  Widget _accountChip(AppLocalizations loc) {
+    return Semantics(
+      button: true,
+      label: loc.accountChipLabel,
+      excludeSemantics: true,
+      child: IconButton(
+        key: const Key('home-account-chip'),
+        onPressed: _onAccountChip,
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        icon: const Icon(
+          Icons.account_circle_rounded,
+          color: LudoColors.action,
+          size: 28,
+        ),
+      ),
+    );
+  }
+
+  /// The optional sign-in control, under the name field: shown only when the
+  /// server offers sign-in and nobody is signed in. A plain styled button
+  /// with words, no Google artwork.
+  Widget _googleSignInControl(AppLocalizations loc, TextTheme textTheme) {
+    return Align(
+      alignment: AlignmentDirectional.center,
+      child: TextButton.icon(
+        key: const Key('home-google-sign-in'),
+        onPressed: _accountBusy ? null : _onGoogleSignIn,
+        style: TextButton.styleFrom(
+          foregroundColor: LudoColors.ink,
+          minimumSize: const Size(48, 48),
+          padding: const EdgeInsets.symmetric(horizontal: kSpace4),
+          tapTargetSize: MaterialTapTargetSize.padded,
+        ),
+        icon: _accountBusy
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.account_circle_outlined, size: 20),
+        label: Text(
+          loc.accountSignInButton,
+          style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+  }
+
   /// The one home notice card, worded for whichever notice is up.
   Widget _noticeCard(AppLocalizations loc) {
     final Key textKey;
@@ -1754,7 +1877,16 @@ class _HomeScreenState extends State<HomeScreen>
     bool refusal = false;
     final _KnockNotice? knock = _knockNotice;
     final String? lineError = _lineErrorCode;
-    if (knock != null) {
+    final _AccountNotice? account = _accountNotice;
+    if (account != null) {
+      textKey = const Key('home-account-notice');
+      text = switch (account) {
+        _AccountNotice.failed => loc.accountFailed,
+        _AccountNotice.unavailable => loc.accountUnavailable,
+        _AccountNotice.deleted => loc.accountDeletedNotice,
+      };
+      refusal = account != _AccountNotice.deleted;
+    } else if (knock != null) {
       textKey = const Key('home-knock-notice');
       text = switch (knock) {
         _KnockNotice.notJoined => loc.knockOutcomeNotJoined,
@@ -1850,11 +1982,13 @@ class _HomeScreenState extends State<HomeScreen>
                         ),
                       ),
               ),
-              suffixIcon: const Icon(
-                Icons.edit_outlined,
-                color: LudoColors.inkMuted,
-                size: 20,
-              ),
+              suffixIcon: _account.signedIn
+                  ? _accountChip(loc)
+                  : const Icon(
+                      Icons.edit_outlined,
+                      color: LudoColors.inkMuted,
+                      size: 20,
+                    ),
             ),
           );
         },
@@ -1913,6 +2047,8 @@ class _HomeScreenState extends State<HomeScreen>
             alignment: Alignment.topCenter,
             child: line,
           ),
+        if (_account.available && !_account.signedIn)
+          _googleSignInControl(loc, textTheme),
       ],
     );
   }

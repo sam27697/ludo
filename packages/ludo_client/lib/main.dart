@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import 'src/account.dart';
 import 'src/app.dart';
 import 'src/app_build.dart';
 import 'src/deep_link.dart';
+import 'src/google_id_token.dart';
 import 'src/install_id.dart';
 import 'src/locale_preference.dart';
 import 'src/server_config.dart' as server_config;
@@ -23,6 +27,16 @@ Future<void> main() async {
   // Section 31 item 2: the install id is read (or made) here, before any
   // join can be sent, so a join never waits on the platform store.
   await installId();
+  // Section 36.6: the account service asks the server whether sign-in is
+  // offered. It runs beside the first frame and never holds it; until it
+  // answers, home shows exactly what it showed before.
+  final AccountService account = AccountService(
+    origin: server_config.accountOrigin(),
+    google: PluginGoogleIdTokenSource(),
+    http: defaultAccountHttp,
+  );
+  realAccountService = account;
+  unawaited(account.load());
   runApp(
     LudoApp(
       initialLocale: LocalePreference.startupLocale(
