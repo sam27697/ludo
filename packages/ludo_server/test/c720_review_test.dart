@@ -247,21 +247,30 @@ void main() {
               'LUDO_ACCOUNT_DIR=${dir.path} created 0755 before start.');
     });
 
+    // RESPEC, master, run 171: the RETURN 1 block asked both for "set 0700 on
+    // an existing directory" and for "refuse an owner-held 0500 directory".
+    // Those contradict each other: the owner may chmod its own directory, so
+    // a correct fix makes it writable and starts. The refusal is proved by
+    // the /usr test below, which no fix can make writable.
     test(
-        'a read-only existing directory (chmod 500) stops the server with '
-        'exit 64 naming LUDO_ACCOUNT_DIR', () async {
-      final int uid = await _uid();
-      if (uid == 0) {
-        fail('this test cannot run as root: root writes into a chmod 500 '
-            'directory, so the refusal cannot be provoked. Run the suite as '
-            'an unprivileged user. Not skipped on purpose.');
-      }
+        'an owner-held read-only directory (chmod 500) is 0700 and writable '
+        'after start', () async {
       final Directory dir = Directory('${root.path}/readonly')..createSync();
       final ProcessResult chmod =
           await Process.run('chmod', <String>['500', dir.path]);
       expect(chmod.exitCode, 0, reason: 'test setup: chmod 500 ${dir.path}');
-      await expectRefusedNamingDir(
-          dir.path, 'LUDO_ACCOUNT_DIR=${dir.path} existing, mode 0500');
+      final ServerProcess process = await ServerProcess.start(
+        signInOn(dir.path),
+      );
+      running.add(process);
+      await process.port.timeout(const Duration(seconds: 60),
+          onTimeout: () => throw TestFailure(
+              'scenario "existing 0500": no port in 60 s. stdout: '
+              '${process.stdoutText} stderr: ${process.stderrText}'));
+      final int mode = FileStat.statSync(dir.path).mode & 0x1ff;
+      expect(mode, 448,
+          reason: '36.2: an owner-held 0500 directory is set to 0700 at '
+              'start; got ${mode.toRadixString(8)} octal.');
     });
 
     test(
