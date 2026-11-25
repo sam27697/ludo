@@ -278,14 +278,14 @@ class _CodeEntry extends StatelessWidget {
                         key: const Key('join-room-button'),
                         onPressed: onJoin,
                         style: homeGoldButtonStyle(),
-                        icon: const DirectionalIcon(Icons.login_rounded),
+                        icon: const Icon(Icons.login_rounded),
                         label: Text(loc.homeJoinRoomButton),
                       )
                     : OutlinedButton.icon(
                         key: const Key('join-room-button'),
                         onPressed: onJoin,
                         style: homeGoldButtonStyle(),
-                        icon: const DirectionalIcon(Icons.login_rounded),
+                        icon: const Icon(Icons.login_rounded),
                         label: Text(loc.homeJoinRoomButton),
                       ),
               ),
