@@ -31,8 +31,6 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:ludo_server/ludo_server.dart';
-import 'package:ludo_server/src/account_store.dart';
-import 'package:ludo_server/src/google_token.dart';
 import 'package:test/test.dart';
 
 import 'support/c720_jwt.dart';
@@ -1563,9 +1561,12 @@ void main() {
       final _Fixture f = await start();
       for (final String path in <String>['/privacy', '/privacy?lang=ar']) {
         final String body = (await f.get(path)).body;
-        expect(body, contains('<a href="/account/delete">'),
-            reason: 'order 720: the link is a real <a href="/account/delete"> '
-                'on $path');
+        expect(
+            body,
+            matches(
+                RegExp(r'<a\s[^>]*href="/account/delete"[^>]*>', dotAll: true)),
+            reason: 'order 720: the link is a real anchor element whose href '
+                'is exactly /account/delete on $path');
       }
     });
 

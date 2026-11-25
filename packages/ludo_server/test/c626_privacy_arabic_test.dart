@@ -80,10 +80,22 @@ const String _arIntro =
     'Ludo RNG لعبة تلعبها عبر الإنترنت مع أشخاص تدعوهم أنت، أو مع '
     'لاعبين آخرين يبحثون عن لعبة، أو ضد الكومبيوتر. توضّح هذه السياسة '
     'ما يتعامل معه التطبيق وخادمه من بيانات، وما لا يتعامل معه.';
-const String _arH2Collect = 'لا نجمع معلومات شخصية.';
-const String _arPCollect = 'لا يوجد في Ludo RNG حساب، ولا تسجيل دخول، ولا بريد '
-    'إلكتروني، ولا كلمة مرور، ولا ملف شخصي. لا تخبرنا من أنت، '
-    'ولا نسألك.';
+const String _arH2Collect = 'نجمع أقل قدر من المعلومات الشخصية.';
+const String _arPCollect =
+    'لا تحتاج إلى حساب، ولا تسجيل دخول، ولا كلمة مرور، ولا ملف '
+    'شخصي لتلعب Ludo RNG. لا تخبرنا من أنت، ولا نسألك. الاستثناء '
+    'الوحيد الاختياري هو تسجيل الدخول بحساب Google، الموضّح أدناه في '
+    'فقرة «تسجيل الدخول بحساب Google (اختياري)».';
+const String _arH2Google = 'تسجيل الدخول بحساب Google (اختياري).';
+const String _arPGoogle =
+    'تسجيل الدخول بحساب Google اختياري، وتقدر تلعب كل الألعاب من '
+    'دونه. إذا سجّلت الدخول، ترسل لنا Google اسمك وبريدك الإلكتروني '
+    'ورقم حسابك. نحتفظ باسمك وبصيغة مرمّزة من رقم الحساب لا يمكن '
+    'إرجاعها إليه، حتى تعرفك اللعبة في المرة القادمة. لا نحتفظ ببريدك '
+    'الإلكتروني: الخادم يتخلص منه فورًا، ولا يصل إلى أي سجل أو ملف. '
+    'تقدر تحذف حسابك متى شئت من داخل اللعبة، أو من '
+    '<a href="/account/delete" dir="ltr">ludo.provefair.app/account/delete'
+    '</a>، ويُحذف فورًا.';
 const String _arH2Ads = 'لا إعلانات، ولا تحليلات، ولا تتبّع.';
 const String _arPAds =
     'لا يحتوي التطبيق على أي شبكة إعلانات، ولا مكتبة تحليلات، '
@@ -131,16 +143,20 @@ const String _arPRolls =
 const String _arH2Children = 'الأطفال.';
 const String _arPChildren =
     'Ludo RNG غير موجّهة للأطفال دون 13 عامًا. لا نجمع عن علم '
-    'أي معلومات شخصية من أي أحد، بمن في ذلك الأطفال.';
+    'أي معلومات شخصية من الأطفال.';
 const String _arH2Ask = 'بيانات يمكنك السؤال عنها.';
 const String _arPAskWith =
-    'لأننا لا نحتفظ بأي حساب ولا ملف شخصي، فعادةً لا يوجد ما '
-    'نعطيك نسخة منه أو نحذفه. إذا كنت تعتقد أننا نحتفظ بشيء '
+    'إذا لم تسجّل الدخول من قبل، فلا نحتفظ بأي حساب ولا ملف '
+    'شخصي، فعادةً لا يوجد ما نعطيك نسخة منه أو نحذفه. وإذا '
+    'سجّلت الدخول بحساب Google فتقدر أن تحذف حسابك بنفسك '
+    'فورًا كما هو موضّح أعلاه. وإذا كنت تعتقد أننا نحتفظ بشيء '
     'عنك وتريد إزالته، راسلنا على العنوان أدناه وسنتصرف بناءً '
     'على طلبك.';
 const String _arPAskWithout =
-    'لأننا لا نحتفظ بأي حساب ولا ملف شخصي، فعادةً لا يوجد ما '
-    'نعطيك نسخة منه أو نحذفه.';
+    'إذا لم تسجّل الدخول من قبل، فلا نحتفظ بأي حساب ولا ملف '
+    'شخصي، فعادةً لا يوجد ما نعطيك نسخة منه أو نحذفه. وإذا '
+    'سجّلت الدخول بحساب Google فتقدر أن تحذف حسابك بنفسك '
+    'فورًا كما هو موضّح أعلاه.';
 const String _arH2Changes = 'التغييرات على هذه السياسة.';
 const String _arPChanges = 'إذا تغيّرت هذه السياسة، تظهر النسخة الجديدة في هذه '
     'الصفحة مع تاريخ جديد في أعلاها.';
@@ -156,11 +172,23 @@ const String _enIntro =
     'other players who are looking for a game, or against the computer. '
     'This policy explains what the app and its server handle, and what '
     'they do not.';
-const String _enH2Collect = 'We do not collect personal information.';
+const String _enH2Collect = 'We collect almost no personal information.';
 const String _enPCollect =
-    'Ludo RNG has no account, no sign-in, no email address, no '
-    'password and no profile. You do not tell us who you are and we do '
-    'not ask.';
+    'You do not need an account, a sign-in, a password or a profile to '
+    'play Ludo RNG. You do not tell us who you are and we do not ask. The '
+    'one optional exception, signing in with Google, is described under '
+    '"Signing in with Google (optional)" below.';
+const String _enH2Google = 'Signing in with Google (optional).';
+const String _enPGoogle =
+    'Signing in with Google is optional. You can play every game '
+    'without it. If you sign in, Google sends us your name, your email '
+    'address and an account number. We keep your name and a coded form '
+    'of the account number that cannot be turned back into it, so the '
+    'game knows you next time. We do not keep your email address: the '
+    'server discards it at once, and it never reaches a log or a file. '
+    'You can delete your account at any time in the app, or at '
+    '<a href="/account/delete">ludo.provefair.app/account/delete</a>, and '
+    'it is gone immediately.';
 const String _enH2Ads = 'No advertising, no analytics, no tracking.';
 const String _enPAds =
     'The app contains no advertising network, no analytics library '
@@ -213,17 +241,21 @@ const String _enPRolls =
 const String _enH2Children = 'Children.';
 const String _enPChildren =
     'Ludo RNG is not directed at children under 13. We do not '
-    'knowingly collect any personal information from anyone, including '
-    'children.';
+    'knowingly collect any personal information from children.';
 const String _enH2Ask = 'Data you can ask about.';
 const String _enPAskWith =
-    'Because we hold no account and no personal profile, there is '
-    'normally nothing to give you a copy of or to delete. If you '
-    'believe we hold something about you and you want it removed, '
-    'write to the address below and we will act on it.';
+    'If you have never signed in, we hold no account and no '
+    'personal profile, so there is normally nothing to give you a '
+    'copy of or to delete. If you signed in with Google, you can '
+    'delete your account yourself, at once, as described above. If '
+    'you believe we hold something about you and you want it '
+    'removed, write to the address below and we will act on it.';
 const String _enPAskWithout =
-    'Because we hold no account and no personal profile, there is '
-    'normally nothing to give you a copy of or to delete.';
+    'If you have never signed in, we hold no account and no '
+    'personal profile, so there is normally nothing to give you a '
+    'copy of or to delete. If you signed in with Google, you can '
+    'delete your account yourself, at once, as described '
+    'above.';
 const String _enH2Changes = 'Changes to this policy.';
 const String _enPChanges =
     'If this policy changes, the new version appears on this page '
@@ -237,6 +269,8 @@ List<String> _expectedEnglish({String? escapedEmail}) => <String>[
       '<p>$_enIntro</p>',
       '<h2>$_enH2Collect</h2>',
       '<p>$_enPCollect</p>',
+      '<h2>$_enH2Google</h2>',
+      '<p>$_enPGoogle</p>',
       '<h2>$_enH2Ads</h2>',
       '<p>$_enPAds</p>',
       '<h2>$_enH2Typed</h2>',
@@ -266,6 +300,8 @@ List<String> _expectedArabic({String? escapedEmail}) => <String>[
       '<p>$_arIntro</p>',
       '<h2>$_arH2Collect</h2>',
       '<p>$_arPCollect</p>',
+      '<h2>$_arH2Google</h2>',
+      '<p>$_arPGoogle</p>',
       '<h2>$_arH2Ads</h2>',
       '<p>$_arPAds</p>',
       '<h2>$_arH2Typed</h2>',
