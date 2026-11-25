@@ -186,25 +186,20 @@ class _JoinSheetState extends State<JoinSheet> {
           children: <Widget>[
             HomeSheetHeader(title: loc.joinSheetTitle),
             const SizedBox(height: kSpace5),
-            // The one animated container of the sheet: every change of
-            // height below (the swap to the code entry, Join arriving, the
-            // ban notice) is eased here while the content crossfades. With
-            // reduced motion the content takes its new size on the next
-            // frame.
+            // The content crossfades and the sheet takes the new content's
+            // height on the next frame: the swap to the code entry, Join
+            // arriving and the ban notice. There is no size easing because an
+            // AnimatedSize here took the Android 16 emulator offline on the
+            // Arabic motion leg. With reduced motion the content swaps at once.
             if (reduce)
               content
             else
-              AnimatedSize(
+              AnimatedSwitcher(
                 duration: kMotionShort,
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.topCenter,
-                child: AnimatedSwitcher(
-                  duration: kMotionShort,
-                  switchInCurve: Curves.easeOut,
-                  switchOutCurve: Curves.easeIn,
-                  layoutBuilder: homeSheetSwitcherLayout,
-                  child: content,
-                ),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                layoutBuilder: homeSheetSwitcherLayout,
+                child: content,
               ),
           ],
         ),
@@ -216,7 +211,7 @@ class _JoinSheetState extends State<JoinSheet> {
 /// The room code entry: the field home carried, with its formatter and its
 /// error line, the ban notice when the server refused the code, and Join
 /// once the field holds anything. Nothing here animates its own size; the
-/// sheet's one [AnimatedSize] eases every change of height.
+/// sheet takes each new height on the next frame.
 class _CodeEntry extends StatelessWidget {
   const _CodeEntry({
     super.key,

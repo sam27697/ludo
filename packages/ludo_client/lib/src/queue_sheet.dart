@@ -175,23 +175,20 @@ class _QueueSheetState extends State<QueueSheet>
       child: SingleChildScrollView(
         key: const Key('queue-sheet'),
         padding: const EdgeInsets.fromLTRB(kSpace5, kSpace3, kSpace5, kSpace6),
-        // The one animated container of the window: the swap to the
-        // computer choice and the ahead line coming or going are eased here
-        // while the content crossfades. With reduced motion the content takes
-        // its new size on the next frame.
+        // The content crossfades and the window takes the new content's
+        // height on the next frame: the swap to the computer choice and the
+        // ahead line coming or going. There is no size easing because an
+        // AnimatedSize in the join sheet, the same construct, took the
+        // Android 16 emulator offline on the Arabic motion leg. With reduced
+        // motion the content swaps at once.
         child: reduce
             ? content
-            : AnimatedSize(
+            : AnimatedSwitcher(
                 duration: kMotionShort,
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.topCenter,
-                child: AnimatedSwitcher(
-                  duration: kMotionShort,
-                  switchInCurve: Curves.easeOut,
-                  switchOutCurve: Curves.easeIn,
-                  layoutBuilder: homeSheetSwitcherLayout,
-                  child: content,
-                ),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                layoutBuilder: homeSheetSwitcherLayout,
+                child: content,
               ),
       ),
     );
@@ -231,7 +228,7 @@ class _QueueSheetState extends State<QueueSheet>
         // The count is the server's latest word: a new place replaces the
         // old count at once, and the line leaves the moment the server says
         // this phone is at the head, so a stale count is never on screen.
-        // Its arrival fades in; the window's size eases around it.
+        // Its arrival fades in; the window takes its height on the next frame.
         if (ahead)
           HomeSheetFadeIn(
             child: Text(
