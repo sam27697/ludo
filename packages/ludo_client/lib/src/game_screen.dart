@@ -94,6 +94,10 @@ enum GameScreenResult {
 /// truth, and nothing here delays a frame or a cue.
 const Duration kOwnRollHold = Duration(milliseconds: 900);
 
+/// C-708: how long a kick retire of my own seat waits for the `kicked` frame
+/// the server sends right behind it before the table goes home without it.
+const Duration _ownKickRetireWait = Duration(milliseconds: 600);
+
 /// C-432 D4: what a snapshot's own-seat `timer_steps` asks of the C-426 D3
 /// notice. `none` is an older server's absent field, a seat that is not in
 /// the snapshot, or a LOBBY snapshot.
@@ -716,6 +720,12 @@ class _GameScreenState extends State<GameScreen> {
   /// C-533 D1: set once a `player_left` naming this seat has started leaving
   /// the route, so a second such frame does nothing.
   bool _removedLeaveHandled = false;
+
+  /// C-708 (PROTOCOL 33 item 8): armed by a `seat_retired` that removes my
+  /// own seat for a kick. The `kicked` that follows on the same socket takes
+  /// the table home with the kick's own notice; when it never comes, this
+  /// takes it home as a removed seat.
+  Timer? _ownKickRetireTimer;
   final List<FeedbackCue> _heldGameOverCues = <FeedbackCue>[];
   Timer? _endHoldDwellTimer;
   Timer? _endHoldLimitTimer;
@@ -867,6 +877,7 @@ class _GameScreenState extends State<GameScreen> {
     _spokenLine.dispose();
     _countdownTimer?.cancel();
     _countdownRemaining.dispose();
+    _ownKickRetireTimer?.cancel();
     _cancelGateTimers();
     _cancelFlights();
     _autoMoveTimer?.cancel();
@@ -4198,9 +4209,32 @@ class _GameScreenState extends State<GameScreen> {
     // the ban, when the frame carried one) is shown; no connection-lost card
     // and no resume come first.
     if (controller.wasKicked && !_removedLeaveHandled) {
+      _ownKickRetireTimer?.cancel();
+      _ownKickRetireTimer = null;
       _removedLeaveHandled = true;
       _clearSafeCue();
       _leaveGameRoute(GameScreenResult.removed);
+    }
+    // The server sends my own seat's kick retire first and `kicked` right
+    // after it; the retire is final whatever `seq` gap it came with (the
+    // controller sends no `resume` for it). Waiting a moment lets `kicked`
+    // carry the table home with its notice and ban; without it the table
+    // still goes home, as a removed seat.
+    final ({int seat, String reason})? retirement = controller.lastRetirement;
+    if (!_removedLeaveHandled &&
+        _ownKickRetireTimer == null &&
+        retirement != null &&
+        retirement.reason == 'kicked' &&
+        retirement.seat == controller.seat) {
+      _ownKickRetireTimer = Timer(_ownKickRetireWait, () {
+        _ownKickRetireTimer = null;
+        if (!mounted || _removedLeaveHandled) {
+          return;
+        }
+        _removedLeaveHandled = true;
+        _clearSafeCue();
+        _leaveGameRoute(GameScreenResult.removed);
+      });
     }
     // C-540 D3 item 3: the link dropped under an open sheet. The
     // connection-lost card brings its own Leave. A route that is already

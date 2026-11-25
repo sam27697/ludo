@@ -412,6 +412,11 @@ class RoomController extends ChangeNotifier {
       // My `rolled` for it has arrived and waits for the die to land.
       return null;
     }
+    if (_hasDesynced) {
+      // A frame went missing: the turn this `pre` rode may have moved on
+      // already. Nothing is in hand until the resync's snapshot says so.
+      return null;
+    }
     final RoomSnapshot? room = _room;
     final int? mySeat = _cachedSeat;
     final TurnState? turn = room?.turn;
