@@ -2169,3 +2169,235 @@ type a code shorter than six characters.
     `LUDO_STRIKE_DIR` at start exits 64 with one line naming the path; a salt
     with whitespace is refused like a short one; the temporary file name is
     unique per write.
+
+## 33. Open rooms, the waiting line, join routes and the host's kick, 2026-11-24
+
+Contract for Sam's notes of 2026-11-24 (X221, X224, X229, X204 as amended). Sections 28, 31 and 32
+stand except where an item below says otherwise. Needs `MIN_CLIENT_BUILD` raised on release.
+
+1. **An open room.** `create_room` takes the optional `open` (bool; absent means false; not a bool is
+   `BAD_FIELD`). The snapshot gains `open` (bool) on every room. An open room is one the server may
+   seat strangers in from the waiting line (item 3). Nothing else about it differs: its code and its
+   link work as on any room, and `guest_approval` still governs typed codes only. `open` is fixed at
+   creation and is unchanged by a rematch; the only thing that clears it is a computer seat
+   (section 34).
+2. **Matchable.** A room is matchable when all of these hold: `open` is true; the state is LOBBY
+   (a rematch LOBBY counts); it has a free seat; it holds no computer seat; the host seat's socket is
+   connected. Matchable rooms are ordered by creation time, oldest first.
+3. **`find_game`** `{ "name": string, "install": string }`. `name` as section 4. `install` is
+   required, with section 31 item 2's shape; missing or malformed is `BAD_FIELD`. The socket must
+   hold no seat (`ALREADY_SEATED`, a new error, when it does); an open knock from it is closed
+   `withdrawn` first, as `create_room` does (section 31 item 12a). It counts against the per-IP
+   `join_room` limit of section 7 (20 per minute, `RATE_LIMITED`) and never against the typed-code
+   window of section 32 item 5. A ban (section 32 item 9) does not touch it.
+   - When a matchable room exists that does not bar this device (item 7), the caller is seated in
+     the first such room at once, on its lowest free seat, `via: "public"`: the caller gets
+     `seat_assigned` then `room` (with `re`), the room gets `player_joined`, exactly as a link join.
+   - Otherwise the caller joins the waiting line and is answered by `queued`
+     `{ "ticket": string, "position": int }` with `re`, no `seq`. `ticket` is 22 characters of
+     base64url from the CSPRNG. `position` is 1 for the head of the line.
+4. **The line.** One line per server, first come first served. Whenever a room becomes matchable or
+   a matchable room gains a free seat (a create, a leave, a kick, a `set_players` raise, a host
+   reconnect), and after every `find_game` and every line change, the server seats waiting tickets
+   from the head while a matchable room that does not bar the ticket exists. A ticket barred from
+   every matchable room stays where it is and does not hold up those behind it. The seated socket
+   gets `seat_assigned` then `room`, neither with `re`. Every ticket whose position changed gets a
+   fresh `queued` (same ticket, new `position`, no `re`).
+   - **Two strangers and no room.** When the line holds two or more attached tickets and no
+     matchable room exists for the head, the server creates a room for the head ticket: `players` 4,
+     `open` true, default rules, the head as host (`via: "host"`). The head gets `seat_assigned` then
+     `room`; the seating pass then runs again, which seats the next tickets in it. That room is
+     created by the same code path as `create_room` (its code, link id, chain and rate rules), except
+     that it does not count against the per-IP room creation limit.
+   - **A dropped socket.** A ticket whose socket closes stays in the line, detached, for 30 000 ms on
+     the server clock. A detached ticket is never seated and never counted for the two-strangers
+     rule; those behind it are served past it. `find_game` carrying `"ticket": string` (with `name`
+     and `install` as above) from a new socket re-attaches that ticket in its old place when it is
+     still held and its `install` matches; an unknown, expired or mismatched ticket is treated as a
+     fresh `find_game` (a new ticket at the tail). After 30 000 ms detached the ticket is dropped.
+     Expiry rides the one-second sweep on the injected clock.
+   - **Leaving the line.** `cancel_find` `{ }` drops the caller's ticket and is answered by
+     `find_cancelled` `{ }` with `re` (also when the caller held none). `create_room`, `join_room`,
+     `resume`, `play_computer` and a second `find_game` from a queued socket drop its ticket first.
+   - A queued socket holds no seat: `roll`, `move` and every in-room message from it answer as from
+     any seatless socket.
+5. **The route a seat came by.** `via` (section 31 item 1) gains `"public"`, for a seat given from
+   the line or by the first branch of item 3, and `"bot"` (section 34). A seat keeps its `via`
+   across a resume and a rematch.
+6. **Strikes, replacing section 32 item 7.** A strike is recorded only when the room's `open` is
+   false at that moment and one of these happens:
+   (a) the host answers a knock with `accept: false`;
+   (b) the host's `kick`, in LOBBY or in PLAYING (item 8), removes a seat whose `via` is `"code"` or
+   `"approved"`.
+   Nothing else is a strike, and in particular: anything at all in a room whose `open` is true; a
+   kick of a `"public"`, `"link"` or `"bot"` seat anywhere; a timed out, withdrawn, `full` or
+   `switched_off` knock; the absent-seat removal; a `leave_room`. Section 32 items 8 to 12 and 15
+   are unchanged. (A room that was open and lost the flag to a computer seat is not open.)
+7. **Bars.** Section 31 item 7 stands and covers the new route: a device barred from a room (its
+   `install` hash, else its IP hash) is never seated in that room from the line. A kick in PLAYING
+   (item 8) adds the same bar as a lobby kick.
+8. **The host's kick in PLAYING, replacing section 28 item 4's `kicked` case.** `kick`
+   `{ "seat": int }` from the host in PLAYING removes any playing seat, connected or not. The
+   ladder: `NOT_HOST`; `seat` an int 0..3 and no other key (`BAD_FIELD`); the host's own seat, an
+   empty seat, a finished seat or a retired seat `ILLEGAL_MOVE`. `NOT_ABSENT` is no longer sent.
+   Under `2026-10` the PLAYING kick stays `BAD_TYPE` as today (`kick` is an unknown type there,
+   section 31 item 11 (e2)). On acceptance: the room gets
+   `seat_retired` `{ "seat", "reason": "kicked", "host_seat" }` (with `re` on the host's copy) and
+   what section 28 item 4 says follows a retire; the kicked seat's socket, when it has one, first
+   gets that `seat_retired`, then `kicked` `{ }` (no `seq`; with `ban` when item 6 fired a ban,
+   section 32 item 12) and holds no seat afterwards. The seat's token is dead from that moment:
+   `resume` answers `BAD_SEAT_TOKEN`. The seat stays in `seats` as any retired seat does until
+   `game_over` frees it. A computer seat can be kicked the same way.
+9. **Tests this section requires** (server, real sockets, fake clock): `open` absent, true, false
+   and a non-bool; the snapshot's `open`; a rematch keeps it; `find_game` seats at once in the
+   oldest matchable room and skips a friends-only room, a PLAYING room, a full room, a room whose
+   host socket is down and a room with a computer seat; `via: "public"` on that seat and after its
+   resume; `find_game` without `install` and with a seated socket; the line in order over three
+   tickets (the head and the second detached, the third attached at `position` 3) and one new open
+   room: the third is seated past the two detached tickets, which keep their places; `queued` re-sent
+   on every position change (a detached ticket ahead expiring, a cancel) and not otherwise. At rest
+   the line never holds two ATTACHED tickets: two attached strangers are always a room (item 4); the two-strangers
+   room (host is the head, `players` 4, `open` true, the second ticket seated in it, a third and a
+   fourth too, a fifth stays queued until a seat frees); a single ticket alone creates nothing;
+   `cancel_find` with and without a ticket; a detached ticket is passed over, re-attached by
+   `ticket` inside 30 000 ms into its old place, treated as new at 30 000 ms, and with a wrong
+   `install`; a queued socket that sends `create_room` leaves the line; a device kicked from an
+   open room is not seated in it again from the line but is seated in the next one; the per-IP
+   limit; item 6 as a table (each of the two strike events in a friends-only room strikes; the same
+   two in an open room do not; a `"public"` seat kicked by six hosts on six IPs is not banned; a
+   `"code"` seat refused in six friends-only rooms by six host IPs gets the 24-hour ban); the
+   PLAYING kick of a connected seat, of a dropped seat, of the host itself, of a finished seat, by
+   a non-host, under `2026-10`; the kicked socket's frames in order, its dead token, its bar by link,
+   by code and from the line; the game going on with three seats and ending with two; the
+   simulator's `--scenario all` still passes.
+
+## 34. Computer seats, 2026-11-24
+
+Contract for X222 and X225. A computer seat is a seat the server plays. It never has a socket.
+
+1. **In the snapshot.** A computer seat's object carries `"bot": int` (1..6, which of six fixed
+   characters it is), `via: "bot"`, `connected: true`, and `name`, the character's English name:
+   1 `Zuzu`, 2 `Nono`, 3 `Kiko`, 4 `Bobo`, 5 `Tutu`, 6 `Mimi`. A human seat has no `bot` key. The
+   characters in one room are distinct, drawn without replacement from the server's non-secret
+   random source. A computer seat's `player_joined` carries `bot` too. Its seed is set by the
+   server at once (`seat_seed`, `origin: "server"`). A room that holds a computer seat has
+   `open: false` and is never matchable (section 33 item 2).
+2. **`play_computer`** `{ "name": string, "players": 2|4, "install": string?, "client_seed":
+   string? }`. `name` as section 4, `install` as section 31 item 2, `client_seed` as `set_seed`.
+   Any other `players`, or a wrong shape, is `BAD_FIELD`. The socket must hold no seat
+   (`ALREADY_SEATED`); a ticket or an open knock is dropped first. It counts against the room
+   creation limit as `create_room` does. The server creates a room as `create_room` would
+   (`open: false`, default rules), seats the caller as host, applies `client_seed` to the host seat
+   when given (otherwise the host's seed is the server's, as an unset seed is at any start), fills
+   every other seat with a computer seat, and starts the game. The caller gets, in order:
+   `seat_assigned`, `room` (with `re`; LOBBY, every seat filled), every `seat_seed`, then
+   `game_started` and the first `turn` as section 13.1.
+3. **`fill_computer`** `{ }`, host only (`NOT_HOST`), LOBBY only (`WRONG_PHASE`), any payload key
+   `BAD_FIELD`. Refused with `WRONG_PHASE` unless the room's `open` is true, it has a free seat, and
+   60 000 ms have passed on the server clock since the room was created or last returned to LOBBY
+   by a rematch. On acceptance, in this order: `open` becomes false; every open knock closes
+   `full`; each free seat, lowest first, gets a computer seat (`player_joined` with `bot`, then its
+   `seat_seed`); then the game starts as `start_game` does. The host's copy of the first frame
+   carries `re`. The host's snapshot of an open LOBBY with a free seat carries `fill_ms`: the
+   milliseconds left until `fill_computer` is allowed, 0 once it is. Every other snapshot omits the
+   key.
+4. **How a computer seat plays.** Its frames are exactly a player's: `rolled`, `moved` and the rest
+   of section 21.3 item 4, with no `by` key (section 22 marks the timer, and this is not the
+   timer). The server acts for it once per decision: a roll when a roll is owed, a release when one
+   is owed (the lowest releasable token), otherwise a move chosen by item 5. Each action waits a
+   pace: a whole number of milliseconds drawn uniformly from 800..1600 by the room's non-secret
+   random source, counted from the later of the frame that left this seat to act and the end of a
+   grace (section 29). The pace is driven by a sweep of at most 100 ms on the injected clock, so a
+   fake clock moves it exactly. The turn timer never acts for a computer seat and section 26 never
+   applies to it. Computer seats act only while at least one human seat's socket is connected to
+   the room; with none connected they wait, and the pace restarts from the reconnect. A computer
+   seat sends no emote and sets nothing.
+5. **The choice.** The same ranking the app's hint uses (`recommendMove`, order 648 D2 to D7: least
+   expected loss over all the seat's pieces, then most gain, then first in wire order), computed on
+   the server from the engine state. Where the hint would name nothing (one choice only), the
+   computer plays that one choice. The ranking reads the board and the legal list and nothing else:
+   never the chain, a seed or a face not yet rolled.
+6. **Leaving, kicks, rematch, records.** A computer seat is never retired as absent. The host may
+   kick one (section 33 item 8); it is never a strike. When a game ends, computer seats stay
+   seated. A `rematch` from any human seat is accepted by every computer seat at once (the frames
+   of a seat that sent `rematch` itself, in seat order, after the human's), and a room whose human
+   seats have all accepted starts as section 16 says. A room with no human seat left (every human
+   left or was freed) is reaped at once. The verify record's seat entries carry `"bot": int` for
+   computer seats and the page shows "computer" / «كومبيوتر» beside those names.
+7. **Tests this section requires** (server, real sockets, fake clock, a seeded random source):
+   `play_computer` with 2 and with 4 (frame order, `bot` ids distinct, names, `via`, seeds, the
+   client seed applied, `open` false), with 3, without `players`, from a seated socket, from a
+   queued socket (ticket dropped); a computer room is never matchable and a code join to it is
+   `ROOM_STARTED`; `fill_computer` at 59 999 ms (`WRONG_PHASE`) and at 60 000 ms, by a non-host, in
+   a friends-only room, in a full room, in PLAYING; `fill_ms` in the host's snapshot counting down
+   and absent for a guest; the frames of a fill with one and with three free seats, knocks closed
+   `full`, the room no longer matchable; a computer seat's roll lands no earlier than 800 ms and no
+   later than 1700 ms after its `turn` (grace included when there is one), its move the same after
+   its `rolled`; no `by` on its frames; the turn timer never fires for it at 45 s; it spends a
+   release; it plays a full 2-seat game against a scripted human to `game_over` under the fake
+   clock, and a 4-seat game of one human and three computers; it waits while no human socket is
+   connected and resumes after; the choice against five fixed positions (it captures when it can,
+   it leaves the yard on a six, it does not walk a piece off a safe square into reach when another
+   move exists, it takes the only move when there is one, equal moves fall to wire order); kick of
+   a computer seat in PLAYING; rematch after a computer game restarts with one message from the
+   human; the room is reaped when the human leaves; the verify record's `bot`; the simulator's
+   `--scenario all` still passes.
+
+## 35. The roll rides the turn frame, 2026-11-24
+
+Contract for X230 and X228 (Sam, 2026-11-24): a player's die shows its face the moment it is
+tapped, with no wait for the network, and no face ever reaches any device before that player's
+own turn to roll.
+
+1. **`pre`.** Whenever the server sends a `turn` frame in phase `await_roll`, the copy that goes to
+   the socket of the seat on turn carries `"pre"`: the `d` of the `rolled` frame the server would
+   broadcast if that seat's `roll` arrived now, without `seq`, `reveal`, `deadline_ms` and `by`
+   (so: `seat`, `value`, `legal`, `k`, `queue`, and `offer`, `legal_by_face` or `release` when that
+   frame would carry them). Every other socket's copy has no `pre`. The snapshot's `turn` object carries
+   the same `pre` for the seat on turn's own socket in `await_roll`, and for nobody else. A
+   computer seat gets none. `pre` is computed from the same chain link and the same engine call the
+   roll itself uses, without advancing the roll counter and without publishing the link.
+2. **Nothing else moves.** The `roll` message, its ladder (section 12.1), the `rolled` broadcast
+   with its `reveal`, the frame order of section 21.3 item 4, the timer and the verify record are
+   all unchanged. The `rolled` that follows always equals the `pre` that was sent, field for field.
+   A client that ignores `pre` plays exactly as before.
+3. **A roll that was shown is always published.** When a seat that was sent a `pre` stops being the
+   seat to roll before its roll is taken (it leaves, is kicked or is retired as absent), the server
+   first takes that roll as the timer would (`rolled` with `by: "timer"`, then the frames of the
+   step), and only then applies the retire. So the next seat's roll is a new link that no device
+   has seen. The same holds at a turn timer expiry, which already takes the roll.
+4. **Never ahead.** At any moment the only unpublished face on any device is the one owed by the
+   seat on turn, on that seat's own socket. After a six that owes another roll, and after a move
+   that owes a roll, the next `pre` rides the same-seat `turn` frame that already follows.
+5. **The client.** On a tap of my die with a `pre` in hand: the die tumbles for its usual minimum
+   and lands on `pre.value`; the legal marks of `pre` show when it lands; `roll` is sent at the
+   tap. The `rolled` frame, when it arrives, changes nothing on screen (a mismatch is a resync). A
+   token tapped before `rolled` arrives sends `move` right after `roll` on the same socket; the
+   server takes them in order. Without a `pre` (an old server, a resume race) the die waits for
+   `rolled` as it does today.
+7. **Rulings of 2026-11-24 (run 169).** (a) "Was sent a `pre`" in item 3 means the last `pre`
+   handed to a socket of that seat for that roll; a seat on turn whose socket was down for the
+   whole of its turn was never sent one and is retired with no roll taken. (b) `pre` is added at
+   the per-socket send, to a copy; the map given to the broadcast, the game log and the answer to
+   `game_log` never hold it. (c) The frames of a roll forced by a host's kick carry the kick's `re`
+   on the host's copies, as every frame a request causes does. (d) When another seat's retire ends
+   the game while the roller holds a `pre`, that face is never published: there is no next roll.
+   (e) When another seat is retired while the roller holds a `pre`, no new `turn` frame is sent;
+   the `rolled` that follows is the truth, and a client that finds it differs from its `pre`
+   resyncs (item 5). (f) The socket of the seat that leaves or is kicked is not sent the frames
+   of its forced roll: it gets its `seat_retired` (and `kicked`), whose `seq` is past the frames it
+   was not sent. A client treats `seat_retired` for its own seat and `kicked` as final whatever
+   the gap. (g) When the forced roll is a six, the same-seat `turn` that follows carries no `pre`
+   and the retire discards the roll it owed.
+6. **Tests this section requires** (server, real sockets, fake clock): `pre` on the roller's `turn`
+   and on no other socket's copy of the same frame, at the first turn, after a passed turn, after a
+   six, after a capture bonus; `pre` equals the following `rolled` minus the four keys, over a whole
+   scripted game; the roller's snapshot carries it and an opponent's snapshot of the same instant
+   does not; `k` is not advanced by sending `pre` (two snapshots give the same `pre`); a leave, a
+   kick and an absent retire of a seat holding a `pre` publish `rolled` `by: "timer"` first and the
+   next seat's `pre` has `k + 1`; a computer seat's turn carries no `pre`; a client that never
+   reads `pre` plays a full game. No frame sent to any socket other than the roller's contains the
+   face before the `rolled` (assert over every captured frame of a full game). Client, fake
+   transport: tap with `pre` shows the face and the legal marks with no `rolled` delivered, sends
+   one `roll`; a token tap then sends `move`; the late `rolled` repaints nothing; a `rolled` that
+   differs from `pre` triggers one resync; no `pre`, today's behaviour; en and ar.

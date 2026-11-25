@@ -60,18 +60,25 @@ const String _ninetyDaySentenceFragment =
     'a record of its rolls is kept on our server for 90 days at a web '
     'address given only to the players of that game';
 
-/// The exact "Last updated" line work order 216 specifies. The literal
-/// date, not `privacyLastUpdated`, so a source that forgets to bump the
-/// constant is caught the same as one that bumps it to the wrong value.
-const String _expectedLastUpdatedLine = 'Last updated: 2026-11-23';
+/// The exact "Last updated" line, at the date work order 711 sets. The
+/// literal date, not `privacyLastUpdated`, so a source that forgets to bump
+/// the constant is caught the same as one that bumps it to the wrong value.
+const String _expectedLastUpdatedLine = 'Last updated: 2026-11-25';
 
-/// The existing "No advertising, no analytics, no tracking." paragraph's
-/// closing sentence, unchanged by work order 216. Asserting this stays
-/// present catches a rewrite that lands in the wrong paragraph, or that
-/// clobbers this sentence while adding the 90-day text nearby.
+/// The "No advertising, no analytics, no tracking." paragraph's closing
+/// sentences, as work order 711 rewrote them (one sentence became two).
+/// Asserting they are present catches a rewrite that lands in the wrong
+/// paragraph, or that clobbers them while editing nearby text. Compared
+/// against the rendered text (see [_renderedText]), since the quotation
+/// marks may reach the markup as `&quot;`.
 const String _unchangedNoAdvertisingSentence =
-    'There is no advertising identifier and no device identifier '
-    'collected.';
+    'There is no advertising identifier. The only identifier the app uses '
+    'is the random install id described under "Stopping repeated unwanted '
+    'joins" below.';
+
+/// The heading of the section the advertising paragraph points the reader
+/// at, as it stands in `privacy_page.dart`, full stop included.
+const String _installIdSectionHeading = 'Stopping repeated unwanted joins.';
 
 Uri _httpUri(ServerHarness harness, String path) => Uri(
       scheme: 'http',
@@ -110,6 +117,19 @@ String _stripTagsAndCollapseWhitespace(String html) {
   final String withoutTags = html.replaceAll(RegExp(r'<[^>]*>'), ' ');
   return withoutTags.replaceAll(RegExp(r'\s+'), ' ').trim();
 }
+
+/// [_stripTagsAndCollapseWhitespace], then the character references a
+/// browser would show as plain quotes, apostrophes, angle brackets and
+/// ampersands decoded, `&amp;` last so `&amp;quot;` stays `&quot;`.
+String _renderedText(String html) => _stripTagsAndCollapseWhitespace(html)
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#34;', '"')
+    .replaceAll('&#x22;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&#x27;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
 
 /// The absolute path to this package's own root directory (the directory
 /// containing `bin/`, `lib/` and `pubspec.yaml`), resolved from the package
@@ -1205,7 +1225,7 @@ void main() {
       );
     });
 
-    test('Last updated: 2026-11-23 appears exactly once', () {
+    test('Last updated: 2026-11-25 appears exactly once', () {
       final int occurrences = RegExp(RegExp.escape(_expectedLastUpdatedLine))
           .allMatches(body)
           .length;
@@ -1221,12 +1241,108 @@ void main() {
     test(
         'the existing No advertising paragraph is unchanged, so a '
         'rewrite of the wrong paragraph fails', () {
+      final String rendered = _renderedText(body);
       expect(
-        body.contains(_unchangedNoAdvertisingSentence),
+        rendered.contains(_unchangedNoAdvertisingSentence),
         isTrue,
-        reason: 'expected the unchanged sentence '
-            '"$_unchangedNoAdvertisingSentence" to still be present in '
+        reason: 'expected the sentences of work order 711 '
+            '"$_unchangedNoAdvertisingSentence" to be present in the '
+            'rendered text; rendered text: $rendered',
+      );
+    });
+  });
+
+  // Work order 711: the page stops saying what v1.55.0 made untrue (no
+  // device identifier, rooms of invited people only), and the advertising
+  // paragraph's pointer to the install id section names a heading the page
+  // really has. Expected red until the paired source change lands.
+  group('work order 711: open rooms and the install id', () {
+    late ServerHarness harness;
+    late String body;
+
+    setUp(() async {
+      harness = ServerHarness.build();
+      active = harness;
+      await harness.start();
+      final HttpClientResponse response = await _send(
+        client,
+        _httpUri(harness, '/privacy'),
+      );
+      expect(
+        response.statusCode,
+        200,
+        reason: 'GET /privacy must answer 200 before its text is checked',
+      );
+      body = await _bodyOf(response);
+    });
+
+    test('the old "no device identifier collected" sentence is gone', () {
+      final String rendered = _renderedText(body);
+      expect(
+        rendered.contains('no device identifier collected'),
+        isFalse,
+        reason: 'the app sends a random install id, so the page must not '
+            'say "no device identifier collected" (work order 711, item 1); '
+            'rendered text: $rendered',
+      );
+    });
+
+    test('the page no longer says "people you invited"', () {
+      final String rendered = _renderedText(body);
+      expect(
+        rendered.contains('people you invited'),
+        isFalse,
+        reason: 'open rooms seat players nobody invited, so "people you '
+            'invited" must be gone (work order 711, item 2); rendered '
+            'text: $rendered',
+      );
+    });
+
+    test(
+        'the advertising paragraph names the install id section by its '
+        'exact heading', () {
+      final String quoted = _installIdSectionHeading.substring(
+        0,
+        _installIdSectionHeading.length - 1,
+      );
+      final int headingAt = body.indexOf('<h2>$_installIdSectionHeading</h2>');
+      expect(
+        headingAt,
+        greaterThanOrEqualTo(0),
+        reason: 'expected the heading <h2>$_installIdSectionHeading</h2> in '
             'the document; full body: $body',
+      );
+      final int installIdAt = body.indexOf('random install id', headingAt);
+      final int nextHeadingAt = body.indexOf('<h2>', headingAt + 1);
+      expect(
+        installIdAt >= 0 && (nextHeadingAt < 0 || installIdAt < nextHeadingAt),
+        isTrue,
+        reason: 'the install id paragraph must sit under '
+            '"$_installIdSectionHeading" (heading at $headingAt, "random '
+            'install id" after it at $installIdAt, next <h2> at '
+            '$nextHeadingAt); full body: $body',
+      );
+      final RegExpMatch? ads = RegExp(
+        r'<h2>No advertising, no analytics, no tracking\.</h2>\s*<p>(.*?)</p>',
+        dotAll: true,
+      ).firstMatch(body);
+      expect(
+        ads,
+        isNotNull,
+        reason: 'no paragraph under the "No advertising, no analytics, no '
+            'tracking." heading; full body: $body',
+      );
+      final String paragraph = _renderedText(ads!.group(1)!);
+      final List<String> named = RegExp(r'"([^"]*)"')
+          .allMatches(paragraph)
+          .map((RegExpMatch m) => m.group(1)!)
+          .toList();
+      expect(
+        named,
+        <String>[quoted],
+        reason: 'the advertising paragraph must name the install id '
+            'section exactly once, as "$quoted" (its heading without the '
+            'full stop); it names $named. Paragraph: $paragraph',
       );
     });
   });

@@ -43,6 +43,8 @@ Map<String, Object?> buildVerifyRecord(
         'seat': seat.seat,
         'seed': seat.clientSeed,
         'origin': seat.seedOrigin,
+        // Section 34 item 6: which character a computer seat was.
+        if (seat.bot != null) 'bot': seat.bot,
       },
   ];
 

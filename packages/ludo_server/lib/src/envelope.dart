@@ -85,6 +85,8 @@ String wireErrorCode(ProtocolError error) {
       return 'KICKED';
     case ProtocolError.codeBanned:
       return 'CODE_BANNED';
+    case ProtocolError.alreadySeated:
+      return 'ALREADY_SEATED';
   }
 }
 
@@ -151,6 +153,12 @@ const Set<String> knownMessageTypes = <String>{
   'decline_release',
   'answer_knock',
   'set_guest_approval',
+  // Section 33 items 3 and 4: the waiting line.
+  'find_game',
+  'cancel_find',
+  // Section 34 items 2 and 3: computer seats.
+  'play_computer',
+  'fill_computer',
 };
 
 /// `docs/PROTOCOL.md` section 28 rule 4: `kick` exists only on a server that
@@ -305,6 +313,8 @@ String defaultErrorMessage(ProtocolError error) {
       return 'you were removed from this room';
     case ProtocolError.codeBanned:
       return 'joining by code is paused for this device or network';
+    case ProtocolError.alreadySeated:
+      return 'this connection already holds a seat';
   }
 }
 
@@ -319,3 +329,11 @@ String generateMessageId(Random random) {
   final int padStart = encoded.indexOf('=');
   return padStart == -1 ? encoded : encoded.substring(0, padStart);
 }
+
+/// How an error caught on the roll and sweep paths is written to a log line.
+/// A `FormatException`'s message carries its whole input, which on those
+/// paths can be a dice-chain link (`hexDecode` runs on a reveal inside
+/// `drawDie`), so for one of those only its `runtimeType` is printed. Every
+/// other error prints as its own `toString`.
+String logSafeError(Object error) =>
+    error is FormatException ? '${error.runtimeType}' : '$error';

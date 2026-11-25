@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:ludo_server/ludo_server.dart';
+import 'package:ludo_server/src/envelope.dart' show logSafeError;
 
 const int _defaultPort = 8080;
 
@@ -28,7 +29,7 @@ void main() {
   runZonedGuarded(() {
     unawaited(_run());
   }, (Object error, StackTrace stack) {
-    stderr.writeln('unhandled $error\n$stack');
+    stderr.writeln('unhandled ${logSafeError(error)}\n$stack');
   });
 }
 
@@ -186,10 +187,20 @@ Future<void> _run() async {
   // ignore: avoid_print
   print('ludo_server listening on port ${server.port}');
 
+  // docs/PROTOCOL.md section 34 item 4: the computer seats' pace is driven by
+  // a sweep of at most 100 ms on the real clock. Created here, inside the
+  // guarded zone, for the same reason `server.start` is. The sweep guards its
+  // own rooms, so a throw in one never stops the timer.
+  final Timer computerSweep = Timer.periodic(
+    const Duration(milliseconds: 100),
+    (Timer _) => registry.runComputerSeatsOnce(),
+  );
+
   final Completer<void> shutdown = Completer<void>();
   StreamSubscription<ProcessSignal>? sigtermSub;
   sigtermSub = ProcessSignal.sigterm.watch().listen((ProcessSignal _) async {
     await sigtermSub?.cancel();
+    computerSweep.cancel();
     await server.close();
     if (!shutdown.isCompleted) {
       shutdown.complete();

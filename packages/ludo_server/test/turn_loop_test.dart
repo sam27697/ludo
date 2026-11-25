@@ -29,6 +29,7 @@ import 'support/dice_oracle.dart';
 import 'support/engine_search.dart';
 import 'support/scripted_bytes.dart';
 import 'support/wire_harness.dart';
+import 'support/pre_copies.dart';
 
 const String _captureUnreachable =
     'needs a real capture; the shortest sequence found for a 2-seat room is '
@@ -169,9 +170,16 @@ void main() {
           '$actingSeat\'s socket saw "${mine['t']}", the other socket saw '
           '"${theirs['t']}" instead',
     );
+    expectPreOnRollerOnly(
+        mine['t']! as String,
+        <(int?, Map<String, Object?>)>[
+          (actingSeat, mine['d']! as Map<String, Object?>),
+          (other.seat, theirs['d']! as Map<String, Object?>),
+        ],
+        'room ${lobby.code}');
     expect(
-      theirs['d'],
-      mine['d'],
+      dWithoutPre(theirs),
+      dWithoutPre(mine),
       reason: 'room ${lobby.code}: a broadcast push must reach every '
           'socket with the identical payload (section 12.3); seat '
           '$actingSeat\'s socket saw ${mine['d']}, the other socket saw '
