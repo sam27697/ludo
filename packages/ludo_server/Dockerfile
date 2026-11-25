@@ -97,6 +97,12 @@ RUN mkdir -p /data/verify && chown 10001:10001 /data/verify && chmod 0700 /data/
 # named volume inherits that ownership and the process can write to it.
 RUN mkdir -p /data/strikes && chown 10001:10001 /data/strikes && chmod 0700 /data/strikes
 
+# /data/accounts holds the optional Google account store (order 720, see
+# docs/PROTOCOL.md 36.2; LUDO_ACCOUNT_DIR). Same reasoning as /data/strikes
+# above: created here, owned by 10001:10001 and 0700, so a fresh named volume
+# (account-data) inherits that ownership and the process can write to it.
+RUN mkdir -p /data/accounts && chown 10001:10001 /data/accounts && chmod 0700 /data/accounts
+
 # Rootless Docker on the deploy host already maps this container's root to
 # an unprivileged host uid, so this is defence in depth rather than the only
 # defence. A fixed, unused numeric uid:gid; no /etc/passwd entry is needed
