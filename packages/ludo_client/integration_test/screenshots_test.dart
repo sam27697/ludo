@@ -23791,6 +23791,18 @@ Future<void> _shootFriendJoined(
     await tester.enterText(find.byKey(const Key('home-name-field')), host);
     await _tapCreateRoom(tester);
 
+    // C-701: Create room opens the create sheet, and its friends-only tile
+    // plays the one tap of the create path. That tap is the only cue before
+    // the lobby.
+    const List<FeedbackCue> createPathCues = <FeedbackCue>[FeedbackCue.tap];
+    expect(
+      cues.played,
+      createPathCues,
+      reason:
+          '$scenario: the create path (Create room, then the friends-only '
+          'tile) plays exactly $createPathCues, got ${cues.played}',
+    );
+
     expect(
       factory.controllers,
       hasLength(1),
@@ -23836,6 +23848,16 @@ Future<void> _shootFriendJoined(
       find.byType(LobbyScreen),
       '$scenario: LobbyScreen after the create_room reply',
     );
+    // Everything played up to the lobby's arrival is the create path's tap;
+    // the joins below are counted from here.
+    final List<FeedbackCue> cuesAtLobby = List<FeedbackCue>.of(cues.played);
+    expect(
+      cuesAtLobby,
+      createPathCues,
+      reason:
+          '$scenario: up to the lobby coming up the only cues are the create '
+          'path\'s $createPathCues, got $cuesAtLobby',
+    );
     await _pumpRealDurationFrames(tester, frameCount: 6);
     await _expectLobbyScreen(
       tester,
@@ -23850,10 +23872,10 @@ Future<void> _shootFriendJoined(
     );
     expect(
       cues.played,
-      isEmpty,
+      cuesAtLobby,
       reason:
-          '$scenario: no cue may play before a friend sits down, got '
-          '${cues.played}',
+          '$scenario: no cue may play between the lobby coming up and a '
+          'friend sitting down, expected $cuesAtLobby, got ${cues.played}',
     );
 
     final AppLocalizations loc = AppLocalizations.of(
@@ -23910,13 +23932,16 @@ Future<void> _shootFriendJoined(
                   'entrance lasts 320 ms), got $ageMs ms by wall time',
       );
 
-      // Sound and touch: one friend_joined per join, nothing else.
+      // Sound and touch: one friend_joined per join, nothing else, counted
+      // from the lobby's arrival.
       expect(
-        cues.played,
+        cues.played.sublist(cuesAtLobby.length),
         List<FeedbackCue>.filled(joinNumber, FeedbackCue.friendJoined),
         reason:
             '$step: C-599 D4, expected exactly $joinNumber friend_joined '
-            'cue(s) through the feedback service, got ${cues.played}',
+            'cue(s) through the feedback service since the lobby came up, '
+            'got ${cues.played.sublist(cuesAtLobby.length)} (all cues '
+            '${cues.played})',
       );
 
       // The line: the newest name, the seat's painted mark at its start.
