@@ -61,6 +61,7 @@ import 'room_code.dart';
 import 'ruleset.dart';
 import 'snapshot.dart';
 import 'strike_store.dart' show BanInfo;
+import 'waiting_line.dart';
 
 /// `docs/PROTOCOL.md` section 7.1: the four close codes, and the only four
 /// this file ever passes to a socket close. The `web_socket` package
@@ -343,6 +344,75 @@ void publishKnockEvents(
   }
 }
 
+/// Section 33 item 4: drops every ticket detached for 30 000 ms or more, one
+/// log line each. Run by the one-second sweep, and before a `find_game` is
+/// answered so a ticket at exactly 30 000 ms is never re-attached.
+void expireWaitingLine(RoomRegistry registry) {
+  final int gone = registry.line.expire();
+  for (int i = 0; i < gone; i++) {
+    // ignore: avoid_print
+    print('room=- type=- id=- seat=- outcome=ticket_expired');
+  }
+}
+
+/// Section 33 item 4: one seating pass over the waiting line, published.
+/// A seated socket gets `seat_assigned` then `room`, neither with `re`, and
+/// the room it joined gets `player_joined`, as a link join; the head ticket
+/// of a "two strangers" room gets `seat_assigned` then `room` as its host.
+/// Then every attached ticket whose position is not the one it was last told
+/// gets a fresh `queued` (same ticket, no `re`, no `seq`).
+void serveWaitingLine(RoomRegistry registry, RoomHub hub) {
+  if (registry.line.isEmpty) {
+    return;
+  }
+  for (final LineEvent event in registry.serveLine()) {
+    final String code = event.room.code;
+    final Object? owner = event.ticket.owner;
+    final Connection? conn = owner is Connection ? owner : null;
+    if (conn != null) {
+      conn.roomCode = code;
+      conn.seatToken = event.seat.seatToken;
+      hub.attach(code: code, conn: conn);
+      conn._send(
+        type: 'seat_assigned',
+        data: buildSeatAssigned(event.seat),
+        re: null,
+      );
+      conn._send(type: 'room', data: event.snapshot, re: null);
+    }
+    switch (event) {
+      case LineSeated():
+        hub.broadcast(
+          code: code,
+          type: 'player_joined',
+          data: buildPlayerJoined(event.seat, event.seq),
+          exceptConn: conn,
+        );
+        // ignore: avoid_print
+        print('room=$code type=- id=- seat=${event.seat.seat} '
+            'outcome=line_seated via=public seq=${event.seq}');
+      case LineRoomCreated():
+        // ignore: avoid_print
+        print('room=$code type=- id=- seat=${event.seat.seat} '
+            'outcome=line_room_created players=${event.room.players} '
+            'open=${event.room.open} seq=${event.seq}');
+    }
+  }
+  for (final Ticket ticket in registry.line.takePositionChanges()) {
+    final Object? owner = ticket.owner;
+    if (owner is Connection) {
+      owner._send(
+        type: 'queued',
+        data: <String, Object?>{
+          'ticket': ticket.id,
+          'position': ticket.toldPosition,
+        },
+        re: null,
+      );
+    }
+  }
+}
+
 /// One WebSocket connection and the seat it may or may not currently hold.
 /// A seat survives its socket (`docs/PROTOCOL.md` section 8): closing this
 /// connection never calls `leaveRoom`, only `setConnected(..., false)`.
@@ -390,6 +460,17 @@ class Connection {
   bool _closed = false;
 
   bool get _hasIdentity => roomCode != null && seatToken != null;
+
+  /// Section 33 item 3: this socket holds a live seat. An identity whose room
+  /// was reaped, or whose seat was freed or kicked, holds none.
+  bool get _holdsSeat {
+    if (!_hasIdentity) {
+      return false;
+    }
+    final Room? room = registry.lookup(roomCode!);
+    return room != null &&
+        room.seats.any((Seat s) => s.seatToken == seatToken && !s.tokenDead);
+  }
 
   /// Entry point for one raw frame off the wire, text or binary. Implements
   /// the first five ladder steps; hands a validated envelope to [_dispatch]
@@ -466,6 +547,19 @@ class Connection {
     }
 
     await _dispatch(envelope);
+
+    // Section 33 item 4: whatever this message changed (a room created or
+    // reopened, a seat freed, a host back, a ticket made or dropped), the
+    // line is served from its head. A pass that finds nothing to do changes
+    // nothing, so running it after every message is the same as running it
+    // after the ones that matter.
+    try {
+      serveWaitingLine(registry, hub);
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('room=- type=${envelope.type} id=${envelope.id} seat=- '
+          'outcome=line_pass_failed error=$error\n$stack');
+    }
   }
 
   /// Section 27 rule 4. Sends the one `UPDATE_REQUIRED` error, with no `re`
@@ -535,6 +629,14 @@ class Connection {
         _handleAnswerKnock(envelope);
       case 'set_guest_approval':
         _handleSetGuestApproval(envelope);
+      case 'find_game':
+        _handleFindGame(envelope);
+      case 'cancel_find':
+        _handleCancelFind(envelope);
+      case 'play_computer':
+        _handlePlayComputer(envelope);
+      case 'fill_computer':
+        _handleFillComputer(envelope);
       default:
         // Unreachable: parseEnvelope already rejected anything outside
         // knownMessageTypes as BAD_TYPE.
@@ -552,6 +654,8 @@ class Connection {
   }
 
   void _handleCreateRoom(ParsedEnvelope envelope) {
+    // Section 33 item 4: a queued socket that creates a room leaves the line.
+    _dropOwnTicket();
     if (!rateLimiter.recordCreateRoom(ip)) {
       _reject(envelope, ProtocolError.rateLimited);
       return;
@@ -563,6 +667,7 @@ class Connection {
       'players',
       'rules',
       'install',
+      'open',
     };
     if (!envelope.data.keys.every(allowedKeys.contains)) {
       _reject(envelope, ProtocolError.badField);
@@ -575,6 +680,14 @@ class Connection {
     if (envelope.data.containsKey('install') &&
         (rawCreateInstall is! String ||
             !_installPattern.hasMatch(rawCreateInstall))) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+
+    // Section 33 item 1: `open` is optional, absent means false, and
+    // anything but a bool is a malformed field.
+    final Object? rawOpen = envelope.data['open'];
+    if (envelope.data.containsKey('open') && rawOpen is! bool) {
       _reject(envelope, ProtocolError.badField);
       return;
     }
@@ -603,6 +716,7 @@ class Connection {
       rules: rules ?? const RulesConfig(),
       install: rawCreateInstall is String ? rawCreateInstall : null,
       ip: ip,
+      open: rawOpen == true,
     );
 
     if (result is CreateFailure) {
@@ -636,6 +750,8 @@ class Connection {
   }
 
   void _handleJoinRoom(ParsedEnvelope envelope) {
+    // Section 33 item 4: a queued socket that joins a room leaves the line.
+    _dropOwnTicket();
     if (!rateLimiter.recordJoinOrResume(ip)) {
       _reject(envelope, ProtocolError.rateLimited);
       return;
@@ -795,6 +911,318 @@ class Connection {
     );
   }
 
+  /// Section 33 item 4: drops the ticket this socket holds, if any. Returns
+  /// whether it held one. The positions behind it are told by the pass that
+  /// follows the message.
+  bool _dropOwnTicket() {
+    final Ticket? ticket = registry.line.ticketOf(this);
+    if (ticket == null) {
+      return false;
+    }
+    registry.line.remove(ticket);
+    return true;
+  }
+
+  /// `find_game`, section 33 item 3. The ladder: the per-IP `join_room`
+  /// limit (`RATE_LIMITED`), a seat already held (`ALREADY_SEATED`), then,
+  /// after this socket's open knock is withdrawn and any ticket it holds is
+  /// dropped, the payload: `name` as section 4, `install` required with
+  /// section 31 item 2's shape, `ticket` an optional string, nothing else
+  /// (`BAD_FIELD`). No ban and no typed-code window apply.
+  ///
+  /// A matchable room that does not bar the device seats the caller at once,
+  /// `via: "public"` (`seat_assigned`, then `room` with `re`, `player_joined`
+  /// to the room). Otherwise the caller holds a ticket: the one it named, in
+  /// its old place, when that is still held for the same `install`, else a
+  /// new one at the tail; it is answered by `queued` with `re`.
+  void _handleFindGame(ParsedEnvelope envelope) {
+    if (!rateLimiter.recordJoinOrResume(ip)) {
+      _reject(envelope, ProtocolError.rateLimited);
+      return;
+    }
+    if (_holdsSeat) {
+      _reject(envelope, ProtocolError.alreadySeated);
+      return;
+    }
+    _withdrawOwnKnock();
+    _dropOwnTicket();
+
+    const Set<String> allowedKeys = <String>{'name', 'install', 'ticket'};
+    if (!envelope.data.keys.every(allowedKeys.contains)) {
+      _reject(envelope, ProtocolError.badField, room: '-');
+      return;
+    }
+    final Object? rawName = envelope.data['name'];
+    final String? name =
+        rawName is String ? registry.validDisplayName(rawName) : null;
+    if (name == null) {
+      _reject(envelope, ProtocolError.badField, room: '-');
+      return;
+    }
+    final Object? rawInstall = envelope.data['install'];
+    if (rawInstall is! String || !_installPattern.hasMatch(rawInstall)) {
+      _reject(envelope, ProtocolError.badField, room: '-');
+      return;
+    }
+    final Object? rawTicket = envelope.data['ticket'];
+    if (envelope.data.containsKey('ticket') && rawTicket is! String) {
+      _reject(envelope, ProtocolError.badField, room: '-');
+      return;
+    }
+
+    expireWaitingLine(registry);
+    // An unknown, expired or mismatched ticket is a fresh find_game: null
+    // here, and nothing in the line changed.
+    final Ticket? held = rawTicket is String
+        ? registry.line.reattach(
+            id: rawTicket,
+            install: rawInstall,
+            name: name,
+            ip: ip,
+            owner: this,
+          )
+        : null;
+
+    final Room? room = registry.matchableRoomFor(install: rawInstall, ip: ip);
+    if (room != null) {
+      final JoinResult result = registry.seatPublic(
+        room,
+        name: name,
+        install: rawInstall,
+        ip: ip,
+      );
+      if (result is JoinOk) {
+        if (held != null) {
+          registry.line.remove(held);
+        }
+        roomCode = result.room.code;
+        seatToken = result.seat.seatToken;
+        hub.attach(code: result.room.code, conn: this);
+        _send(
+          type: 'seat_assigned',
+          data: buildSeatAssigned(result.seat),
+          re: null,
+        );
+        _send(type: 'room', data: _snapshotFor(result.room), re: envelope.id);
+        hub.broadcast(
+          code: result.room.code,
+          type: 'player_joined',
+          data: buildPlayerJoined(result.seat, result.room.seq),
+          exceptConn: this,
+        );
+        _log(
+          type: envelope.type,
+          id: envelope.id,
+          outcome: 'ok seated via=public',
+          room: result.room.code,
+          seat: result.seat.seat,
+          seq: result.room.seq,
+        );
+        return;
+      }
+      // matchableRoomFor has just said this room takes this device; say that
+      // the two checks drifted apart and queue the caller instead.
+      _log(
+        type: envelope.type,
+        id: envelope.id,
+        outcome: 'seat_public_failed '
+            'error=${wireErrorCode((result as JoinFailure).error)}',
+        room: room.code,
+      );
+    }
+
+    final Ticket ticket = held ??
+        registry.line.enqueue(
+          name: name,
+          install: rawInstall,
+          ip: ip,
+          owner: this,
+        );
+    final int position = registry.line.positionOf(ticket);
+    ticket.toldPosition = position;
+    _send(
+      type: 'queued',
+      data: <String, Object?>{'ticket': ticket.id, 'position': position},
+      re: envelope.id,
+    );
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok queued position=$position '
+          '${held != null ? 'reattached' : 'new'}',
+      room: '-',
+    );
+  }
+
+  /// `play_computer`, section 34 item 2. The ladder: a seat already held
+  /// (`ALREADY_SEATED`), the per-IP creation limit (`RATE_LIMITED`, as
+  /// `create_room`), then the payload: `name` as section 4, `players` 2 or 4,
+  /// `install` as section 31 item 2, `client_seed` as `set_seed`, nothing
+  /// else (`BAD_FIELD`). A ticket or an open knock this socket holds is
+  /// dropped first. The caller gets `seat_assigned`, `room` (with `re`),
+  /// every `seat_seed`, then `game_started` and the first `turn`.
+  void _handlePlayComputer(ParsedEnvelope envelope) {
+    if (_holdsSeat) {
+      _reject(envelope, ProtocolError.alreadySeated);
+      return;
+    }
+    _dropOwnTicket();
+    if (!rateLimiter.recordCreateRoom(ip)) {
+      _reject(envelope, ProtocolError.rateLimited);
+      return;
+    }
+    _withdrawOwnKnock();
+
+    const Set<String> allowedKeys = <String>{
+      'name',
+      'players',
+      'install',
+      'client_seed',
+    };
+    if (!envelope.data.keys.every(allowedKeys.contains)) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+    final Object? rawInstall = envelope.data['install'];
+    if (envelope.data.containsKey('install') &&
+        (rawInstall is! String || !_installPattern.hasMatch(rawInstall))) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+    final Object? rawName = envelope.data['name'];
+    final Object? rawPlayers = envelope.data['players'];
+    if (rawName is! String || rawPlayers is! int) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+    final Object? rawSeed = envelope.data['client_seed'];
+    if (envelope.data.containsKey('client_seed') && rawSeed is! String) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+
+    final PlayComputerResult result = registry.playComputer(
+      name: rawName,
+      players: rawPlayers,
+      clientSeed: rawSeed,
+      install: rawInstall is String ? rawInstall : null,
+      ip: ip,
+    );
+    if (result is PlayComputerFailure) {
+      _reject(envelope, result.error);
+      return;
+    }
+    final PlayComputerOk ok = result as PlayComputerOk;
+
+    roomCode = ok.room.code;
+    seatToken = ok.seat.seatToken;
+    hub.attach(code: ok.room.code, conn: this);
+    _send(type: 'seat_assigned', data: buildSeatAssigned(ok.seat), re: null);
+    _send(type: 'room', data: ok.snapshot, re: envelope.id);
+    for (final SeededSeat seeded in ok.seeds) {
+      hub.broadcast(
+        code: ok.room.code,
+        type: 'seat_seed',
+        data: buildSeatSeed(
+          seat: seeded.seat.seat,
+          clientSeed: seeded.seat.clientSeed!,
+          origin: seeded.seat.seedOrigin!,
+          seq: seeded.seq,
+        ),
+      );
+    }
+    _publishStart(
+      envelope,
+      ok.start,
+      unsolicited: true,
+      logName: envelope.type,
+    );
+  }
+
+  /// `fill_computer`, section 34 item 3. Identity first, like the other
+  /// socket-identified messages; the registry runs the rest of the ladder.
+  /// The host's copy of the first frame it is sent carries `re`.
+  void _handleFillComputer(ParsedEnvelope envelope) {
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    final FillComputerResult result = registry.fillComputer(
+      code: roomCode!,
+      seatToken: seatToken!,
+      data: envelope.data,
+    );
+    if (result is FillComputerFailure) {
+      _reject(envelope, result.error, room: roomCode);
+      return;
+    }
+    final FillComputerOk ok = result as FillComputerOk;
+    final String code = ok.room.code;
+
+    publishKnockEvents(
+      hub,
+      ok.knockEvents,
+      requester: this,
+      requesterRe: envelope.id,
+    );
+    bool answered = ok.knockEvents.isNotEmpty;
+    for (final ComputerJoin join in ok.joins) {
+      final Map<String, Object?> joined =
+          buildPlayerJoined(join.seat, join.joinedSeq);
+      if (answered) {
+        hub.broadcast(code: code, type: 'player_joined', data: joined);
+      } else {
+        answered = true;
+        _sendAndBroadcast(
+          room: code,
+          type: 'player_joined',
+          data: joined,
+          re: envelope.id,
+        );
+      }
+      final SeededSeat? seeded = join.seeded;
+      if (seeded != null) {
+        hub.broadcast(
+          code: code,
+          type: 'seat_seed',
+          data: buildSeatSeed(
+            seat: seeded.seat.seat,
+            clientSeed: seeded.seat.clientSeed!,
+            origin: seeded.seat.seedOrigin!,
+            seq: seeded.seq,
+          ),
+        );
+      }
+    }
+    _publishStart(
+      envelope,
+      ok.start,
+      unsolicited: true,
+      logName: envelope.type,
+    );
+  }
+
+  /// `cancel_find`, section 33 item 4: drops this socket's ticket and is
+  /// answered by `find_cancelled` with `re`, also when it held none. `d`
+  /// must be empty.
+  void _handleCancelFind(ParsedEnvelope envelope) {
+    if (envelope.data.isNotEmpty) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+    final bool held = _dropOwnTicket();
+    _send(
+      type: 'find_cancelled',
+      data: const <String, Object?>{},
+      re: envelope.id,
+    );
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: held ? 'ok ticket_dropped' : 'ok no_ticket',
+    );
+  }
+
   /// `answer_knock`, section 31 item 4. Identity first, like the other
   /// socket-identified messages; the registry runs the rest of the ladder.
   /// The host's own copy of each frame its answer caused carries `re`.
@@ -915,6 +1343,8 @@ class Connection {
   }
 
   Future<void> _handleResume(ParsedEnvelope envelope) async {
+    // Section 33 item 4: a queued socket that resumes a seat leaves the line.
+    _dropOwnTicket();
     if (!rateLimiter.recordJoinOrResume(ip)) {
       _reject(envelope, ProtocolError.rateLimited);
       return;
@@ -1114,13 +1544,15 @@ class Connection {
     ParsedEnvelope envelope,
     StartOk ok, {
     bool unsolicited = false,
+    String? logName,
   }) {
+    final String? re = unsolicited ? null : envelope.id;
     void emit(String type, Map<String, Object?> data) {
       if (unsolicited) {
         hub.broadcast(code: ok.room.code, type: type, data: data);
         return;
       }
-      _send(type: type, data: data, re: envelope.id);
+      _send(type: type, data: data, re: re);
       hub.broadcast(
         code: ok.room.code,
         type: type,
@@ -1140,7 +1572,7 @@ class Connection {
         room: ok.room.code,
         type: 'player_left',
         data: buildPlayerLeft(removed.seat.seat, ok.room.hostSeat, removed.seq),
-        re: envelope.id,
+        re: re,
       );
       // docs/PROTOCOL.md section 16.9 rule 1: that was the last thing this
       // removed seat's own socket, if it was connected, is owed from this
@@ -1169,7 +1601,7 @@ class Connection {
               type: 'seat_assigned', data: buildSeatAssigned(moved), re: null);
         }
       }
-      _send(type: 'room', data: reseatRoom, re: envelope.id);
+      _send(type: 'room', data: reseatRoom, re: re);
       for (final Seat moved in ok.movedSeats) {
         if (moved.seatToken == seatToken || !moved.connected) {
           continue;
@@ -1230,7 +1662,8 @@ class Connection {
     emit('turn', turnData);
     publishKnockEvents(hub, ok.knockEvents);
     _log(
-      type: unsolicited ? 'rematch_auto_start_${envelope.type}' : envelope.type,
+      type: logName ??
+          (unsolicited ? 'rematch_auto_start_${envelope.type}' : envelope.type),
       id: envelope.id,
       outcome: 'ok',
       room: ok.room.code,
@@ -1502,7 +1935,11 @@ class Connection {
     seatToken = null;
 
     final List<OutFrame> frames = buildRetireFrames(retire);
-    _send(type: frames.first.type, data: frames.first.data, re: envelope.id);
+    // Section 35 item 3: a roll the leaver was shown goes out ahead of
+    // `seat_retired`; the leaver's own answer is still that one frame.
+    final OutFrame retired =
+        frames.firstWhere((OutFrame frame) => frame.type == 'seat_retired');
+    _send(type: retired.type, data: retired.data, re: envelope.id);
     for (final OutFrame frame in frames) {
       hub.broadcast(code: code, type: frame.type, data: frame.data);
     }
@@ -1510,10 +1947,11 @@ class Connection {
     _logRetire(envelope.type, envelope.id, retire);
   }
 
-  /// `kick`, `docs/PROTOCOL.md` section 28 rule 4 "kicked". Identity first,
-  /// like the other socket-identified messages; the registry runs the rest of
-  /// the ladder in the section's own order (`NOT_HOST`, `WRONG_PHASE`,
-  /// `BAD_FIELD`, `ILLEGAL_MOVE`, `NOT_ABSENT`). Answered on the host's socket
+  /// `kick`, `docs/PROTOCOL.md` section 33 item 8 (which replaces section 28
+  /// rule 4 "kicked"). Identity first, like the other socket-identified
+  /// messages; the registry runs the rest of the ladder in the section's own
+  /// order (`NOT_HOST`, `WRONG_PHASE`, `BAD_FIELD`, `ILLEGAL_MOVE`). Answered
+  /// on the host's socket
   /// by the `seat_retired` broadcast with `re`; the frames that follow it
   /// (a `turn`, or `game_over` and its `player_left`s) carry `re` on this
   /// socket's copy too, as every burst a request causes does.
@@ -1550,7 +1988,35 @@ class Connection {
       return;
     }
     final RetireOk ok = result as RetireOk;
-    for (final OutFrame frame in buildRetireFrames(ok)) {
+    final List<OutFrame> frames = buildRetireFrames(ok);
+    // Section 33 item 8: the kicked seat's socket, when it has one, is
+    // detached first; it gets the `seat_retired`, then `kicked` (with `ban`
+    // when the kick's strike fired one), and nothing that follows.
+    final Connection? kickedConn = hub.detachSeatToken(
+      code: ok.room.code,
+      seatToken: ok.seat.seatToken,
+    );
+    if (kickedConn != null) {
+      kickedConn.roomCode = null;
+      kickedConn.seatToken = null;
+      // Section 35 item 3: a roll the kicked seat was shown is published
+      // ahead of `seat_retired`; the kicked socket is sent `seat_retired`.
+      final OutFrame retired =
+          frames.firstWhere((OutFrame frame) => frame.type == 'seat_retired');
+      kickedConn._send(
+        type: retired.type,
+        data: retired.data,
+        re: null,
+      );
+      kickedConn._send(
+        type: 'kicked',
+        data: <String, Object?>{
+          if (ok.ban != null) 'ban': ok.ban!.toJson(),
+        },
+        re: null,
+      );
+    }
+    for (final OutFrame frame in frames) {
       _sendAndBroadcast(
         room: ok.room.code,
         type: frame.type,
@@ -1679,7 +2145,16 @@ class Connection {
     _send(type: 'room', data: data, re: envelope.id);
     _broadcastRoomToOthers(ok.room);
 
-    if (ok.autoStart) {
+    // Section 34 item 6: every computer seat accepts at once, in seat order,
+    // after the human's own frames. These carry no `re`: no request of theirs
+    // is being answered.
+    final List<ComputerAccept> accepts = registry.acceptComputerSeats(ok.room);
+    for (final ComputerAccept accept in accepts) {
+      hub.broadcast(code: ok.room.code, type: 'room', data: accept.snapshot);
+    }
+
+    if (ok.autoStart ||
+        (accepts.isNotEmpty && registry.rematchAutoStartHolds(ok.room))) {
       // docs/PROTOCOL.md section 16.4, "Everyone accepted": the room above
       // is the one that recorded the completing acceptance, already on the
       // wire to every socket -- only now does the server start the game
@@ -2200,7 +2675,7 @@ class Connection {
     required String room,
     required String type,
     required Map<String, Object?> data,
-    required String re,
+    required String? re,
   }) {
     _send(type: type, data: data, re: re);
     hub.broadcast(code: room, type: type, data: data, exceptConn: this);
@@ -2309,10 +2784,100 @@ class Connection {
     if (_closed) {
       return;
     }
+    Map<String, Object?> out = data;
+    int? preK;
+    // Section 35 item 5: a copy without `pre` is still a correct frame (the
+    // client waits for `rolled`), so a failure computing `pre` costs only the
+    // `pre`. It must never stop this send, nor a broadcast loop that called
+    // it, and it is logged, with a FormatException's input left out.
+    try {
+      final ({Map<String, Object?> data, int k})? decorated =
+          _withPre(type, data);
+      if (decorated != null) {
+        out = decorated.data;
+        preK = decorated.k;
+      }
+    } catch (error) {
+      out = data;
+      preK = null;
+      // ignore: avoid_print
+      print('pre_failed room=${roomCode ?? '-'} error=${logSafeError(error)}');
+    }
     final String id = generateMessageId(random);
     channel.sink.add(
-      encodeEnvelope(type: type, id: id, data: data, re: re),
+      encodeEnvelope(type: type, id: id, data: out, re: re),
     );
+    final String? code = roomCode;
+    final String? token = seatToken;
+    if (preK != null && code != null && token != null) {
+      recordPreSent(registry, code: code, seatToken: token, k: preK);
+    }
+  }
+
+  /// `docs/PROTOCOL.md` section 35 item 1: this socket's own copy of a `turn`
+  /// frame, or of a `room` snapshot whose `turn` object, says the game awaits
+  /// this socket's seat's roll gets `pre`, the payload of the `rolled` that
+  /// roll would produce now. The registry decides from the live room whether
+  /// it is owed (a human seat on turn, `await_roll`); the frame's own `seat`
+  /// and `phase`, and a snapshot's `code` and `k`, must say the same, so a
+  /// copy describing an earlier moment gets none. [data] is never changed:
+  /// it is the map every other socket and `room.gameLog` hold. Null when
+  /// this copy carries no `pre`; otherwise the copy and the `k` of its
+  /// `pre`, for the record [_send] writes once the copy has gone out.
+  ({Map<String, Object?> data, int k})? _withPre(
+    String type,
+    Map<String, Object?> data,
+  ) {
+    final String? code = roomCode;
+    final String? token = seatToken;
+    if (code == null || token == null) {
+      return null;
+    }
+    final Map<String, Object?>? turn;
+    if (type == 'turn') {
+      turn = data;
+    } else if (type == 'room') {
+      final Object? snapshotTurn = data['turn'];
+      turn = snapshotTurn is Map<String, Object?> ? snapshotTurn : null;
+    } else {
+      return null;
+    }
+    if (turn == null || turn['phase'] != 'await_roll') {
+      return null;
+    }
+    final Room? room = registry.lookup(code);
+    final engine.GameState? game = room?.game;
+    if (room == null || game == null || turn['seat'] != game.currentSeat) {
+      return null;
+    }
+    if (type == 'room' &&
+        (data['code'] != code || turn['k'] != room.rollCount)) {
+      return null;
+    }
+    final Seat? own = _ownSeat(room, token);
+    if (own == null || own.seat != turn['seat']) {
+      return null;
+    }
+    final Map<String, Object?>? pre =
+        peekPre(registry, code: code, seatToken: token);
+    if (pre == null) {
+      return null;
+    }
+    final Map<String, Object?>? copy =
+        withRollerPre(type: type, data: data, pre: pre);
+    if (copy == null) {
+      return null;
+    }
+    return (data: copy, k: pre['k']! as int);
+  }
+
+  Seat? _ownSeat(Room room, String token) {
+    for (final Seat seat in room.seats) {
+      if (seat.seatToken == token && !seat.tokenDead) {
+        return seat;
+      }
+    }
+    return null;
   }
 
   /// One structured line per event to stdout. Never a seat token, never a
@@ -2406,6 +2971,10 @@ class Connection {
       }
     }
     _closed = true;
+    // Section 33 item 4: a ticket outlives its socket, detached, for 30 s.
+    if (registry.line.detach(this) != null) {
+      _log(type: '-', id: '-', outcome: 'disconnect ticket_detached');
+    }
     // Section 31 item 4: a knock does not outlive its socket. Done after
     // `_closed`, so nothing is written to the socket that just went.
     final String? knockId = pendingKnockId;

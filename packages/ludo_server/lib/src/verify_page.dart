@@ -199,7 +199,6 @@ String buildVerifyPageHtml(
   final List<Object?> seeds = record['seeds'] as List<Object?>;
   final List<Object?> rolls = record['rolls'] as List<Object?>;
 
-  final String winnerMarkup = _seatMarkup(winner, isAr: isAr);
   final String ltrAttr = isAr ? ' dir="ltr"' : '';
   final String notCheckedCell = isAr ? 'لم يُفحص' : 'not checked';
 
@@ -217,6 +216,18 @@ String buildVerifyPageHtml(
   final String labelChain = isAr ? 'فحص السلسلة' : 'Chain check';
   final String labelDieCheck = isAr ? 'فحص النرد' : 'Die check';
 
+  // Section 34 item 6: a computer seat's entry carries `bot`, and the page
+  // says so beside its name, in the page language.
+  final String botWord = isAr ? 'كومبيوتر' : 'computer';
+  final Set<Object?> botSeats = <Object?>{
+    for (final Object? entry in seeds)
+      if (entry is Map<String, Object?> && entry['bot'] is int) entry['seat'],
+  };
+  String seatName(Object? seat) =>
+      _seatMarkup(seat, isAr: isAr) +
+      (botSeats.contains(seat) ? ' (${_esc(botWord)})' : '');
+  final String winnerMarkup = seatName(winner);
+
   final StringBuffer seedRows = StringBuffer();
   for (final Object? entry in seeds) {
     final Map<String, Object?> seed = entry as Map<String, Object?>;
@@ -231,7 +242,7 @@ String buildVerifyPageHtml(
       ..write('<tr><td data-label="$labelPlayer" data-seat="')
       ..write(_esc(seed['seat']))
       ..write('">')
-      ..write(_seatMarkup(seed['seat'], isAr: isAr))
+      ..write(seatName(seed['seat']))
       ..write('</td><td data-label="$labelSeed" class="hex"$ltrAttr>')
       ..write(_esc(seed['seed']))
       ..write('</td><td data-label="$labelOrigin">')
@@ -323,7 +334,7 @@ String buildVerifyPageHtml(
       ..write('</td><td data-label="$labelPlayer" data-seat="')
       ..write(_esc(roll['seat']))
       ..write('">')
-      ..write(_seatMarkup(roll['seat'], isAr: isAr))
+      ..write(seatName(roll['seat']))
       ..write('</td><td data-label="$labelDie"$ltrAttr>')
       ..write(_esc(roll['die']))
       ..write(releaseMarkup)

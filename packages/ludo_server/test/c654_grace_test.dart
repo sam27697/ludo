@@ -31,6 +31,7 @@ import 'package:test/test.dart';
 import 'support/dice_oracle.dart';
 import 'support/scripted_bytes.dart';
 import 'support/wire_harness.dart';
+import 'support/pre_copies.dart';
 
 typedef Frame = Map<String, Object?>;
 
@@ -540,11 +541,14 @@ void _expectTurn(
       fx.ok(d['grace_ms'] is int && (d['grace_ms']! as int) > 0,
           'rule 3: grace_ms is an int above 0', d['grace_ms']);
     }
+    expectPreOnRollerOnly(
+        'turn', <(int?, Map<String, Object?>)>[(seat, d)], 'seat $seat: $why');
+    final Map<String, Object?> shared = withoutPre(d);
     if (first == null) {
-      first = d;
+      first = shared;
     } else {
       fx.eq(
-          d,
+          shared,
           first,
           'seat $seat reads the same turn frame as seat '
           '${seats.first}');
@@ -720,11 +724,29 @@ void main() {
         (_Fx fx, _Table t) async {
       final Map<int, List<Frame>> frames =
           await t.step(0, 'leave_room', <String, Object?>{});
-      _expectShape(fx, frames, <int>[1, 2], <String>['seat_retired', 'turn'],
-          'seat 0 leaves on its own turn');
-      fx.eq(_d(frames[1]!.first)['reason'], 'left', 'the retire is a leave');
+      // Seat 0 holds the pre of its opening turn, so section 35 item 3
+      // publishes that roll before the retire: rolled (by timer), the frames
+      // of its step, then seat_retired. The face is not steered here.
+      _expectTimerStep(fx, <int, List<Frame>>{1: frames[1]!, 2: frames[2]!}, 0,
+          'rolled', 'seat 0 leaves holding a pre');
+      fx.eq(_types(frames[2]!), _types(frames[1]!),
+          'seats 1 and 2 read the same frames');
+      final List<Frame> got = frames[1]!;
+      final int r = got.indexWhere((Frame f) => f['t'] == 'seat_retired');
+      fx.ok(r > 0, 'seat_retired follows the forced roll', _types(got));
+      fx.eq(_d(got[r])['reason'], 'left', 'the retire is a leave');
+      final int lastTurn = got.lastIndexWhere((Frame f) => f['t'] == 'turn');
+      // The turn for seat 1 follows the retire (a six left seat 0 on turn:
+      // a retire grace, 0 + 500) or the pass of the forced roll (no moved
+      // frame, turn_passed: 0 + 1500).
+      final bool afterPass =
+          lastTurn > 0 && got[lastTurn - 1]['t'] == 'turn_passed';
       _expectTurn(fx, frames, <int>[1, 2],
-          next: 1, grace: 500, why: 'no moved frame: travel 0, hold 500');
+          next: 1,
+          grace: afterPass ? 1500 : 500,
+          why: afterPass
+              ? 'the forced roll passed the turn: travel 0, hold 1500'
+              : 'a retire of the seat on turn: travel 0, hold 500');
     }, players: 3);
 
     _scenario('E6a a timer-played move, as any move: 4*140 + 500 = 1060',

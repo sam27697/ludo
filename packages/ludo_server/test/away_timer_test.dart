@@ -35,6 +35,7 @@ import 'package:test/test.dart';
 import 'support/dice_oracle.dart';
 import 'support/scripted_bytes.dart';
 import 'support/wire_harness.dart';
+import 'support/pre_copies.dart';
 
 typedef _Frame = Map<String, Object?>;
 
@@ -327,11 +328,16 @@ class _Table {
         conns[seat]!,
         _data(started)['turn'],
       );
+      expectPreOnRollerOnly(
+          'turn',
+          <(int?, Map<String, Object?>)>[(seat, _data(turn))],
+          'setup: opening turn on seat $seat. $debug');
       if (firstTurn == null) {
         startedData = _data(started);
         firstTurn = turn;
       } else {
-        expect(_data(turn), _data(firstTurn), reason: 'setup: opening. $debug');
+        expect(withoutPre(_data(turn)), withoutPre(_data(firstTurn)),
+            reason: 'setup: opening. $debug');
       }
     }
     if (steered != null) {
@@ -699,6 +705,17 @@ class _Table {
       steps.add(await _readStep(conns[seat]!));
     }
     final List<_Frame> first = steps.first;
+    if (steps.every((List<_Frame> st) => st.length == first.length)) {
+      for (int i = 0; i < first.length; i++) {
+        expectPreOnRollerOnly(
+            first[i]['t']! as String,
+            <(int?, Map<String, Object?>)>[
+              for (int j = 0; j < live.length; j++)
+                (live[j], _data(steps[j][i])),
+            ],
+            'step frame $i. $debug');
+      }
+    }
     for (final List<_Frame> other in steps.skip(1)) {
       expect(
         other.length,
@@ -709,7 +726,8 @@ class _Table {
       );
       for (int i = 0; i < first.length; i++) {
         expect(other[i]['t'], first[i]['t'], reason: 'step frame $i. $debug');
-        expect(other[i]['d'], first[i]['d'], reason: 'step frame $i. $debug');
+        expect(dWithoutPre(other[i]), dWithoutPre(first[i]),
+            reason: 'step frame $i. $debug');
       }
     }
     lastStep = first;
@@ -950,11 +968,16 @@ class _Table {
           conns[other]!,
           _data(frames.last)['turn'],
         );
+        expectPreOnRollerOnly(
+            'turn',
+            <(int?, Map<String, Object?>)>[(other, _data(open))],
+            'rematch opening turn on seat $other. $debug');
         if (started == null) {
           started = _data(frames.last);
           turn = open;
         } else {
-          expect(_data(open), _data(turn!), reason: 'opening turn. $debug');
+          expect(withoutPre(_data(open)), withoutPre(_data(turn!)),
+              reason: 'opening turn. $debug');
         }
       }
       _resetForRematch();

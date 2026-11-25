@@ -26,7 +26,7 @@ import 'dart:convert';
 
 /// `YYYY-MM-DD`, matching the "Last updated" line in the rendered page.
 /// Bump this string, and only this string, the day the policy text changes.
-const String privacyLastUpdated = '2026-11-23';
+const String privacyLastUpdated = '2026-11-25';
 
 const HtmlEscape _escaper = HtmlEscape();
 
@@ -107,7 +107,8 @@ StringBuffer _englishBody(String? trimmedEmail) {
     ..writeln('<h1>Privacy Policy - Ludo RNG</h1>')
     ..writeln('<p class="updated">Last updated: $privacyLastUpdated</p>')
     ..writeln(
-      '<p>Ludo RNG is a game you play online with people you invite. '
+      '<p>Ludo RNG is a game you play online with people you invite, with '
+      'other players who are looking for a game, or against the computer. '
       'This policy explains what the app and its server handle, and what '
       'they do not.</p>',
     )
@@ -122,16 +123,19 @@ StringBuffer _englishBody(String? trimmedEmail) {
       '<p>The app contains no advertising network, no analytics library '
       'and no third-party crash reporting. Nothing about your use of the '
       'app is shared with any other company. There is no advertising '
-      'identifier and no device identifier collected.</p>',
+      'identifier. The only identifier the app uses is the random install '
+      'id described under "Stopping repeated unwanted joins" below.</p>',
     )
     ..writeln('<h2>What you type, and where it goes.</h2>')
     ..writeln(
-      '<p>To play, you create a room or join one with a room code. You '
-      'may enter a display name for your seat. That name and the room '
-      'code are sent to our server so the other players in your room can '
-      'see them, and they are visible to everyone in that room. Choose a '
-      'display name you are comfortable showing to the people you '
-      'invited. Rooms are temporary: the room and everything in it, '
+      '<p>To play, you create a room, join one with a room code, or ask to '
+      'be seated with other players who are waiting. You enter a display '
+      'name for your seat. That name and the room code are sent to our '
+      'server so the other players in your room can see them, and they '
+      'are visible to everyone in that room. In a room open to anyone, '
+      'those players can be people you do not know, so choose a display '
+      'name you are comfortable showing to strangers. Rooms are '
+      'temporary: the room and everything in it, '
       'including any display name, is deleted from the server when the '
       'room ends or expires.</p>',
     )
@@ -211,7 +215,8 @@ StringBuffer _arabicBody(String? trimmedEmail) {
       '<span dir="ltr">$privacyLastUpdated</span></p>',
     )
     ..writeln(
-      '<p>Ludo RNG لعبة تلعبها عبر الإنترنت مع أشخاص تدعوهم أنت. '
+      '<p>Ludo RNG لعبة تلعبها عبر الإنترنت مع أشخاص تدعوهم أنت، أو مع '
+      'لاعبين آخرين يبحثون عن لعبة، أو ضد الكومبيوتر. '
       'توضّح هذه السياسة ما يتعامل معه التطبيق وخادمه من '
       'بيانات، وما لا يتعامل معه.</p>',
     )
@@ -230,16 +235,20 @@ StringBuffer _arabicBody(String? trimmedEmail) {
       '<p>لا يحتوي التطبيق على أي شبكة إعلانات، ولا مكتبة تحليلات، '
       'ولا أداة تقارير أعطال من طرف ثالث. لا نشارك أي شيء عن '
       'استخدامك للتطبيق مع أي شركة أخرى. لا نجمع معرّف '
-      'الإعلانات ولا أي معرّف للجهاز.</p>',
+      'الإعلانات. المعرّف الوحيد الذي يستخدمه التطبيق هو معرّف التثبيت '
+      'العشوائي الموضّح أدناه في فقرة «منع تكرار الانضمام غير المرغوب '
+      'فيه».</p>',
     )
     ..writeln(
       '<h2>ما تكتبه، وإلى أين يذهب.</h2>',
     )
     ..writeln(
-      '<p>لتلعب، تنشئ غرفة أو تنضم إلى غرفة برمزها. يمكنك أن تكتب '
-      'اسمًا يظهر على مقعدك. يُرسَل هذا الاسم ورمز الغرفة إلى '
-      'خادمنا حتى يراهما باقي اللاعبين في غرفتك، ويظهران لكل من '
-      'في تلك الغرفة. اختر اسمًا لا تمانع أن يراه من دعوتهم. '
+      '<p>لتلعب، تنشئ غرفة، أو تنضم إلى غرفة برمزها، أو تطلب الجلوس مع '
+      'لاعبين آخرين ينتظرون. تكتب اسمًا يظهر على مقعدك. يُرسَل هذا '
+      'الاسم ورمز الغرفة إلى خادمنا حتى يراهما باقي اللاعبين في '
+      'غرفتك، ويظهران لكل من في تلك الغرفة. في الغرفة المفتوحة للجميع '
+      'قد يكون هؤلاء اللاعبون أشخاصًا لا تعرفهم، فاختر اسمًا لا تمانع '
+      'أن يراه الغرباء. '
       'الغرف مؤقتة: تُحذف الغرفة وكل ما فيها، بما في ذلك أي '
       'اسم، من الخادم عندما تنتهي الغرفة أو تنقضي مدتها.</p>',
     )

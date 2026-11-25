@@ -1380,5 +1380,94 @@
   "lobbyErrorCodeBanned": "Typed room codes are not working on this phone right now. A link a friend sends still works.",
   "@lobbyErrorCodeBanned": {
     "description": "Fallback error when the server answers CODE_BANNED without a readable ban object."
+  },
+  "homeJoinGameButton": "Join a game",
+  "@homeJoinGameButton": {
+    "description": "Home, the second of the two buttons. Opens the join sheet."
+  },
+  "homeNameRequired": "Enter your name first",
+  "@homeNameRequired": {
+    "description": "Red line under the name field when Create or Join is tapped with no name."
+  },
+  "createSheetTitle": "Who can join?",
+  "@createSheetTitle": {
+    "description": "Title of the sheet Create room opens."
+  },
+  "createOpenTile": "Anyone",
+  "@createOpenTile": {
+    "description": "Create sheet, tile that makes an open room."
+  },
+  "createOpenTileLabel": "Anyone can join",
+  "@createOpenTileLabel": {
+    "description": "Screen reader label of the Anyone tile."
+  },
+  "createFriendsTile": "Friends only",
+  "@createFriendsTile": {
+    "description": "Create sheet, tile that makes a friends-only room."
+  },
+  "createFriendsTileLabel": "Only friends with your link or code",
+  "@createFriendsTileLabel": {
+    "description": "Screen reader label of the Friends only tile."
+  },
+  "joinSheetTitle": "Join a game",
+  "@joinSheetTitle": {
+    "description": "Title of the sheet Join a game opens."
+  },
+  "joinCodeTile": "Friend's code",
+  "@joinCodeTile": {
+    "description": "Join sheet, tile that opens the code entry."
+  },
+  "joinRandomTile": "Random players",
+  "@joinRandomTile": {
+    "description": "Join sheet, tile that joins the waiting line."
+  },
+  "queueTitle": "Looking for players",
+  "@queueTitle": {
+    "description": "Title of the waiting window while the player is in the line."
+  },
+  "queueVsComputer": "Play the computer",
+  "@queueVsComputer": {
+    "description": "Waiting window, the control that leaves the line for a game against computer seats."
+  },
+  "queueCancel": "Cancel",
+  "@queueCancel": {
+    "description": "Waiting window, leaves the line."
+  },
+  "vsComputerTitle": "How many players?",
+  "@vsComputerTitle": {
+    "description": "Title above the two player-count tiles for a computer game."
+  },
+  "vsComputerTwoLabel": "2 players: you and one computer",
+  "@vsComputerTwoLabel": {
+    "description": "Screen reader label of the 2 tile."
+  },
+  "vsComputerFourLabel": "4 players: you and three computers",
+  "@vsComputerFourLabel": {
+    "description": "Screen reader label of the 4 tile."
+  },
+  "endFairGame": "Fair game",
+  "@endFairGame": {
+    "description": "End card, shown with a check mark once the app has recomputed every roll of the game."
+  },
+  "endFairGameChecking": "Checking the rolls",
+  "@endFairGameChecking": {
+    "description": "End card, while the app recomputes the rolls."
+  },
+  "endFairGameFailed": "The rolls did not check out",
+  "@endFairGameFailed": {
+    "description": "End card, red, when a recomputed roll differs from what the server sent."
+  },
+  "endFairGameUnavailable": "Could not check the rolls. Tap to try again.",
+  "@endFairGameUnavailable": {
+    "description": "End card, neutral, when the game's frames could not be fetched."
+  },
+  "queueAhead": "{count, plural, =1{1 player ahead of you} other{{count} players ahead of you}}",
+  "@queueAhead": {
+    "description": "Waiting window, how many tickets are ahead of the player in the line. Not shown at zero.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   }
 }

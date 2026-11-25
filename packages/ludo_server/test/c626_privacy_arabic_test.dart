@@ -14,7 +14,11 @@
 // The English wording below is copied from `privacy_page.dart` as it stood on
 // base 494c912. The Arabic wording is copied from decision D4. Neither is
 // imported from the source under test, so a rewording of either document
-// fails here.
+// fails here. Order 711 replaced three paragraphs in each language (the
+// intro, the advertising paragraph's last sentence, "What you type, and
+// where it goes."); those constants carry the order's text verbatim. The
+// English quotation marks around the section name are plain ASCII double
+// quotes, written raw as the page writes its apostrophes.
 //
 // Interpretations the contract leaves open are listed where they are made:
 //
@@ -73,9 +77,9 @@ const String _arUpdatedPrefix = 'آخر تحديث: ';
 const String _arUpdated =
     '$_arUpdatedPrefix<span dir="ltr">$privacyLastUpdated</span>';
 const String _arIntro =
-    'Ludo RNG لعبة تلعبها عبر الإنترنت مع أشخاص تدعوهم أنت. '
-    'توضّح هذه السياسة ما يتعامل معه التطبيق وخادمه من '
-    'بيانات، وما لا يتعامل معه.';
+    'Ludo RNG لعبة تلعبها عبر الإنترنت مع أشخاص تدعوهم أنت، أو مع '
+    'لاعبين آخرين يبحثون عن لعبة، أو ضد الكومبيوتر. توضّح هذه السياسة '
+    'ما يتعامل معه التطبيق وخادمه من بيانات، وما لا يتعامل معه.';
 const String _arH2Collect = 'لا نجمع معلومات شخصية.';
 const String _arPCollect = 'لا يوجد في Ludo RNG حساب، ولا تسجيل دخول، ولا بريد '
     'إلكتروني، ولا كلمة مرور، ولا ملف شخصي. لا تخبرنا من أنت، '
@@ -84,15 +88,17 @@ const String _arH2Ads = 'لا إعلانات، ولا تحليلات، ولا ت
 const String _arPAds =
     'لا يحتوي التطبيق على أي شبكة إعلانات، ولا مكتبة تحليلات، '
     'ولا أداة تقارير أعطال من طرف ثالث. لا نشارك أي شيء عن '
-    'استخدامك للتطبيق مع أي شركة أخرى. لا نجمع معرّف '
-    'الإعلانات ولا أي معرّف للجهاز.';
+    'استخدامك للتطبيق مع أي شركة أخرى. لا نجمع معرّف الإعلانات. '
+    'المعرّف الوحيد الذي يستخدمه التطبيق هو معرّف التثبيت العشوائي '
+    'الموضّح أدناه في فقرة «منع تكرار الانضمام غير المرغوب فيه».';
 const String _arH2Typed = 'ما تكتبه، وإلى أين يذهب.';
 const String _arPTyped =
-    'لتلعب، تنشئ غرفة أو تنضم إلى غرفة برمزها. يمكنك أن تكتب '
-    'اسمًا يظهر على مقعدك. يُرسَل هذا الاسم ورمز الغرفة إلى '
-    'خادمنا حتى يراهما باقي اللاعبين في غرفتك، ويظهران لكل من '
-    'في تلك الغرفة. اختر اسمًا لا تمانع أن يراه من دعوتهم. '
-    'الغرف مؤقتة: تُحذف الغرفة وكل ما فيها، بما في ذلك أي '
+    'لتلعب، تنشئ غرفة، أو تنضم إلى غرفة برمزها، أو تطلب الجلوس مع '
+    'لاعبين آخرين ينتظرون. تكتب اسمًا يظهر على مقعدك. يُرسَل هذا الاسم '
+    'ورمز الغرفة إلى خادمنا حتى يراهما باقي اللاعبين في غرفتك، '
+    'ويظهران لكل من في تلك الغرفة. في الغرفة المفتوحة للجميع قد يكون '
+    'هؤلاء اللاعبون أشخاصًا لا تعرفهم، فاختر اسمًا لا تمانع أن يراه '
+    'الغرباء. الغرف مؤقتة: تُحذف الغرفة وكل ما فيها، بما في ذلك أي '
     'اسم، من الخادم عندما تنتهي الغرفة أو تنقضي مدتها.';
 const String _arH2Logs = 'ما يسجّله الخادم تلقائيًا.';
 const String _arPLogs =
@@ -146,7 +152,8 @@ const String _arH2Contact = 'التواصل.';
 
 const String _enH1 = 'Privacy Policy - Ludo RNG';
 const String _enIntro =
-    'Ludo RNG is a game you play online with people you invite. '
+    'Ludo RNG is a game you play online with people you invite, with '
+    'other players who are looking for a game, or against the computer. '
     'This policy explains what the app and its server handle, and what '
     'they do not.';
 const String _enH2Collect = 'We do not collect personal information.';
@@ -159,17 +166,20 @@ const String _enPAds =
     'The app contains no advertising network, no analytics library '
     'and no third-party crash reporting. Nothing about your use of the '
     'app is shared with any other company. There is no advertising '
-    'identifier and no device identifier collected.';
+    'identifier. The only identifier the app uses is the random install '
+    'id described under "Stopping repeated unwanted joins" '
+    'below.';
 const String _enH2Typed = 'What you type, and where it goes.';
 const String _enPTyped =
-    'To play, you create a room or join one with a room code. You '
-    'may enter a display name for your seat. That name and the room '
-    'code are sent to our server so the other players in your room can '
-    'see them, and they are visible to everyone in that room. Choose a '
-    'display name you are comfortable showing to the people you '
-    'invited. Rooms are temporary: the room and everything in it, '
-    'including any display name, is deleted from the server when the '
-    'room ends or expires.';
+    'To play, you create a room, join one with a room code, or ask to '
+    'be seated with other players who are waiting. You enter a display '
+    'name for your seat. That name and the room code are sent to our '
+    'server so the other players in your room can see them, and they are '
+    'visible to everyone in that room. In a room open to anyone, those '
+    'players can be people you do not know, so choose a display name you '
+    'are comfortable showing to strangers. Rooms are temporary: the room '
+    'and everything in it, including any display name, is deleted from '
+    'the server when the room ends or expires.';
 const String _enH2Logs = 'What the server records automatically.';
 const String _enPLogs =
     'Like any server on the internet, ours records the technical '
@@ -1042,6 +1052,109 @@ void main() {
         'en',
         _expectedEnglish(escapedEmail: _hostileEmailEscaped),
         name,
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // (g) order 711: the Arabic page no longer says what v1.55.0 stopped
+  // being true, and its pointer to the install id section resolves.
+  // -------------------------------------------------------------------------
+  group('(g) order 711, the served Arabic page', () {
+    late WireServer server;
+    late int port;
+    late HttpClient client;
+    late _Res res;
+
+    setUpAll(() async {
+      server = _server();
+      await server.start(address: InternetAddress.loopbackIPv4, port: 0);
+      port = server.port;
+      client = HttpClient();
+    });
+
+    tearDownAll(() async {
+      client.close(force: true);
+      await server.close();
+    });
+
+    setUp(() async {
+      res = await _request(client, port, 'GET', '/privacy?lang=ar');
+      expect(res.status, 200, reason: res.describe());
+      expect(_langOf(res), 'ar', reason: res.describe());
+    });
+
+    test('(g1) ar: the old "no device identifier" sentence is gone', () {
+      const String name = '(g1) ar: no device identifier sentence';
+      const String old = 'ولا أي معرّف للجهاز';
+      expect(
+        res.body.contains(old),
+        isFalse,
+        reason: 'the page uses an install id, so it must not say "$old". '
+            '${_repro(name)}. ${res.describe()}',
+      );
+    });
+
+    test('(g2) ar: the page no longer limits the room to people invited', () {
+      const String name = '(g2) ar: no people-you-invited wording';
+      const String old = 'من دعوتهم';
+      expect(
+        res.body.contains(old),
+        isFalse,
+        reason: 'open rooms seat strangers, so the page must not say '
+            '"$old". ${_repro(name)}. ${res.describe()}',
+      );
+    });
+
+    test(
+        '(g3) ar: the advertising paragraph names the install id section '
+        'by the exact heading that section has', () {
+      const String name = '(g3) ar: install id section reference';
+      final String heading = _arH2Joins;
+      final String quoted = heading.substring(0, heading.length - 1);
+      expect(
+        heading.endsWith('.'),
+        isTrue,
+        reason: 'test fixture: the heading constant ends with a full stop. '
+            '${_repro(name)}',
+      );
+      expect(
+        res.body.contains('<h2>$heading</h2>'),
+        isTrue,
+        reason: 'expected the install id section heading <h2>$heading</h2>. '
+            '${_repro(name)}. ${res.describe()}',
+      );
+      final int headingAt = res.body.indexOf('<h2>$heading</h2>');
+      final int installIdAt = res.body.indexOf('معرّف تثبيت');
+      final int nextHeadingAt = res.body.indexOf('<h2>', headingAt + 1);
+      expect(
+        installIdAt > headingAt &&
+            (nextHeadingAt < 0 || installIdAt < nextHeadingAt),
+        isTrue,
+        reason: 'the install id paragraph ("معرّف تثبيت", at $installIdAt) '
+            'must sit under <h2>$heading</h2> (at $headingAt, next <h2> at '
+            '$nextHeadingAt). ${_repro(name)}. ${res.describe()}',
+      );
+      final RegExpMatch? ads = RegExp(
+        '<h2>${RegExp.escape(_arH2Ads)}</h2>\\s*<p>(.*?)</p>',
+        dotAll: true,
+      ).firstMatch(res.body);
+      expect(
+        ads,
+        isNotNull,
+        reason: 'no paragraph under <h2>$_arH2Ads</h2>. ${_repro(name)}. '
+            '${res.describe()}',
+      );
+      final List<String> named = RegExp('«([^»]*)»')
+          .allMatches(ads!.group(1)!)
+          .map((RegExpMatch m) => m.group(1)!)
+          .toList();
+      expect(
+        named,
+        <String>[quoted],
+        reason: 'the advertising paragraph must name the section exactly '
+            'once, as «$quoted» (its heading without the full stop); it '
+            'names $named. ${_repro(name)}. Paragraph: ${ads.group(1)}',
       );
     });
   });
