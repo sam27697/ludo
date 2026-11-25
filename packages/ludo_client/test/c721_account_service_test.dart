@@ -7,7 +7,6 @@
 // that reruns it. Nothing waits on a real clock: the ten second and config
 // timeouts run on the test binding's fake clock.
 
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
