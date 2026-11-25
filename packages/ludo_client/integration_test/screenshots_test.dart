@@ -178,6 +178,7 @@ import 'package:ludo_client/src/verify_rolls_button.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../test/net/fake_transport.dart';
+import '../test/support/c721_fakes.dart';
 import 'fixtures/real_games_fixture.dart' show realGamesJson;
 import 'support/home_flow.dart';
 
@@ -7394,6 +7395,213 @@ void main() {
       );
     });
   }
+
+  // ==========================================================================
+  // 198-201: order 721t (C-721t), the optional Google sign-in of
+  // docs/PROTOCOL.md section 36. 198 home with the sign-in control; 199 home
+  // signed in with the account chip and the Google name in the name row; 200
+  // the account sheet; 201 the delete confirm. English and Arabic each. The
+  // account service runs over fakes (test/support/c721_fakes.dart) through
+  // debugAccountServiceOverride; no network. Bodies live at the bottom.
+  // ==========================================================================
+  for (final String lang in <String>['en', 'ar']) {
+    final Locale locale = Locale(lang);
+
+    testWidgets('capture 198-home-sign-in-$lang', (tester) async {
+      await _shootC721(
+        tester,
+        binding,
+        shotName: '198-home-sign-in-$lang',
+        locale: locale,
+        shot: _C721Shot.signIn,
+      );
+    });
+
+    testWidgets('capture 199-home-signed-in-chip-$lang', (tester) async {
+      await _shootC721(
+        tester,
+        binding,
+        shotName: '199-home-signed-in-chip-$lang',
+        locale: locale,
+        shot: _C721Shot.chip,
+      );
+    });
+
+    testWidgets('capture 200-account-sheet-$lang', (tester) async {
+      await _shootC721(
+        tester,
+        binding,
+        shotName: '200-account-sheet-$lang',
+        locale: locale,
+        shot: _C721Shot.sheet,
+      );
+    });
+
+    testWidgets('capture 201-account-delete-confirm-$lang', (tester) async {
+      await _shootC721(
+        tester,
+        binding,
+        shotName: '201-account-delete-confirm-$lang',
+        locale: locale,
+        shot: _C721Shot.confirm,
+      );
+    });
+  }
+}
+
+enum _C721Shot { signIn, chip, sheet, confirm }
+
+/// 198-201: home with the sign-in control, signed in with the chip, the
+/// account sheet, the delete confirm. The device record and the saved name are
+/// seeded in SharedPreferences, the service is loaded over fakes, and each
+/// step is asserted before the shot so a missed tap cannot be photographed as
+/// a success.
+Future<void> _shootC721(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required _C721Shot shot,
+}) async {
+  final String repro = _x203Repro(shotName);
+  final bool signedIn = shot != _C721Shot.signIn;
+  final String googleName = locale.languageCode == 'ar'
+      ? '\u0644\u064a\u0644\u0649'
+      : 'Layla Google';
+  final String scenario =
+      'locale ${locale.languageCode}, ${signedIn ? 'signed in as $googleName' : 'sign-in on, signed out'}, step ${shot.name}';
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+  await prefs.clear();
+  if (signedIn) {
+    await prefs.setBool('account.signed_in', true);
+    await prefs.setString('account.name', googleName);
+    await prefs.setString('session.lastName', googleName);
+  }
+  await installId();
+  final C721Parts parts = C721Parts();
+  debugAccountServiceOverride = parts.service;
+  addTearDown(() => debugAccountServiceOverride = null);
+  await parts.service.load();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+  final _ShotFactory factory = _ShotFactory();
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+      locale: locale,
+    ),
+  );
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(HomeScreen)),
+  );
+  await _settleForScreenshot(
+    tester,
+    find.text(loc.homeCreateRoomButton),
+    'capture $shotName: the ${locale.languageCode} Create Room button label '
+    'laid out on the home screen',
+  );
+  const Key signInKey = Key('home-google-sign-in');
+  const Key chipKey = Key('home-account-chip');
+  const Key sheetKey = Key('account-sheet');
+  const Key deleteKey = Key('account-sheet-delete');
+  const Key confirmKey = Key('account-delete-confirm');
+  const Key cancelKey = Key('account-delete-cancel');
+  Future<void> tapKey(Key key, String what) async {
+    await _pumpUntilFound(tester, find.byKey(key), 'capture $shotName: $what');
+    await tester.ensureVisible(find.byKey(key));
+    await tester.pump();
+    await tester.tap(find.byKey(key));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+
+  _c712ExpectKeys(
+    tester,
+    <Key>[signedIn ? chipKey : signInKey, _c712Create, _c712Join],
+    shotName: shotName,
+    scenario: scenario,
+    repro: repro,
+  );
+  _c712ExpectNoKeys(
+    tester,
+    <Key>[signedIn ? signInKey : chipKey, sheetKey, confirmKey],
+    shotName: shotName,
+    scenario: scenario,
+    repro: repro,
+  );
+  if (signedIn) {
+    final String shown = _c712Editable(tester, _c712NameField).controller.text;
+    expect(
+      shown,
+      googleName,
+      reason:
+          'capture $shotName ($scenario): expected the name row to show the '
+          'Google name "$googleName", it shows "$shown". Reproduce: $repro',
+    );
+  }
+  _expectAtLeast48(
+    tester,
+    find.byKey(signedIn ? chipKey : signInKey),
+    'capture $shotName: ${signedIn ? 'home-account-chip' : 'home-google-sign-in'}',
+  );
+  if (shot == _C721Shot.sheet || shot == _C721Shot.confirm) {
+    await tapKey(chipKey, 'home-account-chip');
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sheetKey),
+      'capture $shotName: account-sheet after the chip tap',
+    );
+    _c712ExpectKeys(
+      tester,
+      const <Key>[Key('account-sheet-sign-out'), deleteKey],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+  }
+  if (shot == _C721Shot.confirm) {
+    await tapKey(deleteKey, 'account-sheet-delete');
+    await _pumpUntilFound(
+      tester,
+      find.byKey(confirmKey),
+      'capture $shotName: account-delete-confirm after the delete tap',
+    );
+    _c712ExpectKeys(
+      tester,
+      const <Key>[confirmKey, cancelKey],
+      shotName: shotName,
+      scenario: scenario,
+      repro: repro,
+    );
+    _expectAtLeast48(
+      tester,
+      find.byKey(confirmKey),
+      'capture $shotName: confirm',
+    );
+    _expectAtLeast48(
+      tester,
+      find.byKey(cancelKey),
+      'capture $shotName: cancel',
+    );
+    expect(
+      parts.http.to('/account/delete'),
+      isEmpty,
+      reason:
+          'capture $shotName ($scenario): nothing may be sent before the '
+          'confirm is tapped, saw ${parts.http.describe()}. Reproduce: $repro',
+    );
+  }
+  _c712ExpectNoLayoutError(
+    tester,
+    shotName: shotName,
+    scenario: scenario,
+    repro: repro,
+  );
+  await _capture(binding, tester, shotName);
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
