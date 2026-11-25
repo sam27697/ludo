@@ -14,16 +14,22 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
+import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/die_cube.dart' show kThrowTumble;
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/game_screen.dart';
+import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/net/frame.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
+import 'package:ludo_client/src/theme.dart' show buildAppTheme;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 import 'support/roll_tray_harness.dart';
 
 const String _file = 'test/c708_review_test.dart';
@@ -399,6 +405,237 @@ Future<void> _endAndRematch(_Table t, List<_Seat> rematchSeats) async {
     },
   });
   await t.pump(1500);
+}
+
+// =============================================================================
+// The resume rig: home with a stored seat, the Rejoin control, a game in play
+// =============================================================================
+
+const Key _rejoinKey = Key('home-rejoin-button');
+const Key _homeKnockNoticeKey = Key('home-knock-notice');
+const Key _banNoticeKey = Key('code-ban-notice');
+const String _code = 'K7M2QP';
+const String _install = 'Aa0_-Aa0_-Aa0_-Aa0_-Aa0_-Aa0_-Zz';
+const int _resumeSeat = 1;
+const String _resumeToken = 'tok-c717t-resume-1';
+
+Map<String, Object?> _ban() => <String, Object?>{
+  'scope': 'device',
+  'until_ms': DateTime(2028, 1, 15, 10, 42).millisecondsSinceEpoch,
+  'level': 1,
+  'next_ms': 7 * 24 * 60 * 60 * 1000,
+};
+
+List<String> _screenTexts() => <String>[
+  for (final Element e in find.byType(RichText).evaluate())
+    (e.widget as RichText).text.toPlainText(),
+];
+
+List<String> _textsUnder(Finder of) => <String>[
+  for (final Element e
+      in find
+          .descendant(of: of, matching: find.byType(RichText), matchRoot: true)
+          .evaluate())
+    (e.widget as RichText).text.toPlainText(),
+];
+
+class _Resume {
+  _Resume(this.tester, this.name, this.locale);
+
+  final WidgetTester tester;
+  final String name;
+  final Locale locale;
+  final List<FakeTransport> transports = <FakeTransport>[];
+  final List<String> pushed = <String>[];
+  int connects = 0;
+  int seq = 0;
+
+  FakeTransport get transport => transports.last;
+
+  AppLocalizations get loc => lookupAppLocalizations(locale);
+
+  List<List<String>> get sent => <List<String>>[
+    for (final FakeTransport t in transports) t.sentRaw.map(_typeOf).toList(),
+  ];
+
+  int sentCount(String type) => transports
+      .expand((FakeTransport t) => t.sentRaw)
+      .where((String r) => _typeOf(r) == type)
+      .length;
+
+  bool get onHome =>
+      find.byKey(joinGameButtonKey).evaluate().isNotEmpty &&
+      find.byType(GameScreen, skipOffstage: false).evaluate().isEmpty;
+
+  String why(String expected) =>
+      'C-717t "$name" [${locale.languageCode}]: expected $expected. Stored '
+      'seat: code $_code seat $_resumeSeat token $_resumeToken. Pushed in '
+      'order: ${pushed.join(' | ')}. Sent per socket: $sent. Connects: '
+      '$connects. On screen: ${_screenTexts()}. No seed; rerun: cd '
+      'packages/ludo_client && flock /tmp/ludo-suite.lock flutter test '
+      "$_file --plain-name '$name'";
+
+  Future<void> push(
+    String type,
+    Map<String, Object?> data, {
+    String? re,
+  }) async {
+    pushed.add('$type${jsonEncode(data)}${re == null ? '' : ' re'}');
+    transport.pushText(_wire(type, data, re: re));
+    await tester.pump();
+    await tester.pump();
+  }
+
+  Future<bool> waitFor(bool Function() cond, {int limitMs = 12000}) async {
+    int spent = 0;
+    while (!cond() && spent < limitMs) {
+      await tester.pump(const Duration(milliseconds: 250));
+      spent += 250;
+    }
+    return cond();
+  }
+
+  /// Home with a stored seat for [_code]; a tap on the Rejoin control, the
+  /// `resume` answered with a game in play, then my turn's neighbour's turn.
+  static Future<_Resume> intoGame(
+    WidgetTester tester,
+    String name,
+    Locale locale,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'install_id': _install,
+      'session.seat': <String>[_code, '$_resumeSeat', _resumeToken],
+    });
+    tester.view.physicalSize = const Size(400 * 2, 900 * 2);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    final _Resume r = _Resume(tester, name, locale);
+    final List<FakeTransport> queue = <FakeTransport>[
+      for (int i = 0; i < 3; i += 1) FakeTransport(),
+    ];
+    RoomController factory() => RoomController(
+      serverUrl: Uri.parse('wss://c717t-resume.invalid/ws'),
+      connect: (Uri url) async {
+        final FakeTransport t = queue[r.connects];
+        r.connects += 1;
+        r.transports.add(t);
+        return t as WireTransport;
+      },
+      autoReconnectDelays: const <Duration>[],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        locale: locale,
+        supportedLocales: appSupportedLocales,
+        localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: HomeScreen(
+          key: ValueKey<String>(name),
+          onToggleLocale: () {},
+          controllerFactory: factory,
+        ),
+      ),
+    );
+    for (int i = 0; i < 20 && find.byKey(_rejoinKey).evaluate().isEmpty; i++) {
+      await tester.runAsync(() => pumpEventQueue());
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(
+      find.byKey(_rejoinKey),
+      findsOneWidget,
+      reason: r.why('fixture: home-rejoin-button on home for the stored seat'),
+    );
+    await tester.ensureVisible(find.byKey(_rejoinKey));
+    await tester.pump();
+    r.pushed.add('<tap home-rejoin-button>');
+    await tester.tap(find.byKey(_rejoinKey));
+    await tester.pump();
+    for (int i = 0; i < 30 && r.sentCount('resume') == 0; i += 1) {
+      await tester.runAsync(() => pumpEventQueue());
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(
+      r.sentCount('resume'),
+      1,
+      reason: r.why('fixture: one resume sent at the Rejoin tap'),
+    );
+    expect(
+      r.sentCount('join_room'),
+      0,
+      reason: r.why('fixture: the resume route sends no join_room'),
+    );
+    final String resumeId = requestIdOf(
+      r.transport.sentRaw.lastWhere((String s) => _typeOf(s) == 'resume'),
+    );
+    r.seq = 5;
+    await r.push('room', <String, Object?>{
+      'code': _code,
+      'state': 'PLAYING',
+      'host_seat': 0,
+      'players': 2,
+      'open': false,
+      'rules': <String, Object?>{
+        'blocks': true,
+        'capture_bonus': true,
+        'turn_seconds': 45,
+        'ruleset': _ruleset,
+      },
+      'chain_commit': 'a' * 64,
+      'chain_index': 0,
+      'game_id': 'c717t00000000001',
+      'client_seeds': null,
+      'seats': <Map<String, Object?>>[
+        const _Seat(0, 'Sam', via: 'host').toJson(),
+        const _Seat(_resumeSeat, 'Lina', via: 'code').toJson(),
+      ],
+      'turn': <String, Object?>{
+        'seat': 0,
+        'phase': 'await_roll',
+        'deadline_ms': rollTrayDeadlineMs,
+        'k': 0,
+        'queue': const <int>[],
+      },
+      'winner': null,
+      'seq': r.seq,
+      'placings': const <int>[],
+      'retired': const <int>[],
+    }, re: resumeId);
+    expect(
+      await r.waitFor(
+        () => find.byType(GameScreen).evaluate().isNotEmpty,
+        limitMs: 3000,
+      ),
+      isTrue,
+      reason: r.why('fixture: the resume reply puts GameScreen up'),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    return r;
+  }
+
+  void expectHomeWithKickNotice(String when) {
+    expect(onHome, isTrue, reason: why('home after $when'));
+    final Finder notice = find.byKey(_homeKnockNoticeKey);
+    expect(
+      notice,
+      findsOneWidget,
+      reason: why('home-knock-notice on home after $when'),
+    );
+    expect(
+      _textsUnder(notice).join(' '),
+      contains(loc.knockWasKicked),
+      reason: why('the notice reads "${loc.knockWasKicked}" after $when'),
+    );
+  }
+
+  Future<void> finish() => tester.pump(const Duration(seconds: 12));
 }
 
 void main() {
@@ -784,5 +1021,46 @@ void main() {
         },
       );
     });
+  });
+
+  // ===========================================================================
+  // Row 5: kicked after a resume lands on home like the join path
+  // ===========================================================================
+  group('row 5: kicked after a resume', () {
+    for (final bool banned in <bool>[false, true]) {
+      final String how = banned ? 'kicked with a ban' : 'kicked';
+      _row('rejoined from home, then $how: home shows the knockWasKicked '
+          'notice${banned ? ' and the ban card' : ''}', (
+        tester,
+        locale,
+        name,
+      ) async {
+        final _Resume r = await _Resume.intoGame(tester, name, locale);
+        r.seq += 1;
+        await r.push('seat_retired', <String, Object?>{
+          'seat': _resumeSeat,
+          'reason': 'kicked',
+          'host_seat': 0,
+          'seq': r.seq,
+        });
+        await r.push(
+          'kicked',
+          banned ? <String, Object?>{'ban': _ban()} : <String, Object?>{},
+        );
+        await r.waitFor(() => r.onHome);
+        await tester.pump(const Duration(milliseconds: 600));
+        r.expectHomeWithKickNotice('$how after a resume');
+        expect(
+          find.byKey(_banNoticeKey),
+          banned ? findsOneWidget : findsNothing,
+          reason: r.why(
+            banned
+                ? 'exactly one code-ban-notice on home'
+                : 'no code-ban-notice when kicked carries no ban',
+          ),
+        );
+        await r.finish();
+      });
+    }
   });
 }
