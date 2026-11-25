@@ -13,6 +13,11 @@
 // LobbyScreen's connecting state shows a CircularProgressIndicator, so
 // these tests never call pumpAndSettle after a Create or Join tap. A
 // bounded 400ms pump covers MaterialPageRoute's default 300ms transition.
+//
+// Order 701: the code field and Join live in the join sheet's code entry
+// (opened with a name, X226), and Create is home's primary button whatever
+// the sheet holds, so the cases that once read an outlined Create now read
+// an elevated one, and Create goes through the create sheet's friends tile.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -25,6 +30,8 @@ import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/home_flow.dart';
 
 const Key _createKey = Key('create-room-button');
 const Key _joinKey = Key('join-room-button');
@@ -121,7 +128,9 @@ void _expectCreateElevatedJoinAbsent(WidgetTester tester) {
   );
 }
 
-void _expectJoinElevatedCreateOutlined(WidgetTester tester) {
+/// Order 701: Join in the code entry is elevated for a code; Create on home
+/// is no longer demoted by what the code entry holds.
+void _expectJoinElevatedCreateStaysElevated(WidgetTester tester) {
   expect(
     _keyedButton(tester, _joinKey),
     isA<ElevatedButton>(),
@@ -131,11 +140,17 @@ void _expectJoinElevatedCreateOutlined(WidgetTester tester) {
   );
   expect(
     _keyedButton(tester, _createKey),
-    isA<OutlinedButton>(),
+    isA<ElevatedButton>(),
     reason:
-        'create-room-button must be an OutlinedButton; found '
-        '${_keyedButton(tester, _createKey).runtimeType}',
+        'create-room-button stays an ElevatedButton on home (order 701); '
+        'found ${_keyedButton(tester, _createKey).runtimeType}',
   );
+}
+
+/// Order 701: a name, then the join sheet's code entry.
+Future<void> _openEntry(WidgetTester tester) async {
+  await enterName(tester, 'Player');
+  await openCodeEntry(tester);
 }
 
 void main() {
@@ -159,6 +174,7 @@ void main() {
   ) async {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
+    await _openEntry(tester);
 
     expect(find.byKey(_codeKey), findsOneWidget);
     expect(tester.widget<TextField>(find.byKey(_codeKey)).controller?.text, '');
@@ -166,12 +182,13 @@ void main() {
     _expectCreateElevatedJoinAbsent(tester);
   });
 
-  testWidgets('valid code AB23CD uses elevated Join and outlined Create', (
+  testWidgets('valid code AB23CD uses elevated Join; Create stays elevated', (
     tester,
   ) async {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
+    await _openEntry(tester);
     await tester.enterText(find.byKey(_codeKey), 'AB23CD');
     await tester.pump();
 
@@ -179,37 +196,40 @@ void main() {
       tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
       'AB23CD',
     );
-    _expectJoinElevatedCreateOutlined(tester);
+    _expectJoinElevatedCreateStaysElevated(tester);
   });
 
   testWidgets(
-    'valid dashed code ab2-3cd uses elevated Join and outlined Create',
+    'valid dashed code ab2-3cd uses elevated Join; Create stays elevated',
     (tester) async {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
+      await _openEntry(tester);
       await tester.enterText(find.byKey(_codeKey), 'ab2-3cd');
       await tester.pump();
 
-      _expectJoinElevatedCreateOutlined(tester);
+      _expectJoinElevatedCreateStaysElevated(tester);
     },
   );
 
-  testWidgets('short code ABC is a code: elevated Join and outlined Create', (
-    tester,
-  ) async {
-    await tester.pumpWidget(_homeScreenApp());
-    await tester.pumpAndSettle();
+  testWidgets(
+    'short code ABC is a code: elevated Join; Create stays elevated',
+    (tester) async {
+      await tester.pumpWidget(_homeScreenApp());
+      await tester.pumpAndSettle();
 
-    await tester.enterText(find.byKey(_codeKey), 'ABC');
-    await tester.pump();
+      await _openEntry(tester);
+      await tester.enterText(find.byKey(_codeKey), 'ABC');
+      await tester.pump();
 
-    expect(
-      tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
-      'ABC',
-    );
-    _expectJoinElevatedCreateOutlined(tester);
-  });
+      expect(
+        tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
+        'ABC',
+      );
+      _expectJoinElevatedCreateStaysElevated(tester);
+    },
+  );
 
   testWidgets('invalid code AB02#C uses elevated Create and outlined Join', (
     tester,
@@ -217,6 +237,7 @@ void main() {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
+    await _openEntry(tester);
     await tester.enterText(find.byKey(_codeKey), 'AB02#C');
     await tester.pump();
 
@@ -233,7 +254,10 @@ void main() {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
-    await _tapAndAwaitPushedRoute(tester, _createKey);
+    await enterName(tester, 'Player');
+    await tapCreateRoom(tester);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     final LobbyScreen pushed = _pushedLobbyScreen(tester);
     expect(
@@ -250,10 +274,15 @@ void main() {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
+    await _openEntry(tester);
     await tester.enterText(find.byKey(_codeKey), 'AB23CD');
     await tester.pump();
-
-    await _tapAndAwaitPushedRoute(tester, _createKey);
+    // Order 701: Create is on home under the join sheet; back out of the
+    // sheet with the code still typed, then create.
+    await backOutOfSheet(tester, joinSheetKey);
+    await tapCreateRoom(tester);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     final LobbyScreen pushed = _pushedLobbyScreen(tester);
     expect(
@@ -273,6 +302,7 @@ void main() {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
+    await _openEntry(tester);
     await tester.enterText(find.byKey(_codeKey), 'AB23CD');
     await tester.pump();
     // Join's entry is a 200 ms AnimatedSize at most (C-523 D3).

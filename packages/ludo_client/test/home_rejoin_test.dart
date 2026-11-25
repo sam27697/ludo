@@ -38,6 +38,7 @@ import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _rejoinKey = Key('home-rejoin-button');
 const Key _nameKey = Key('home-name-field');
@@ -337,7 +338,7 @@ Future<String> _tapRejoinAndCaptureResumeId(
 }
 
 /// Joins a room through the normal Join flow (W-5's own path): types [code]
-/// in room-code-field, taps Join, and answers with `seat_assigned` naming
+/// in room-code-field (in the join sheet since order 701), taps Join, and answers with `seat_assigned` naming
 /// [seat]/[token] followed by the `room` reply, landing on a connected
 /// LobbyScreen. Waits long enough for H1's unawaited SessionMemory.recordSeat
 /// write to finish before returning.
@@ -349,6 +350,9 @@ _joinSuccessfully(
   required int seat,
   required String token,
 }) async {
+  // Order 701: a name first (X226), then the code entry in the join sheet.
+  await enterName(tester, 'Player');
+  await openCodeEntry(tester);
   await tester.enterText(find.byKey(_codeKey), code);
   // Join enters with a full code (C-523 D3), through a 200 ms AnimatedSize at
   // most: let it reach its final rect before the tap.

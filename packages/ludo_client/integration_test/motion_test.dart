@@ -42,6 +42,7 @@ import 'package:ludo_client/src/server_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../test/net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://motion-test.invalid/ws';
 
@@ -200,6 +201,11 @@ class _MotionHarnessState extends State<_MotionHarness> {
 }
 
 Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
+  if (buttonKey == const Key('create-room-button')) {
+    // Order 701: a name, then the create sheet's friends-only tile.
+    await createViaSheet(tester);
+    return;
+  }
   await tester.tap(find.byKey(buttonKey));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -2256,7 +2262,7 @@ Future<void> _runJoinerSeat2(
   const String joinerName = 'Karim';
 
   await tester.enterText(find.byKey(const Key('home-name-field')), joinerName);
-  await tester.enterText(find.byKey(const Key('room-code-field')), _roomCode);
+  await enterCodeInEntry(tester, _roomCode);
   // Join is in the tree only once the field holds a full code (C-523 D3);
   // let its entry finish before the tap.
   await tester.pumpAndSettle();

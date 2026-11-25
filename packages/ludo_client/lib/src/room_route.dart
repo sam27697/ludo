@@ -26,6 +26,7 @@ class RoomRoute extends StatefulWidget {
     this.toggles = const RoomToggles(),
     this.resume,
     this.fromLink = false,
+    this.open = false,
   });
 
   final RoomController controller;
@@ -46,6 +47,9 @@ class RoomRoute extends StatefulWidget {
 
   /// Forwarded to [LobbyScreen] unchanged; see its own field for the meaning.
   final bool fromLink;
+
+  /// Forwarded to [LobbyScreen] unchanged; see its own field for the meaning.
+  final bool open;
 
   @override
   State<RoomRoute> createState() => _RoomRouteState();
@@ -143,6 +147,7 @@ class _RoomRouteState extends State<RoomRoute> {
       toggles: widget.toggles,
       resume: widget.resume,
       fromLink: widget.fromLink,
+      open: widget.open,
     );
   }
 }

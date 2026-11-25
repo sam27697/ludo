@@ -71,6 +71,8 @@ import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/deep_link.dart';
 import 'package:ludo_client/src/home_screen.dart';
 
+import 'support/home_flow.dart';
+
 // --- shared fixtures --------------------------------------------------
 
 /// An [InitialLinkReader] whose future is held open by a [Completer] until
@@ -146,14 +148,46 @@ TextField _codeField(WidgetTester tester) {
   return tester.widget<TextField>(find.byKey(const Key('room-code-field')));
 }
 
-String _codeFieldText(WidgetTester tester) =>
-    _codeField(tester).controller!.text;
-
 String? _codeFieldError(WidgetTester tester) =>
     _codeField(tester).decoration?.errorText;
 
+/// Order 701: home has no room code field, so a link-raised error can no
+/// longer be read off the field's decoration. Requirements 1 and 2 read the
+/// invalid-code line wherever it is painted instead.
+Finder _invalidCodeLine(WidgetTester tester) =>
+    find.text(_loc(tester).homeRoomCodeInvalid);
+
 AppLocalizations _loc(WidgetTester tester) =>
     AppLocalizations.of(tester.element(find.byType(HomeScreen)));
+
+/// Order 701: the room code field lives in the join sheet, so "a link fills
+/// no field" has to be read there. Nothing is open after the link (no sheet
+/// of its own), and the code entry opened afterwards is empty and carries no
+/// error line.
+Future<void> _expectLinkFilledNoField(WidgetTester tester, String what) async {
+  expect(
+    find.byKey(joinSheetKey, skipOffstage: false),
+    findsNothing,
+    reason: '$what: a link must not open the join sheet by itself',
+  );
+  await enterOldDefaultName(tester);
+  await openCodeEntry(tester);
+  expect(
+    _codeField(tester).controller!.text,
+    isEmpty,
+    reason: '$what: a link must leave the code entry empty',
+  );
+  expect(
+    _codeFieldError(tester),
+    isNull,
+    reason: '$what: a link must leave the code entry with no error line',
+  );
+  expect(
+    _invalidCodeLine(tester),
+    findsNothing,
+    reason: '$what: no invalid-code line may be painted in the code entry',
+  );
+}
 
 /// A well-formed https link on this app's own host, `/r/<code>`, built from
 /// a code that is already normalised.
@@ -242,17 +276,17 @@ void main() {
         await tester.pump();
 
         expect(
-          _codeFieldError(tester),
-          isNull,
+          _invalidCodeLine(tester),
+          findsNothing,
           reason:
               'a link that is not a room link at all (${testCase.description}, '
               'uri: ${testCase.uri}) must not put an error on a field the '
               'player has never touched; roomCodeFromUri returning null for '
               'this reason is not the same as a bad room code',
         );
-        expect(_codeFieldText(tester), isEmpty);
         expect(observer.pushCount, pushesBefore);
         expect(observer.popCount, popsBefore);
+        await _expectLinkFilledNoField(tester, testCase.description);
       });
     }
   });
@@ -275,8 +309,8 @@ void main() {
         await tester.pump();
 
         expect(
-          _codeFieldError(tester),
-          isNull,
+          _invalidCodeLine(tester),
+          findsNothing,
           reason:
               'a link arriving on the warm-start stream while the app is '
               'already running is subject to exactly the same rule as one '
@@ -284,9 +318,9 @@ void main() {
               '${testCase.description}, uri: ${testCase.uri} must not put '
               'an error on screen',
         );
-        expect(_codeFieldText(tester), isEmpty);
         expect(observer.pushCount, pushesBefore);
         expect(observer.popCount, popsBefore);
+        await _expectLinkFilledNoField(tester, testCase.description);
       });
     }
   });
@@ -318,8 +352,8 @@ void main() {
         await tester.pump();
 
         expect(
-          _codeFieldError(tester),
-          _loc(tester).homeRoomCodeInvalid,
+          _invalidCodeLine(tester),
+          findsOneWidget,
           reason:
               'a link on this app\'s own host, shaped as /r/<code>, whose '
               'code fails isValidRoomCode (${testCase.description}, uri: '
@@ -351,8 +385,8 @@ void main() {
         await tester.pump();
 
         expect(
-          _codeFieldError(tester),
-          _loc(tester).homeRoomCodeInvalid,
+          _invalidCodeLine(tester),
+          findsOneWidget,
           reason:
               'the warm-start path is subject to the same rule as the '
               'cold-start path (requirement 7); ${testCase.description}, '
@@ -366,34 +400,46 @@ void main() {
 
   // --- requirements 4 and 5: typing clears the error ----------------------
   //
-  // On main nothing listens to _codeController (home_screen.dart has no
-  // addListener call on it anywhere), so _errorText survives every
-  // keystroke; these are expected to fail on main with the error text
-  // still present where isNull is expected.
+  // Order 701: the code field lives in the join sheet and a link no longer
+  // writes into it, so the error these two requirements are about is the one
+  // the field itself raises when an invalid code is submitted from the code
+  // entry. A link's invalid-code line is painted on home outside the field
+  // (requirements 1 and 2 above read it there); the order does not say
+  // whether typing clears that line, so it is not asserted here.
+
+  /// A name, the join sheet's code entry, an invalid code submitted: the
+  /// field now carries `homeRoomCodeInvalid`.
+  Future<void> raiseSubmitError(
+    WidgetTester tester,
+    _NavigatorProbe observer,
+  ) async {
+    await tester.pumpWidget(_homeScreenApp(observer: observer));
+    await tester.pump();
+    await enterName(tester, 'Player');
+    await openCodeEntry(tester);
+    await tester.enterText(find.byKey(const Key('room-code-field')), 'AB#234');
+    await tester.pump();
+    // Join's entry is a 200 ms AnimatedSize at most (C-523 D3).
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const Key('join-room-button')));
+    await tester.pump();
+    expect(
+      _codeFieldError(tester),
+      _loc(tester).homeRoomCodeInvalid,
+      reason:
+          'fixture is broken: an invalid code submitted from the code entry '
+          '(AB#234, a symbol outside the alphabet) must have raised the '
+          'error before this test can prove typing clears it',
+    );
+  }
 
   group('requirement 4: typing in the code field clears the error, on the '
-      'first keystroke, warm-start path raised it', () {
+      'first keystroke', () {
     testWidgets(
-      'a single typed character clears an error raised by an invalid room '
-      'link',
+      'a single typed character clears an error raised by a submitted '
+      'invalid code',
       (tester) async {
-        final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
-        await tester.pumpWidget(
-          _homeScreenApp(linkStream: opener.call, observer: _NavigatorProbe()),
-        );
-        await tester.pump();
-
-        opener.add(_appLink('AB_234'));
-        await tester.pump();
-        await tester.pump();
-        expect(
-          _codeFieldError(tester),
-          isNotNull,
-          reason:
-              'fixture is broken: an invalid room link (uri carrying '
-              'AB_234, which contains a symbol outside the alphabet) must have '
-              'raised the error before this test can prove typing clears it',
-        );
+        await raiseSubmitError(tester, _NavigatorProbe());
 
         await tester.enterText(find.byKey(const Key('room-code-field')), 'A');
         await tester.pump();
@@ -404,49 +450,12 @@ void main() {
           reason:
               'typing a single character into the code field must clear '
               'the error on the very first rebuild after that keystroke, '
-              'without the player ever tapping Join Room; nothing in '
-              'home_screen.dart currently listens to the code controller '
-              '(the error is only ever cleared at home_screen.dart:114 on '
-              'a successful link and :176 on a successful submit)',
+              'without the player ever tapping Join again',
         );
-      },
-    );
-
-    testWidgets(
-      'a single typed character clears an error raised by an invalid room '
-      'link, cold-start path raised it (requirement 7 parity)',
-      (tester) async {
-        final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
-        await tester.pumpWidget(
-          _homeScreenApp(
-            initialLinkReader: reader.call,
-            observer: _NavigatorProbe(),
-          ),
-        );
-        await tester.pump();
-
-        reader.complete(_appLink('AB_234'));
-        await tester.pump();
-        await tester.pump();
         expect(
-          _codeFieldError(tester),
-          isNotNull,
-          reason:
-              'fixture is broken: an invalid room link on the cold-start '
-              'path must have raised the error before this test can prove '
-              'typing clears it',
-        );
-
-        await tester.enterText(find.byKey(const Key('room-code-field')), 'A');
-        await tester.pump();
-
-        expect(
-          _codeFieldError(tester),
-          isNull,
-          reason:
-              'the cold-start path must be held to exactly the same '
-              'typing-clears-the-error rule as the warm-start path '
-              '(requirement 7)',
+          _invalidCodeLine(tester),
+          findsNothing,
+          reason: 'no invalid-code line may stay painted after the keystroke',
         );
       },
     );
@@ -458,22 +467,7 @@ void main() {
       'replacing the field with a different but still-invalid code clears '
       'the error',
       (tester) async {
-        final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
-        await tester.pumpWidget(
-          _homeScreenApp(linkStream: opener.call, observer: _NavigatorProbe()),
-        );
-        await tester.pump();
-
-        opener.add(_appLink('AB_234'));
-        await tester.pump();
-        await tester.pump();
-        expect(
-          _codeFieldError(tester),
-          isNotNull,
-          reason:
-              'fixture is broken: an invalid room link must have raised '
-              'the error before this test can prove typing clears it',
-        );
+        await raiseSubmitError(tester, _NavigatorProbe());
 
         // Still six characters, still fails isValidRoomCode (# is outside
         // the alphabet); the point is that clearing is about the player having
@@ -508,6 +502,10 @@ void main() {
       final _NavigatorProbe observer = _NavigatorProbe();
       await tester.pumpWidget(_homeScreenApp(observer: observer));
       await tester.pump();
+      // Order 701: a name, then the join sheet's code entry; the sheet's own
+      // route is pushed before the count is taken.
+      await enterName(tester, 'Player');
+      await openCodeEntry(tester);
       final int pushesBefore = observer.pushCount;
 
       await tester.enterText(

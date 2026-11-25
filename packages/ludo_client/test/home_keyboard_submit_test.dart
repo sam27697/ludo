@@ -1,6 +1,9 @@
-// Widget tests for HomeScreen keyboard submit: the name and room-code
-// fields use TextInputAction.go, and sending that IME action submits the
-// same Create / Join paths as the on-screen buttons.
+// Widget tests for HomeScreen keyboard submit. Since order 701 the name
+// field's keyboard action no longer creates a room: with no room link
+// waiting for a name it opens nothing, and Create goes through the create
+// sheet. The room-code field, now in the join sheet's code entry, keeps
+// TextInputAction.go, and that IME action submits the same Join path as
+// the on-screen button.
 //
 // Create Room and Join Room build a RoomController from
 // widget.controllerFactory(). The default factory opens a real WebSocket,
@@ -24,6 +27,8 @@ import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/home_flow.dart';
 
 const Key _nameKey = Key('home-name-field');
 const Key _codeKey = Key('room-code-field');
@@ -102,16 +107,19 @@ void main() {
   });
 
   testWidgets(
-    'name field TextInputAction.go submits Create when Create is enabled',
+    'name field keyboard action opens nothing; Create through its sheet '
+    'pushes the create lobby with the typed name',
     (tester) async {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
+      // Order 701: home has no room-code-field, so nothing can make Join
+      // the primary action on home.
       expect(
-        tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
-        '',
+        find.byKey(_codeKey, skipOffstage: false),
+        findsNothing,
         reason:
-            'fixture is broken: an empty room-code-field is required so '
+            'fixture is broken: no room-code-field may be on home, so '
             'Create is the enabled primary action',
       );
       expect(
@@ -125,23 +133,43 @@ void main() {
         reason: 'Create must be enabled',
       );
 
-      expect(
-        _field(tester, _nameKey).textInputAction,
-        TextInputAction.go,
-        reason: 'home-name-field must use TextInputAction.go',
-      );
-
       await tester.enterText(find.byKey(_nameKey), 'Priya');
       await tester.pump();
-      await _submitImeGo(tester, _nameKey);
+      // The action the field declares, as the keyboard's action key sends
+      // it. Order 701 removed Go-creates from the name field.
+      final TextInputAction nameAction =
+          _field(tester, _nameKey).textInputAction ?? TextInputAction.done;
+      await tester.showKeyboard(find.byKey(_nameKey));
+      await tester.testTextInput.receiveAction(nameAction);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        <Object?>[
+          find.byType(LobbyScreen).evaluate().length,
+          find.byKey(createRoomSheetKey).evaluate().length,
+          find.byKey(joinSheetKey).evaluate().length,
+        ],
+        <Object?>[0, 0, 0],
+        reason:
+            'submitting home-name-field ($nameAction) with no room link '
+            'waiting must open nothing: expected [LobbyScreen, '
+            'create-room-sheet, join-sheet] all 0',
+      );
+      expect(
+        _field(tester, _nameKey).controller?.text,
+        'Priya',
+        reason: 'the name action must leave the typed name in the field',
+      );
+
+      await tapCreateRoom(tester);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       final LobbyScreen pushed = _pushedLobbyScreen(tester);
       expect(
         pushed.action,
         LobbyAction.create,
-        reason:
-            'submitting home-name-field with TextInputAction.go must '
-            'trigger Create when Create is enabled',
+        reason: 'Create, then the friends-only tile, must push a create lobby',
       );
       expect(pushed.code, isNull);
       expect(pushed.playerName, 'Priya');
@@ -154,6 +182,9 @@ void main() {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
+      // Order 701: a name (X226), then the code entry in the join sheet.
+      await enterName(tester, 'Player');
+      await openCodeEntry(tester);
       await tester.enterText(find.byKey(_codeKey), 'AB23CD');
       await tester.pump();
 

@@ -29,6 +29,7 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const Key _codeKey = Key('room-code-field');
 
@@ -261,17 +262,18 @@ void main() {
           rig,
           _u('https://ludo.provefair.app/r/$_linkId/'),
         );
-        final String text = tester
-            .widget<TextField>(find.byKey(_codeKey, skipOffstage: false))
-            .controller!
-            .text;
+        // Order 701: home has no code field, and a link opens no sheet.
         expect(
-          text,
-          isEmpty,
+          find.byKey(_codeKey, skipOffstage: false),
+          findsNothing,
           reason:
               'D7j+: a link id fills no code field, with or without the '
-              'trailing slash; field holds "$text"',
+              'trailing slash; a room-code-field is in the tree',
         );
+        // Order 701 (X226): a first-time player has no name; the link waits
+        // on home until one is submitted from the keyboard.
+        await submitName(tester, 'Player');
+        await tester.pump(const Duration(milliseconds: 400));
         expect(
           rig.controllers,
           hasLength(1),

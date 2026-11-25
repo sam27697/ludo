@@ -10,6 +10,13 @@
 // (an invalid one) lies fully inside the viewport. A link that is not a
 // room link at all must not move the scroll offset at all.
 //
+// Order 701 moved the room code field and Join into the join sheet, so a link
+// no longer fills a field or has a button to bring into view. What it still
+// owes the player is the same thing in the new shape: with no saved name the
+// link waits on home and the red line `home-name-required` (with the focused
+// name field above it) must lie fully in view, and an invalid link's error
+// line must too. A foreign link still moves nothing.
+//
 // Written against lib/src/home_screen.dart as it stands before order 194:
 // the body is one SingleChildScrollView with no controller and nothing
 // that ever calls animateTo/jumpTo on it. LS-COLD, LS-WARM, LS-BAD and
@@ -35,10 +42,12 @@ import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/deep_link.dart';
 import 'package:ludo_client/src/home_screen.dart';
 
+import 'support/home_flow.dart';
+
 // --- fixed test surface --------------------------------------------------
 //
 // The default widget-test surface (800x600 logical pixels) already shows
-// join-room-button in full: measured against this same HomeScreen tree,
+// join-game-button in full: measured against this same HomeScreen tree,
 // pumped with no link and settled, join-room-button's rect is
 // Rect.fromLTRB(224.0, 468.0, 576.0, 516.0), comfortably inside a viewport
 // 600 logical pixels tall (bottom 516 <= 600). A case run at that size
@@ -141,16 +150,6 @@ Widget _homeScreenApp({
   );
 }
 
-TextField _codeField(WidgetTester tester) {
-  return tester.widget<TextField>(find.byKey(const Key('room-code-field')));
-}
-
-String _codeFieldText(WidgetTester tester) =>
-    _codeField(tester).controller!.text;
-
-String? _codeFieldError(WidgetTester tester) =>
-    _codeField(tester).decoration?.errorText;
-
 // --- link fixtures ---------------------------------------------------------
 
 /// A well-formed link on this app's own host, shaped `/r/<code>`.
@@ -161,85 +160,48 @@ Uri _roomLink(String code) => Uri.parse('https://$kAppLinkHost/r/$code');
 /// link at all, as opposed to a room link with a bad code.
 Uri _foreignLink(String code) => Uri.parse('https://example.com/r/$code');
 
-// --- viewport geometry ------------------------------------------------------
-
 /// A link id (shape [0-9a-z]{4,10}-[0-9a-z]{6}) that names no code.
 const String _linkId = 't5k2q9a-x7m3pd';
 
-/// The code typed before the link arrives, so Join is in the tree.
-const String _typedCode = 'K7M2QP';
-
-/// A link id fills no field, and on a Home that is the current route it joins
-/// at once, so the scroll under test now belongs to a link that arrives
-/// while a route sits above Home. This types a full code (Join is in the
-/// tree), puts the scroll back at the top with no focus, pushes a probe
-/// route, runs [deliver] (the link), settles, and pops the probe.
-Future<void> _linkUnderRoute(
-  WidgetTester tester, {
-  required void Function() deliver,
-  required Future<void> Function() settle,
-  required void Function() fixtureCheck,
-}) async {
-  await tester.enterText(find.byKey(const Key('room-code-field')), _typedCode);
-  await tester.pump();
-  FocusManager.instance.primaryFocus?.unfocus();
-  await settle();
-  final BuildContext field = tester.element(
-    find.byKey(const Key('room-code-field')),
-  );
-  Scrollable.of(field).position.jumpTo(0);
-  await tester.pump();
-  fixtureCheck();
-
-  Navigator.of(tester.element(find.byType(HomeScreen))).push(
-    MaterialPageRoute<void>(
-      builder: (_) => const Scaffold(key: Key('above-home-probe')),
-    ),
-  );
-  await tester.pumpAndSettle();
-  deliver();
-  await settle();
-  Navigator.of(tester.element(find.byKey(const Key('above-home-probe')))).pop();
-  await tester.pumpAndSettle();
-}
+// --- viewport geometry ------------------------------------------------------
 
 bool _fullyInView(Rect rect, double viewHeight) =>
     rect.top >= 0 && rect.bottom <= viewHeight;
 
 /// The fixture check every case in this file runs before delivering its
-/// link. Join is in the tree only once a full code is in the field (C-523
-/// D3), so before the link it cannot be measured; it always sits below
-/// room-code-field, so the field itself not being fully in the viewport
-/// puts the button below the fold as well (measured at the surface below:
-/// the field at 464..516 of 420, Join at 524..572 once a code is typed).
-/// Without this, the case that follows measures nothing.
+/// link: join-game-button, the last thing on home, must sit below the fold
+/// at this surface, or the scroll under test has nothing to prove.
 void _expectButtonBelowFold(WidgetTester tester, String caseId) {
-  final Rect rect = tester.getRect(find.byKey(const Key('room-code-field')));
+  final Rect rect = tester.getRect(find.byKey(joinGameButtonKey));
   final double viewHeight = _viewHeight(tester);
   expect(
     _fullyInView(rect, viewHeight),
     isFalse,
     reason:
-        '$caseId fixture check: room-code-field (and so the join-room-button '
-        'under it) must not already be fully in view before any link is '
-        'delivered, or this case measures nothing; got rect $rect against a '
-        'viewport $viewHeight logical pixels tall. This file mounts at '
-        '$_kSurfaceSize (devicePixelRatio $_kSurfaceDevicePixelRatio) '
-        'specifically to keep the button below the fold -- if lib/ has '
-        'changed the default layout enough that this no longer holds, that '
-        'size needs to shrink further, not this check removed.',
+        '$caseId fixture check: join-game-button must not already be fully '
+        'in view before any link is delivered, or this case measures '
+        'nothing; got rect $rect against a viewport $viewHeight logical '
+        'pixels tall. This file mounts at $_kSurfaceSize (devicePixelRatio '
+        '$_kSurfaceDevicePixelRatio) to keep the buttons below the fold; if '
+        'lib/ has changed the default layout enough that this no longer '
+        'holds, the size needs to shrink further, not this check removed.',
   );
 }
 
-/// Asserts [key]'s widget lies fully inside the viewport once the home
-/// scroll view has (or, on this base, has not) reacted to a link.
+/// Asserts the widget at [finder] lies fully inside the viewport once the
+/// home scroll view has (or has not) reacted to a link.
 void _expectFullyInView(
   WidgetTester tester, {
-  required Key key,
+  required Finder finder,
   required String caseId,
   required String elementLabel,
 }) {
-  final Rect rect = tester.getRect(find.byKey(key));
+  expect(
+    finder,
+    findsOneWidget,
+    reason: '$caseId: expected $elementLabel on screen after the link',
+  );
+  final Rect rect = tester.getRect(finder);
   final double viewHeight = _viewHeight(tester);
   expect(
     _fullyInView(rect, viewHeight),
@@ -253,88 +215,82 @@ void _expectFullyInView(
 }
 
 /// The [ScrollPosition] of the home screen's own scroll view, found by
-/// walking up from room-code-field to its nearest ancestor [Scrollable].
-/// Looking this up from a widget known to sit directly in that scroll
-/// view's Column avoids the several other, unrelated Scrollables that live
-/// further down the tree (each TextField's own EditableText owns one, for
-/// its horizontal cursor scrolling).
+/// walking up from the name field to its nearest ancestor [Scrollable].
 ScrollPosition _homeScrollPosition(WidgetTester tester) {
-  final BuildContext context = tester.element(
-    find.byKey(const Key('room-code-field')),
-  );
+  final BuildContext context = tester.element(find.byKey(homeNameFieldKey));
   return Scrollable.of(context).position;
+}
+
+bool _nameFieldFocused(WidgetTester tester) {
+  final Finder editable = find.descendant(
+    of: find.byKey(homeNameFieldKey),
+    matching: find.byType(EditableText),
+  );
+  return tester.widget<EditableText>(editable).focusNode.hasFocus;
+}
+
+/// A valid link with no saved name: the link waits on home, the red line
+/// shows and the name field takes focus. Both must be in view.
+void _expectNameLineInView(WidgetTester tester, String caseId) {
+  _expectFullyInView(
+    tester,
+    finder: find.byKey(homeNameRequiredKey),
+    caseId: caseId,
+    elementLabel: 'home-name-required',
+  );
+  _expectFullyInView(
+    tester,
+    finder: find.byKey(homeNameFieldKey),
+    caseId: caseId,
+    elementLabel: 'home-name-field',
+  );
+  expect(
+    _nameFieldFocused(tester),
+    isTrue,
+    reason: '$caseId: the name field must take focus when a link waits',
+  );
 }
 
 void main() {
   testWidgets(
-    'LS-COLD: a valid cold-start link scrolls join-room-button into view',
+    'LS-COLD: a valid cold-start link with no name scrolls the name line '
+    'into view',
     (tester) async {
       _useFoldedSurface(tester);
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
 
       await tester.pumpWidget(_homeScreenApp(initialLinkReader: reader.call));
       await tester.pump();
+      _expectButtonBelowFold(tester, 'LS-COLD');
 
-      await _linkUnderRoute(
-        tester,
-        deliver: () => reader.complete(_roomLink(_linkId)),
-        settle: () => _settleAfterLink(tester),
-        fixtureCheck: () => _expectButtonBelowFold(tester, 'LS-COLD'),
-      );
+      reader.complete(_roomLink(_linkId));
+      await _settleAfterLink(tester);
 
-      expect(
-        _codeFieldText(tester),
-        _typedCode,
-        reason:
-            'LS-COLD fixture: a link id fills no field, so the typed code '
-            'must still be the field text before this case can measure '
-            'whether the link also scrolled',
-      );
-      _expectFullyInView(
-        tester,
-        key: const Key('join-room-button'),
-        caseId: 'LS-COLD',
-        elementLabel: 'join-room-button',
-      );
+      _expectNameLineInView(tester, 'LS-COLD');
     },
   );
 
   testWidgets(
-    'LS-WARM: a valid warm-start link scrolls join-room-button into view',
+    'LS-WARM: a valid warm-start link with no name scrolls the name line '
+    'into view',
     (tester) async {
       _useFoldedSurface(tester);
       final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
 
       await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
       await tester.pump();
+      _expectButtonBelowFold(tester, 'LS-WARM');
 
-      await _linkUnderRoute(
-        tester,
-        deliver: () => opener.add(_roomLink(_linkId)),
-        settle: () => _settleAfterLink(tester),
-        fixtureCheck: () => _expectButtonBelowFold(tester, 'LS-WARM'),
-      );
+      opener.add(_roomLink(_linkId));
+      await _settleAfterLink(tester);
 
-      expect(
-        _codeFieldText(tester),
-        _typedCode,
-        reason:
-            'LS-WARM fixture: a link id fills no field, so the typed code '
-            'must still be the field text before this case can measure '
-            'whether the link also scrolled',
-      );
-      _expectFullyInView(
-        tester,
-        key: const Key('join-room-button'),
-        caseId: 'LS-WARM',
-        elementLabel: 'join-room-button',
-      );
+      _expectNameLineInView(tester, 'LS-WARM');
     },
   );
 
   testWidgets(
-    'LS-BAD: a room link with an invalid code scrolls room-code-field into '
-    'view so the error under it can be read',
+    'LS-BAD: a room link with an invalid code scrolls its error line into '
+    'view so it can be read',
     (tester) async {
       _useFoldedSurface(tester);
       final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
@@ -354,26 +310,18 @@ void main() {
 
       final BuildContext context = tester.element(find.byType(HomeScreen));
       final AppLocalizations loc = AppLocalizations.of(context);
-      expect(
-        _codeFieldError(tester),
-        loc.homeRoomCodeInvalid,
-        reason:
-            'LS-BAD fixture: a room link whose code fails isValidRoomCode '
-            'must still show the invalid-code error before this case can '
-            'measure whether the field was also scrolled into view',
-      );
       _expectFullyInView(
         tester,
-        key: const Key('room-code-field'),
+        finder: find.text(loc.homeRoomCodeInvalid),
         caseId: 'LS-BAD',
-        elementLabel: 'room-code-field',
+        elementLabel: 'the invalid-code line "${loc.homeRoomCodeInvalid}"',
       );
     },
   );
 
   testWidgets(
     'LS-FOREIGN: a link outside this app\'s room-link space at all leaves '
-    'the home scroll offset unchanged',
+    'the home scroll offset unchanged and shows nothing',
     (tester) async {
       _useFoldedSurface(tester);
       final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
@@ -388,11 +336,11 @@ void main() {
       await _settleAfterLink(tester);
 
       expect(
-        _codeFieldText(tester),
-        isEmpty,
+        find.byKey(homeNameRequiredKey, skipOffstage: false),
+        findsNothing,
         reason:
             'LS-FOREIGN fixture: a link whose host is not kAppLinkHost is '
-            'not a room link at all and must never reach the code field',
+            'not a room link at all and must not wait for a name',
       );
       final double offsetAfter = _homeScrollPosition(tester).pixels;
       expect(
@@ -416,27 +364,11 @@ void main() {
       _homeScreenApp(linkStream: opener.call, locale: const Locale('ar')),
     );
     await tester.pump();
+    _expectButtonBelowFold(tester, 'LS-AR');
 
-    await _linkUnderRoute(
-      tester,
-      deliver: () => opener.add(_roomLink(_linkId)),
-      settle: () => _settleAfterLink(tester),
-      fixtureCheck: () => _expectButtonBelowFold(tester, 'LS-AR'),
-    );
+    opener.add(_roomLink(_linkId));
+    await _settleAfterLink(tester);
 
-    expect(
-      _codeFieldText(tester),
-      _typedCode,
-      reason:
-          'LS-AR fixture: a link id fills no field, so the typed code must '
-          'still be the field text in the Arabic locale before this case '
-          'can measure whether the link also scrolled',
-    );
-    _expectFullyInView(
-      tester,
-      key: const Key('join-room-button'),
-      caseId: 'LS-AR',
-      elementLabel: 'join-room-button',
-    );
+    _expectNameLineInView(tester, 'LS-AR');
   });
 }

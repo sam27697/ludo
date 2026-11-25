@@ -143,21 +143,29 @@ Future<void> _expectHomeScreenOn(
         'HomeScreen is on screen but its Create Room button is not '
         '($localeName)',
   );
+  // Order 701: home has exactly two buttons; the room code field and Join
+  // live in the join sheet behind `join-game-button`.
   expect(
-    find.byKey(const Key('room-code-field')),
+    find.byKey(const Key('join-game-button')),
     findsOneWidget,
     reason:
-        'HomeScreen is on screen but its room-code field is not '
+        'HomeScreen is on screen but its Join a game button is not '
         '($localeName)',
   );
-  // C-523 D3: Join enters with a full-length code, so a fresh launch with
-  // an empty field has none.
   expect(
-    find.byKey(const Key('join-room-button')),
+    find.byKey(const Key('room-code-field'), skipOffstage: false),
     findsNothing,
-    reason:
-        'HomeScreen shows Join Room with an empty room-code field '
-        '($localeName)',
+    reason: 'HomeScreen shows a room-code field of its own ($localeName)',
+  );
+  expect(
+    find.byKey(const Key('join-room-button'), skipOffstage: false),
+    findsNothing,
+    reason: 'HomeScreen shows Join Room on home itself ($localeName)',
+  );
+  expect(
+    find.byKey(const Key('home-join-divider'), skipOffstage: false),
+    findsNothing,
+    reason: 'HomeScreen shows the old join divider ($localeName)',
   );
   expect(
     find.byKey(const Key('home-players-button'), skipOffstage: false),

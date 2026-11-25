@@ -26,6 +26,7 @@ import 'package:ludo_client/src/net/transport.dart';
 import 'package:ludo_client/src/server_config.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://example.test/ws';
 const Key _newRoomKey = Key('game-screen-new-room-button');
@@ -215,8 +216,11 @@ Widget _homeScreenApp(RoomControllerFactory controllerFactory) {
   );
 }
 
-Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
-  await tester.tap(find.byKey(buttonKey));
+/// Order 701: a name first (X226); Create opens the sheet and the
+/// friends-only tile creates the room.
+Future<void> _createAndAwaitPushedRoute(WidgetTester tester) async {
+  await enterName(tester, 'Player');
+  await tapCreateRoom(tester);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
 }
@@ -277,7 +281,7 @@ Future<_RecordingControllerFactory> _reachFinishedGameFromHome(
   await tester.pumpWidget(_homeScreenApp(factory.call));
   await tester.pumpAndSettle();
 
-  await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+  await _createAndAwaitPushedRoute(tester);
 
   expect(
     factory.controllers,

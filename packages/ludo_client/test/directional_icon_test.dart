@@ -14,6 +14,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/src/app.dart';
 import 'package:ludo_client/src/home_screen.dart';
 
+import 'support/home_flow.dart';
+
 const Key _joinKey = Key('join-room-button');
 const Key _createKey = Key('create-room-button');
 
@@ -23,8 +25,11 @@ Future<void> _mountHome(WidgetTester tester, Locale locale) async {
 }
 
 /// Join is in the tree only with a full-length code (C-523 D3), so the cases
-/// that look inside it type one first.
+/// that look inside it type one first. Order 701: join-room-button is in the
+/// join sheet's code entry, which opens only with a name.
 Future<void> _typeCode(WidgetTester tester) async {
+  await enterOldDefaultName(tester);
+  await openCodeEntry(tester);
   await tester.enterText(find.byKey(const Key('room-code-field')), 'K7M2QP');
   await tester.pumpAndSettle();
 }

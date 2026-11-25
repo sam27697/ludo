@@ -28,6 +28,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
+import 'package:ludo_client/src/account.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
@@ -38,6 +39,7 @@ import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 const String _testUrl = 'wss://last-game-home-test.invalid/ws';
 
@@ -336,7 +338,13 @@ Future<_RecordingControllerFactory> _createPlayingFromHome(
   await tester.pumpWidget(_homeScreenApp(factory.call, clock: clock));
   await tester.pumpAndSettle();
 
-  await _tapAndAwaitPushedRoute(tester, _createKey);
+  // Order 701: a name (X226); Create opens the sheet and the friends-only
+  // tile creates the room.
+  await enterName(tester, 'Player');
+  await tester.ensureVisible(find.byKey(_createKey));
+  await tapCreateRoom(tester);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
   expect(
     factory.controllers,
     hasLength(1),
@@ -412,6 +420,9 @@ Future<_RecordingControllerFactory> _joinPlayingFromHome(
   await tester.pumpWidget(_homeScreenApp(factory.call, clock: clock));
   await tester.pumpAndSettle();
 
+  // Order 701: a name (X226), then the code entry in the join sheet.
+  await enterName(tester, 'Player');
+  await openCodeEntry(tester);
   await tester.enterText(find.byKey(_codeKey), code);
   await _tapAndAwaitPushedRoute(tester, _joinKey);
   expect(
@@ -531,6 +542,13 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    // Order 701: home shows the last-game card only to a player signed in
+    // with Google. Every case here is about that card, so every case signs
+    // in through the account test seam and signs out when it ends.
+    debugGoogleSignedInOverride = true;
+  });
+  tearDown(() {
+    debugGoogleSignedInOverride = null;
   });
 
   group('rule 2: written the moment a finished game is observed', () {

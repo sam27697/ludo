@@ -31,6 +31,7 @@ import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
 // --- shared fixtures --------------------------------------------------
 
@@ -179,15 +180,23 @@ Widget _homeScreenApp({
   );
 }
 
-TextField _codeField(WidgetTester tester) {
-  return tester.widget<TextField>(find.byKey(const Key('room-code-field')));
+// Order 701: home has no room code field (it lives in the join sheet), so a
+// link can fill none and its error can no longer be read off the field's
+// decoration. The cases below check that no code field is on home and read
+// the invalid-code line wherever it is painted.
+
+void _expectNoCodeFieldOnHome(WidgetTester tester, String why) {
+  expect(
+    find.byKey(const Key('room-code-field'), skipOffstage: false),
+    findsNothing,
+    reason: '$why: home has no room-code-field since order 701',
+  );
 }
 
-String _codeFieldText(WidgetTester tester) =>
-    _codeField(tester).controller!.text;
-
-String? _codeFieldError(WidgetTester tester) =>
-    _codeField(tester).decoration?.errorText;
+Finder _invalidCodeLine(WidgetTester tester) => find.text(
+  AppLocalizations.of(tester.element(find.byType(HomeScreen)))
+      .homeRoomCodeInvalid,
+);
 
 /// Runs [drive] with [FlutterError.onError] swapped for a collector, then
 /// puts the previous handler straight back before this function returns --
@@ -226,26 +235,23 @@ Future<List<FlutterErrorDetails>> _captureFlutterErrors(
 void _expectScreenUndisturbed(
   WidgetTester tester, {
   required _RecordingNavigatorObserver observer,
-  String expectedCodeText = '',
 }) {
   expect(
-    find.byKey(const Key('room-code-field')),
+    find.byKey(homeNameFieldKey),
     findsOneWidget,
     reason:
         'declaration E1 requirement 1: the screen must keep building; a '
         'reported link error must not replace it with an ErrorWidget or '
         'anything else',
   );
-  expect(
-    _codeFieldText(tester),
-    expectedCodeText,
-    reason:
-        'declaration E1 requirement 1: the code field must be untouched by '
-        'an error the app itself could not read',
+  _expectNoCodeFieldOnHome(
+    tester,
+    'declaration E1 requirement 1: no field is touched by an error the app '
+    'itself could not read',
   );
   expect(
-    _codeFieldError(tester),
-    isNull,
+    _invalidCodeLine(tester),
+    findsNothing,
     reason:
         'declaration E1 requirement 2: no error text may be shown to the '
         'player for a link failure that is not their fault and that they '
@@ -374,6 +380,10 @@ void main() {
         final int pushesBefore = observer.pushCount;
         opener.add(_validLink(_linkId));
         await _settleLinkJoin(tester);
+        // Order 701 (X226): no stored name, so the link waits on home until
+        // a name is submitted from the keyboard.
+        await submitName(tester, 'Player');
+        await _settleLinkJoin(tester);
 
         expect(
           observer.pushCount,
@@ -385,20 +395,7 @@ void main() {
               'route; pushes went from $pushesBefore to '
               '${observer.pushCount}',
         );
-        expect(
-          find.byKey(const Key('room-code-field'), skipOffstage: false),
-          findsOneWidget,
-        );
-        expect(
-          tester
-              .widget<TextField>(
-                find.byKey(const Key('room-code-field'), skipOffstage: false),
-              )
-              .controller!
-              .text,
-          isEmpty,
-          reason: 'a link id fills no code field',
-        );
+        _expectNoCodeFieldOnHome(tester, 'a link id fills no code field');
         await _unmountAndDrain(tester);
       },
     );
@@ -568,8 +565,8 @@ void main() {
         },
       );
 
-      expect(_codeFieldText(tester), isEmpty);
-      expect(_codeFieldError(tester), isNull);
+      _expectNoCodeFieldOnHome(tester, 'a null initial link');
+      expect(_invalidCodeLine(tester), findsNothing);
       expect(captured, isEmpty);
     });
 
@@ -587,19 +584,14 @@ void main() {
 
           reader.complete(_validLink(_linkId));
           await _settleLinkJoin(tester);
+          // Order 701 (X226): the link waits for a submitted name.
+          await submitName(tester, 'Player');
+          await _settleLinkJoin(tester);
         },
       );
 
       expect(observer.pushCount, 2, reason: 'one route for Home, one join');
-      expect(
-        tester
-            .widget<TextField>(
-              find.byKey(const Key('room-code-field'), skipOffstage: false),
-            )
-            .controller!
-            .text,
-        isEmpty,
-      );
+      _expectNoCodeFieldOnHome(tester, 'a valid initial link id');
       expect(captured, isEmpty);
       await _unmountAndDrain(tester);
     });
@@ -633,10 +625,11 @@ void main() {
           },
         );
 
-        expect(_codeFieldText(tester), isEmpty);
-        final BuildContext context = tester.element(find.byType(HomeScreen));
-        final AppLocalizations loc = AppLocalizations.of(context);
-        expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
+        _expectNoCodeFieldOnHome(
+          tester,
+          'an initial link with an invalid code',
+        );
+        expect(_invalidCodeLine(tester), findsOneWidget);
         expect(captured, isEmpty);
       },
     );
@@ -664,10 +657,10 @@ void main() {
           },
         );
 
-        expect(_codeFieldText(tester), isEmpty);
+        _expectNoCodeFieldOnHome(tester, 'an initial uri that is not a link');
         expect(
-          _codeFieldError(tester),
-          isNull,
+          _invalidCodeLine(tester),
+          findsNothing,
           reason:
               'a uri that is not a room link at all is not the player\'s '
               'mistake and must not set the invalid-code error',

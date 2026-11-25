@@ -36,8 +36,8 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
 
 import 'net/fake_transport.dart';
+import 'support/home_flow.dart';
 
-const Key _createButtonKey = Key('create-room-button');
 const Key _retryButtonKey = Key('lobby-retry-button');
 
 /// Hands out a fresh [RoomController] on every call, each wired to a
@@ -95,8 +95,12 @@ Widget _homeScreenApp({required RoomControllerFactory controllerFactory}) {
 /// LobbyScreen is on screen. A fixed pump of 400ms, comfortably past
 /// MaterialPageRoute's default 300ms transition, is enough to get
 /// LobbyScreen mounted and its initState's request sent.
-Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
-  await tester.tap(find.byKey(buttonKey));
+///
+/// Order 701: Create needs a name and opens a sheet; the friends-only tile
+/// creates the room. The name is the default the old home prefilled.
+Future<void> _createAndAwaitPushedRoute(WidgetTester tester) async {
+  await enterName(tester, 'Player');
+  await tapCreateRoom(tester);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
 }
@@ -169,7 +173,7 @@ void main() {
       await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
       await tester.pumpAndSettle();
 
-      await _tapAndAwaitPushedRoute(tester, _createButtonKey);
+      await _createAndAwaitPushedRoute(tester);
 
       expect(
         factory.transports,
@@ -219,7 +223,7 @@ void main() {
         reason: 'C-666 D1: there is no players control to pick a count on',
       );
 
-      await _tapAndAwaitPushedRoute(tester, _createButtonKey);
+      await _createAndAwaitPushedRoute(tester);
 
       expect(
         _pushedLobbyScreen(tester).players,
@@ -264,7 +268,7 @@ void main() {
       await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
       await tester.pumpAndSettle();
 
-      await _tapAndAwaitPushedRoute(tester, _createButtonKey);
+      await _createAndAwaitPushedRoute(tester);
 
       expect(
         factory.transports,

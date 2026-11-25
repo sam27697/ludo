@@ -7,10 +7,13 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'account.dart';
 import 'code_ban_notice.dart';
+import 'create_room_sheet.dart';
 import 'deep_link.dart';
 import 'die_mark.dart';
 import 'directional_icon.dart';
+import 'feedback.dart';
 import 'game_screen.dart' show GameScreenResult;
 import 'home_logo_panel.dart';
 import 'home_style.dart';
@@ -18,6 +21,8 @@ import 'lobby_screen.dart' show LobbyAction;
 import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'queue_sheet.dart';
+import 'join_sheet.dart';
 import 'room_code.dart';
 import 'room_route.dart';
 import 'server_config.dart';
@@ -27,14 +32,13 @@ import 'theme.dart';
 import 'verify_link.dart';
 import 'verify_rolls_button.dart';
 
-/// How long the home scroll view takes to bring a link's target back into
-/// view (order 194). Independent of the brand's own motion tokens in
-/// theme.dart: this is a short, corrective nudge triggered by an incoming
-/// link, not part of the screen's entrance.
-const Duration kLinkScrollDuration = Duration(milliseconds: 300);
+/// How long the name field shakes when Create or Join is tapped with no name
+/// (C-701), the same small shake every refused tap in the app gets.
+const Duration kNameShakeDuration = Duration(milliseconds: 260);
 
-/// Home screen: one branded composition — wordmark, tagline, die mark, and
-/// the create/join controls. Knowing the code is the only way into a room.
+/// Home screen: one branded composition (wordmark, tagline, die mark), the
+/// name, and two buttons: Create room opens the create sheet, Join a game
+/// opens the join sheet (C-701).
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
@@ -77,10 +81,27 @@ class HomeScreen extends StatefulWidget {
 enum _KnockNotice { notJoined, full, switchedOff, kicked }
 
 class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
+  // C-701: the room code lives in the join sheet now; home keeps the text and
+  // its error line so both survive the sheet closing and opening again.
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
-  String? _errorText;
+  final ValueNotifier<String?> _codeError = ValueNotifier<String?>(null);
+  // C-701 (X226): the name is required. [_nameRequired] shows the red line
+  // under the field until the field is edited; [_nameShake] is the refused
+  // tap's shake.
+  final FocusNode _nameFocusNode = FocusNode();
+  late final AnimationController _nameShake;
+  bool _nameRequired = false;
+  // C-701: a tapped room link that arrived with no name. Joined as soon as a
+  // name is submitted from the keyboard.
+  String? _linkWaitingForName;
+  // C-701: an incoming room link this app cannot read. Shown as a home notice,
+  // since the code field it used to mark is no longer on home.
+  bool _linkInvalidNotice = false;
+  // C-701: the waiting line or a computer game ended without a seat; the
+  // controller's error code, worded by [_lineErrorText].
+  String? _lineErrorCode;
   bool _removedNotice = false;
   // C-447 D4: shown in the same slot as [_removedNotice] after a resume the
   // server refused (the room was reaped or the seat taken back).
@@ -94,6 +115,15 @@ class _HomeScreenState extends State<HomeScreen>
   // Section 32 item 12: the ban a typed-code join, a rejected knock or a host
   // removal just told this phone about. Null when there is none to show.
   CodeBan? _codeBan;
+  // C-701: the ban a CODE_BANNED answer gave the code typed in the join
+  // sheet. Shown in the sheet, where the code was typed, while it is up.
+  final ValueNotifier<CodeBan?> _sheetCodeBan = ValueNotifier<CodeBan?>(null);
+  // C-701: true while the join sheet is up, so a typed-code ban lands in it.
+  bool _joinSheetUp = false;
+  // C-701: the join sheet's route while it is up. The sheet reads home's code
+  // controller and notifiers; if home goes first, the sheet is taken down and
+  // those are released only once it is gone.
+  Route<Object?>? _joinSheetRoute;
   // C-529 D4: the code a room link filled into the code field, kept only
   // while the field still holds exactly it. A Join tap on it is a link join.
   String? _linkFilledCode;
@@ -110,9 +140,11 @@ class _HomeScreenState extends State<HomeScreen>
   // moment the session-memory load completed).
   SessionMemory? _autoResumeWaiting;
   Timer? _autoResumeTimer;
-  String? _nameLocaleDefault;
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
+  // The name the field held at the last edit, so the red line clears on an
+  // edit and not on a focus change.
+  String _lastNameText = '';
   bool _enterMotionArmed = false;
   List<String> _recentCodes = const <String>[];
   RoomController? _ownedController;
@@ -168,17 +200,6 @@ class _HomeScreenState extends State<HomeScreen>
   // Order 296 rule 6: guards against pushing duplicate routes when Android
   // delivers the same link through both initial link reader and the stream.
   bool _linkJoinInFlight = false;
-  // Order 194: reach the join button's and the code field's render objects
-  // from _handleLink without disturbing the Key('join-room-button') /
-  // Key('room-code-field') values the rest of the suite finds those widgets
-  // by. Each wraps the widget that already carries that key in a
-  // KeyedSubtree, one layer up.
-  final GlobalKey _joinButtonScrollKey = GlobalKey();
-  final GlobalKey _codeFieldScrollKey = GlobalKey();
-  // C-398: focusing the code field brings join-room-button up with it,
-  // the same pair the room-link scroll already moves together.
-  final FocusNode _codeFocusNode = FocusNode();
-  double _codeFocusInset = -1;
   // Set as the first line of dispose(), before anything else runs.
   // _retireOwnedController's own setState guard reads this alongside
   // `mounted`, synchronously true from the top of dispose() rather than
@@ -190,7 +211,8 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _codeController.addListener(_clearErrorOnEdit);
-    _codeFocusNode.addListener(_onCodeFieldFocus);
+    _nameController.addListener(_onNameEdited);
+    _nameShake = AnimationController(vsync: this, duration: kNameShakeDuration);
     unawaited(_restoreSessionMemory());
     // Duration and reduced-motion short-circuit need Theme / MediaQuery, which
     // are not available until [didChangeDependencies].
@@ -226,8 +248,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   /// Reports a failure on either deep-link path through the framework's
   /// non-fatal channel. Neither path is allowed to show anything to the
-  /// player: a link that could not be read just leaves the code field for
-  /// the player to fill in by hand, which is the documented fallback.
+  /// player: a link that could not be read leaves home as it was, and the
+  /// player can still type the code in the join sheet.
   void _reportLinkError(Object error, StackTrace stackTrace, String context) {
     FlutterError.reportError(
       FlutterErrorDetails(
@@ -239,17 +261,17 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  /// Applies a room code found in an incoming link to the code field, and
-  /// joins or rejoins the room when Home is the current route (order 296,
-  /// C-394).
+  /// Joins or rejoins the room an incoming link names when Home is the
+  /// current route (order 296, C-394).
   ///
-  /// A stored seat for that same code resumes, whether or not a name is
-  /// stored. Otherwise a stored, non-empty name joins with that name.
+  /// A stored seat for that room resumes, whether or not a name is stored.
+  /// Otherwise a non-empty name joins with that name. With no name (C-701)
+  /// the link is kept, the name field takes focus with the name-required
+  /// line, and the join goes as soon as a name is submitted.
   ///
-  /// Navigation does not happen and the code is only pre-filled when the
-  /// player is first-time (no stored name and no matching seat, so Join
-  /// remains their tap), when another route (a lobby, a game) is currently
-  /// pushed above Home (rule B5), or when the code is invalid.
+  /// Nothing happens while another route (a lobby, a game, a sheet) is above
+  /// Home (rule B5). A link id that cannot be read shows the invalid-code
+  /// line as a home notice.
   void _handleLink(Uri uri) {
     if (!mounted) {
       return;
@@ -261,30 +283,19 @@ class _HomeScreenState extends State<HomeScreen>
       // the player to fill in by hand -- and nothing here touches it.
       return;
     }
-    final AppLocalizations loc = AppLocalizations.of(context);
     // Section 31: a room link carries a link id, never a code. A six-letter
     // code in /r/ is not one of ours and reads as an unreadable link.
     final String? linkId = roomLinkIdFromUri(uri);
     final bool codeIsValid = linkId != null;
     setState(() {
-      if (codeIsValid) {
-        _errorText = null;
-      } else {
-        _errorText = loc.homeRoomCodeInvalid;
-      }
+      _linkInvalidNotice = !codeIsValid;
     });
     if (!codeIsValid) {
-      // Rule 4: an invalid code never joins, clears any link pending on
-      // session memory (the latest link wins), and keeps the error scroll.
+      // Rule 4: an invalid code never joins and clears any link pending on
+      // session memory (the latest link wins).
       _pendingLinkUri = null;
       _linkHoldTimer?.cancel();
       _linkHoldTimer = null;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) {
-          return;
-        }
-        _scrollLinkTargetIntoView(codeIsValid: false);
-      });
       return;
     }
     if (!_sessionMemoryLoaded) {
@@ -324,21 +335,76 @@ class _HomeScreenState extends State<HomeScreen>
         );
         return;
       }
-      // A link id fills no field, so there is nothing for a first-time player
-      // to tap: the tapped link is the one tap, and the default name stands
-      // in for a name never typed.
-      unawaited(_joinFromLink(linkId));
-      return;
-    }
-    // Run 57: first-time player (rule 2) or home screen sitting underneath
-    // an existing route (rule 3) scrolls the target into view rather than
-    // navigating. A join already in flight takes this path too (rule 6).
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
+      // The tapped link is the one tap. C-701 (X226): with no name there is
+      // nothing to send, so the link waits for one.
+      if (_typedName.isEmpty) {
+        _waitForNameThenJoin(linkId);
         return;
       }
-      _scrollLinkTargetIntoView(codeIsValid: true);
+      unawaited(_joinFromLink(linkId));
+    }
+    // Home under another route (rule 3), or a join already in flight
+    // (rule 6): the link does not navigate.
+  }
+
+  /// C-701 (X226): a link arrived with no name. The field takes focus with
+  /// the name-required line; [_submitName] joins once a name is there.
+  void _waitForNameThenJoin(String linkId) {
+    setState(() {
+      _linkWaitingForName = linkId;
+      _nameRequired = true;
     });
+    _nameFocusNode.requestFocus();
+  }
+
+  /// The name field's keyboard action. A link waiting for a name joins now;
+  /// with no name it stays waiting and says so.
+  void _submitName() {
+    final String? linkId = _linkWaitingForName;
+    if (linkId == null) {
+      return;
+    }
+    if (_typedName.isEmpty) {
+      _refuseForName();
+      return;
+    }
+    setState(() {
+      _linkWaitingForName = null;
+    });
+    if (_linkJoinInFlight) {
+      return;
+    }
+    unawaited(_joinFromLink(linkId));
+  }
+
+  /// The trimmed name in the field; empty when none was typed. Never stands
+  /// in a default (C-701, X226).
+  String get _typedName => _nameController.text.trim();
+
+  /// C-701 (X226): Create or Join tapped with no name. Nothing opens; the
+  /// field takes focus, shakes once, and the red line shows until an edit.
+  void _refuseForName() {
+    FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+    setState(() {
+      _nameRequired = true;
+    });
+    _nameFocusNode.requestFocus();
+    if (!MediaQuery.disableAnimationsOf(context)) {
+      _nameShake.forward(from: 0);
+    }
+  }
+
+  void _onNameEdited() {
+    final String text = _nameController.text;
+    if (text == _lastNameText) {
+      return;
+    }
+    _lastNameText = text;
+    if (_nameRequired && mounted) {
+      setState(() {
+        _nameRequired = false;
+      });
+    }
   }
 
   /// Resolves any pending link held while session memory was loading
@@ -433,88 +499,22 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// Scrolls the join button (a valid code) or the code field (an invalid
-  /// one) fully into the home scroll view's viewport, aligned so the
-  /// target's bottom edge is visible. A no-op if the target's context is not
-  /// available, which should not happen for a mounted screen but is not
-  /// worth crashing over if it ever does.
-  void _scrollLinkTargetIntoView({required bool codeIsValid}) {
-    final BuildContext? targetContext = codeIsValid
-        ? _joinButtonScrollKey.currentContext
-        : _codeFieldScrollKey.currentContext;
-    if (targetContext == null) {
-      return;
-    }
-    final bool reducedMotion = MediaQuery.disableAnimationsOf(context);
-    Scrollable.ensureVisible(
-      targetContext,
-      alignment: 1.0,
-      duration: reducedMotion ? Duration.zero : kLinkScrollDuration,
-      curve: Curves.easeOut,
-    );
-  }
-
-  void _onCodeFieldFocus() {
-    if (!_codeFocusNode.hasFocus) {
-      return;
-    }
-    _scrollJoinIntoViewWithField();
-  }
-
-  /// Brings join-room-button fully into the viewport when the code field
-  /// has focus, including after the keyboard shrinks that viewport. Leaves
-  /// a button that is already visible where it is, so a tap in the field
-  /// on a roomy screen does not jump the scroll.
-  void _scrollJoinIntoViewWithField() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_codeFocusNode.hasFocus) {
-        return;
-      }
-      final BuildContext? targetContext = _joinButtonScrollKey.currentContext;
-      if (targetContext == null) {
-        return;
-      }
-      final bool reducedMotion = MediaQuery.disableAnimationsOf(context);
-      Scrollable.ensureVisible(
-        targetContext,
-        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-        duration: reducedMotion ? Duration.zero : kLinkScrollDuration,
-        curve: Curves.easeOut,
-      );
-    });
-  }
-
-  /// Rebuilds on every keystroke so Join's entry and the Create/Join emphasis can follow the
-  /// code field, and clears a standing error so a message raised by a bad
-  /// link or a failed Join tap does not sit under a code the player has
-  /// since corrected.
+  /// Clears a standing code error on every edit, so a message raised by a
+  /// failed Join tap does not sit under a code the player has since
+  /// corrected.
   void _clearErrorOnEdit() {
-    final bool joinWasShown = _joinShown;
     if (_linkFilledCode != null &&
         normalizeRoomCode(_codeController.text) != _linkFilledCode) {
       _linkFilledCode = null;
     }
-    setState(() {
-      _errorText = null;
-    });
-    // C-523 D3: Join enters when the sixth character does; with the keyboard
-    // up it has to come into view with it.
-    if (!joinWasShown && _joinShown) {
-      _scrollJoinIntoViewWithField();
-    }
+    _codeError.value = null;
   }
-
-  /// C-523 D3, section 32: Join is in the tree while the field holds any
-  /// code at all, one symbol to six (the field takes no more). A code with a
-  /// symbol outside the alphabet still shows it; the tap says why it will not
-  /// go.
-  bool get _joinShown => normalizeRoomCode(_codeController.text).isNotEmpty;
 
   /// Restores a stored name (from a create or a join), last successful-create
   /// seats, the last-table chip, recent join codes, a seat record held
   /// across a process kill (H3), and the last finished game's verify link
   /// (C-322 rule 3) from [SessionMemory]. An empty or unreadable store
-  /// leaves the localised name default, the four-seat disclosure, no recent
+  /// leaves the name field empty, the four-seat disclosure, no recent
   /// chips, no rejoin button and no home-last-game entry as they are. The
   /// load itself returns empty on failure, so nothing is caught here.
   /// Completing the load marks session memory as loaded, drains any
@@ -589,34 +589,12 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// Prefills the name field with the localised default on first paint, and
-  /// rewrites it when the locale changes if the field is still blank or still
-  /// holds the previous locale's default. A name the player typed is left
-  /// alone. LudoApp's locale toggle updates [Localizations], which is an
-  /// inherited widget, so this is the place that sees the new default.
-  /// A name restored from [SessionMemory] is treated as typed: it is not
-  /// replaced by the locale default.
+  /// C-701 (X226): the name field starts empty, its label the hint; no
+  /// default name is ever filled in or sent.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final String nextDefault = AppLocalizations.of(context)
-        .homeDefaultPlayerName;
-    final String current = _nameController.text;
-    if (current.isEmpty || current == _nameLocaleDefault) {
-      if (current != nextDefault) {
-        _nameController.text = nextDefault;
-      }
-    }
-    _nameLocaleDefault = nextDefault;
     _armEnterMotion();
-    final double inset = MediaQuery.viewInsetsOf(context).bottom;
-    if (inset != _codeFocusInset) {
-      final bool grew = inset > _codeFocusInset;
-      _codeFocusInset = inset;
-      if (grew && _codeFocusNode.hasFocus) {
-        _scrollJoinIntoViewWithField();
-      }
-    }
   }
 
   /// Wires [_enter] to [LudoBrand.motionLong] once, and jumps to completed
@@ -648,10 +626,22 @@ class _HomeScreenState extends State<HomeScreen>
     _autoResumeTimer = null;
     _autoResumeWaiting = null;
     _codeController.removeListener(_clearErrorOnEdit);
-    _codeFocusNode.removeListener(_onCodeFieldFocus);
-    _codeFocusNode.dispose();
-    _codeController.dispose();
+    _nameController.removeListener(_onNameEdited);
+    final Route<Object?>? sheet = _joinSheetRoute;
+    if (_joinSheetUp && sheet != null) {
+      // Released in [_onJoinTapped] once the sheet's future completes.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final NavigatorState? navigator = sheet.navigator;
+        if (sheet.isActive && navigator != null) {
+          navigator.removeRoute(sheet);
+        }
+      });
+    } else {
+      _releaseCodeEntry();
+    }
     _nameController.dispose();
+    _nameFocusNode.dispose();
+    _nameShake.dispose();
     _enter.dispose();
     _pendingLinkUri = null;
     final RoomController? owned = _ownedController;
@@ -1006,36 +996,48 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// The typed name, trimmed, falling back to the localised default rather
-  /// than ever sending the server an empty name.
-  String _resolvedName(AppLocalizations loc) {
-    final String typed = _nameController.text.trim();
-    return typed.isEmpty ? loc.homeDefaultPlayerName : typed;
-  }
-
   bool get _hasNotice =>
       _removedNotice ||
       _gameGoneNotice ||
       _roomClosedNotice != null ||
       _knockNotice != null ||
+      _linkInvalidNotice ||
+      _lineErrorCode != null ||
       _codeBan != null;
 
   bool get _hasPlainNotice =>
       _removedNotice ||
       _gameGoneNotice ||
       _roomClosedNotice != null ||
-      _knockNotice != null;
+      _knockNotice != null ||
+      _linkInvalidNotice ||
+      _lineErrorCode != null;
 
   /// D2 of C-449: the player closes the notice by hand. Every other event
   /// that hides it (create, join, rejoin) is handled where it starts.
   void _dismissNotice() {
-    setState(() {
-      _removedNotice = false;
-      _gameGoneNotice = false;
-      _roomClosedNotice = null;
-      _knockNotice = null;
-      _codeBan = null;
-    });
+    setState(_clearNotices);
+  }
+
+  /// Every home notice off. Called inside setState.
+  void _clearNotices() {
+    _removedNotice = false;
+    _gameGoneNotice = false;
+    _roomClosedNotice = null;
+    _knockNotice = null;
+    _linkInvalidNotice = false;
+    _lineErrorCode = null;
+    _codeBan = null;
+  }
+
+  /// C-701: the line the home notice carries when the waiting line or a
+  /// computer game ended without a seat, by the class of the failure.
+  String _lineErrorText(AppLocalizations loc, String code) {
+    return switch (code) {
+      'RATE_LIMITED' => loc.lobbyErrorRateLimited,
+      'transport' || 'closed' || 'timeout' => loc.lobbyErrorTransport,
+      _ => loc.lobbyErrorGeneric,
+    };
   }
 
   /// Shows the home notice a pushed route's [result] asks for, and no other.
@@ -1049,6 +1051,7 @@ class _HomeScreenState extends State<HomeScreen>
     switch (result) {
       case GameScreenResult.removed:
         setState(() {
+          _clearNotices();
           _removedNotice = true;
           _gameGoneNotice = false;
           _roomClosedNotice = null;
@@ -1056,6 +1059,7 @@ class _HomeScreenState extends State<HomeScreen>
         });
       case GameScreenResult.gameGone:
         setState(() {
+          _clearNotices();
           _removedNotice = false;
           _gameGoneNotice = true;
           _roomClosedNotice = null;
@@ -1064,8 +1068,7 @@ class _HomeScreenState extends State<HomeScreen>
       case GameScreenResult.roomClosedHost:
       case GameScreenResult.roomClosedGuest:
         setState(() {
-          _removedNotice = false;
-          _gameGoneNotice = false;
+          _clearNotices();
           _roomClosedNotice = result as GameScreenResult;
         });
       default:
@@ -1078,9 +1081,22 @@ class _HomeScreenState extends State<HomeScreen>
   /// removed it. The rejected and timed-out outcomes say the same thing, so a
   /// stranger learns nothing; a withdrawn knock was this player's own Cancel
   /// and says nothing. Sets nothing when neither happened.
-  void _noteKnockOutcome(RoomController controller) {
+  ///
+  /// Returns true when the outcome was a typed code refused with a ban and
+  /// [toSheet] is set: the ban then goes to the join sheet's notice, not to
+  /// home's, and home's notices are left as they are.
+  bool _noteKnockOutcome(RoomController controller, {bool toSheet = false}) {
     if (!mounted) {
-      return;
+      return false;
+    }
+    if (toSheet &&
+        !controller.wasKicked &&
+        controller.errorCode == 'CODE_BANNED') {
+      final CodeBan? sheetBan = controller.ban;
+      if (sheetBan != null) {
+        _sheetCodeBan.value = sheetBan;
+        return true;
+      }
     }
     final _KnockNotice? notice = controller.wasKicked
         ? _KnockNotice.kicked
@@ -1100,20 +1116,19 @@ class _HomeScreenState extends State<HomeScreen>
         ? controller.ban
         : null;
     if (notice == null && ban == null) {
-      return;
+      return false;
     }
     setState(() {
-      _removedNotice = false;
-      _gameGoneNotice = false;
-      _roomClosedNotice = null;
+      _clearNotices();
       _knockNotice = notice;
       _codeBan = ban;
     });
+    return false;
   }
 
   /// C-529 D4: a join that came back refused NO_SUCH_ROOM or ROOM_STARTED
-  /// leaves a code that can never work. Clearing it makes Create primary
-  /// again and drops any link-filled state with it. A1.2: only when the field
+  /// leaves a code that can never work. Clearing it means the join sheet
+  /// opens on an empty field next time, and drops any link-filled state. A1.2: only when the field
   /// still holds [joinedCode]; a code typed or filled by a link while the
   /// route was up stays, with its link state.
   void _clearDeadJoinCode(RoomController controller, String joinedCode) {
@@ -1134,30 +1149,172 @@ class _HomeScreenState extends State<HomeScreen>
       _linkFilledCode != null &&
       normalizeRoomCode(_codeController.text) == _linkFilledCode;
 
-  /// The one thing the primary button on screen does: Join when the code
-  /// field holds a full valid code, Create otherwise. The name field's Go
-  /// does this, so a friend arriving from a link who edits the name and
-  /// presses Go joins their friend's room (C-529 D1).
-  void _submitPrimary() {
-    if (isValidRoomCode(normalizeRoomCode(_codeController.text))) {
-      _joinRoom(fromLink: _codeIsFromLink);
-    } else {
-      _createRoom();
+  /// C-701: Create room. With a name, opens the create sheet; a tile there
+  /// creates the room at once. With no name, nothing opens.
+  Future<void> _onCreateTapped() async {
+    if (_typedName.isEmpty) {
+      _refuseForName();
+      return;
+    }
+    final bool? open = await showCreateRoomSheet(context);
+    if (!mounted || open == null) {
+      return;
+    }
+    await _createRoom(open: open);
+  }
+
+  /// C-701: Join a game. With a name, opens the join sheet: the code tile
+  /// leads to the typed-code join, the random tile to the waiting line.
+  Future<void> _onJoinTapped() async {
+    if (_typedName.isEmpty) {
+      _refuseForName();
+      return;
+    }
+    _sheetCodeBan.value = null;
+    _joinSheetUp = true;
+    final JoinChoice? choice;
+    try {
+      choice = await showJoinSheet(
+        context,
+        codeController: _codeController,
+        errorText: _codeError,
+        codeBan: _sheetCodeBan,
+        checkCode: _checkCode,
+        onJoinCode: _joinFromSheet,
+        onDismissBan: () => _sheetCodeBan.value = null,
+        onRoute: (Route<Object?> route) => _joinSheetRoute = route,
+      );
+    } finally {
+      _joinSheetUp = false;
+      _joinSheetRoute = null;
+      if (_screenDisposed) {
+        _releaseCodeEntry();
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    _sheetCodeBan.value = null;
+    switch (choice) {
+      case JoinChoice.random:
+        await _findGame();
+      case JoinChoice.code:
+      case null:
+        // The typed-code join already ran from the sheet.
+        break;
     }
   }
 
-  Future<void> _createRoom() async {
-    if (_hasNotice) {
-      setState(() {
-        _removedNotice = false;
-        _gameGoneNotice = false;
-        _roomClosedNotice = null;
-        _knockNotice = null;
-        _codeBan = null;
-      });
+  /// The code entry's controller and notifiers, which the join sheet reads.
+  void _releaseCodeEntry() {
+    _codeController.dispose();
+    _codeError.dispose();
+    _sheetCodeBan.dispose();
+  }
+
+  /// The join sheet's Join on a code [_checkCode] accepted. The join runs
+  /// with the sheet still up under the room's route; the returned future
+  /// completes as soon as that route has come back, true when the server
+  /// refused the code with a ban that the sheet now shows (the sheet stays),
+  /// false when the sheet should close. The rest of the join (retiring the
+  /// controller, a new table) goes on after it. An accepted join has taken
+  /// the sheet away before then ([_dropJoinSheetUnder]).
+  Future<bool> _joinFromSheet() {
+    final Completer<bool> returned = Completer<bool>();
+    void answer(bool stay) {
+      if (!returned.isCompleted) {
+        returned.complete(stay);
+      }
     }
-    final AppLocalizations loc = AppLocalizations.of(context);
-    final String name = _resolvedName(loc);
+
+    _sheetCodeBan.value = null;
+    unawaited(
+      _joinRoom(
+        fromLink: _codeIsFromLink,
+        onRouteReturned: answer,
+      ).whenComplete(() => answer(false)),
+    );
+    return returned.future;
+  }
+
+  /// C-714: takes the join sheet out from under [roomRoute] once the join it
+  /// started is accepted (the controller holds a room on a live connection)
+  /// and [roomRoute] has finished coming in, so it covers the sheet. Removed
+  /// with no motion, since nobody can see it; coming back from the room then
+  /// shows home at once. Until both hold, the sheet stays: a ban comes back
+  /// to it, and any other refusal closes it with its usual motion once the
+  /// route has returned. Does nothing when the sheet is not up.
+  void _dropJoinSheetUnder(
+    ModalRoute<Object?> roomRoute,
+    RoomController controller,
+  ) {
+    final Route<Object?>? sheet = _joinSheetRoute;
+    final Animation<double>? coming = roomRoute.animation;
+    if (!_joinSheetUp || sheet == null || coming == null) {
+      return;
+    }
+    bool watching = true;
+    late final VoidCallback check;
+    void onStatus(AnimationStatus status) => check();
+    void stop() {
+      if (!watching) {
+        return;
+      }
+      watching = false;
+      coming.removeStatusListener(onStatus);
+      controller.removeListener(check);
+    }
+
+    check = () {
+      if (!watching) {
+        return;
+      }
+      if (!mounted ||
+          !roomRoute.isActive ||
+          !sheet.isActive ||
+          !identical(_joinSheetRoute, sheet)) {
+        stop();
+        return;
+      }
+      // Finished coming in and not yet leaving: the opaque room route, or
+      // a screen it pushed, is drawn over the sheet.
+      final bool covered = coming.status == AnimationStatus.completed;
+      final bool accepted =
+          controller.phase == RoomPhase.connected && controller.room != null;
+      if (!covered || !accepted) {
+        return;
+      }
+      stop();
+      sheet.navigator?.removeRoute(sheet, JoinChoice.code);
+    };
+    coming.addStatusListener(onStatus);
+    controller.addListener(check);
+    unawaited(roomRoute.popped.whenComplete(stop));
+    check();
+  }
+
+  /// The join sheet's Join: false, with the invalid-code line, for a code that
+  /// cannot be sent; true when the typed-code join may go.
+  bool _checkCode() {
+    if (isValidRoomCode(normalizeRoomCode(_codeController.text))) {
+      _codeError.value = null;
+      return true;
+    }
+    _codeError.value = AppLocalizations.of(context).homeRoomCodeInvalid;
+    return false;
+  }
+
+  /// [open] is section 33 item 1's flag: true lets the server seat strangers
+  /// from the waiting line. Every other step is the create flow as it was.
+  Future<void> _createRoom({required bool open}) async {
+    final String name = _typedName;
+    if (name.isEmpty) {
+      _refuseForName();
+      return;
+    }
+    if (_hasNotice) {
+      setState(_clearNotices);
+    }
     // C-666 D1: every table seats four; the host starts once a friend sits.
     const int players = 4;
     // C-523 D1: every room is created with the fixed rules.
@@ -1193,6 +1350,7 @@ class _HomeScreenState extends State<HomeScreen>
             playerName: name,
             players: players,
             toggles: toggles,
+            open: open,
           ),
         ),
       );
@@ -1220,7 +1378,7 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
     if (result == GameScreenResult.newTable) {
-      await _createRoom();
+      await _createRoom(open: open);
     }
   }
 
@@ -1228,32 +1386,37 @@ class _HomeScreenState extends State<HomeScreen>
   /// the player has not changed: the lobby then words a vanished room in the
   /// link's terms (C-447 D4b, C-529 D4). A join from a typed code leaves it
   /// false.
-  Future<void> _joinRoom({bool fromLink = false}) async {
+  ///
+  /// [onRouteReturned] hears, once, as soon as the join's route has come
+  /// back (or the join ended before pushing one): true when a ban for this
+  /// code was handed to the join sheet.
+  Future<void> _joinRoom({
+    bool fromLink = false,
+    void Function(bool bannedInSheet)? onRouteReturned,
+  }) async {
     final AppLocalizations loc = AppLocalizations.of(context);
     final String normalized = normalizeRoomCode(_codeController.text);
     if (!isValidRoomCode(normalized)) {
-      setState(() {
-        _errorText = loc.homeRoomCodeInvalid;
-      });
+      _codeError.value = loc.homeRoomCodeInvalid;
+      onRouteReturned?.call(false);
       return;
     }
-    setState(() {
-      _errorText = null;
-      _removedNotice = false;
-      _gameGoneNotice = false;
-      _roomClosedNotice = null;
-      _knockNotice = null;
-      _codeBan = null;
-    });
+    _codeError.value = null;
+    setState(_clearNotices);
     // C-669 R2: a code this phone holds a seat for is a seat to take back, not
     // a room to join: join_room would be refused ROOM_STARTED while the game
     // runs. A stale record is safe, a refused resume clears it and says so.
     final SeatRecord? held = _seatRecordFor(normalized);
     if (held != null) {
-      await _rejoinRoom(held);
+      await _rejoinRoom(held, onRouteReturned: onRouteReturned);
       return;
     }
-    final String name = _resolvedName(loc);
+    final String name = _typedName;
+    if (name.isEmpty) {
+      onRouteReturned?.call(false);
+      _refuseForName();
+      return;
+    }
     final RoomController controller = widget.controllerFactory();
     _watchOwnedController(controller);
     // LobbyScreen/RoomRoute must not take a store dependency. Listen here
@@ -1281,28 +1444,34 @@ class _HomeScreenState extends State<HomeScreen>
 
     controller.addListener(persistSuccessfulJoin);
     persistSuccessfulJoin();
+    final MaterialPageRoute<Object?> roomRoute = MaterialPageRoute<Object?>(
+      builder: (context) => RoomRoute(
+        controller: controller,
+        action: LobbyAction.join,
+        code: normalized,
+        playerName: name,
+        fromLink: fromLink,
+      ),
+    );
     final Object? result;
     try {
-      result = await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => RoomRoute(
-            controller: controller,
-            action: LobbyAction.join,
-            code: normalized,
-            playerName: name,
-            fromLink: fromLink,
-          ),
-        ),
-      );
+      final Future<Object?> returned = Navigator.of(context)
+          .push<Object?>(roomRoute);
+      _dropJoinSheetUnder(roomRoute, controller);
+      result = await returned;
     } finally {
       controller.removeListener(persistSuccessfulJoin);
     }
     // C-316 rule 3: set the notice before the retire below; see the
     // matching comment in _createRoom.
     _showNoticeFor(result);
-    _noteKnockOutcome(controller);
+    final bool bannedInSheet = _noteKnockOutcome(
+      controller,
+      toSheet: _joinSheetUp,
+    );
     // C-529 D4: read before the retire below, which ends the controller.
     _clearDeadJoinCode(controller, normalized);
+    onRouteReturned?.call(bannedInSheet);
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
@@ -1312,7 +1481,8 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
     if (result == GameScreenResult.newTable) {
-      await _createRoom();
+      // A new table for the same friends: friends only, as before C-701.
+      await _createRoom(open: false);
     }
   }
 
@@ -1320,16 +1490,15 @@ class _HomeScreenState extends State<HomeScreen>
   /// route and the same bookkeeping as [_joinRoom], with no code to check or
   /// remember until the server has answered with the room.
   Future<void> _joinByLink(String linkId) async {
-    final AppLocalizations loc = AppLocalizations.of(context);
+    final String name = _typedName;
+    if (name.isEmpty) {
+      _waitForNameThenJoin(linkId);
+      return;
+    }
     setState(() {
-      _errorText = null;
-      _removedNotice = false;
-      _gameGoneNotice = false;
-      _roomClosedNotice = null;
-      _knockNotice = null;
-      _codeBan = null;
+      _clearNotices();
+      _linkWaitingForName = null;
     });
-    final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
     _watchOwnedController(controller);
     bool recordedJoin = false;
@@ -1381,7 +1550,67 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
     if (result == GameScreenResult.newTable) {
-      await _createRoom();
+      // A new table for the same friends: friends only, as before C-701.
+      await _createRoom(open: false);
+    }
+  }
+
+  /// C-701: Random players. Joins the server's waiting line and holds the
+  /// waiting window up until the server seats this phone (then the lobby, as
+  /// after a join), the player leaves the line, or the line fails (then the
+  /// home notice for that class of failure). A computer game started from the
+  /// window lands the same way as a seat from the line.
+  Future<void> _findGame() async {
+    final String name = _typedName;
+    if (name.isEmpty) {
+      _refuseForName();
+      return;
+    }
+    if (_hasNotice) {
+      setState(_clearNotices);
+    }
+    final RoomController controller = widget.controllerFactory();
+    _watchOwnedController(controller);
+    unawaited(controller.findGame(name: name));
+    final QueueOutcome? outcome = await showQueueSheet(
+      context,
+      controller: controller,
+      playerName: name,
+    );
+    if (!mounted) {
+      await _retireOwnedController(controller);
+      return;
+    }
+    if (outcome != QueueOutcome.seated || controller.room == null) {
+      final String? code = controller.errorCode;
+      if (outcome == QueueOutcome.failed) {
+        setState(() {
+          _clearNotices();
+          _lineErrorCode = code ?? 'closed';
+        });
+      }
+      await _retireOwnedController(controller);
+      return;
+    }
+    final RoomSnapshot room = controller.room!;
+    unawaited(SessionMemory.recordName(name));
+    final Object? result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => RoomRoute(
+          controller: controller,
+          action: controller.isHost ? LobbyAction.create : LobbyAction.join,
+          code: room.code,
+          playerName: name,
+        ),
+      ),
+    );
+    _showNoticeFor(result);
+    await _retireOwnedController(controller, result: result);
+    if (!mounted) {
+      return;
+    }
+    if (result == GameScreenResult.newTable) {
+      await _createRoom(open: false);
     }
   }
 
@@ -1410,31 +1639,37 @@ class _HomeScreenState extends State<HomeScreen>
   /// players a create or join would otherwise carry. H1, on the controller
   /// this watches, is what records the seat again once the resume lands;
   /// nothing here writes [SessionMemory] directly.
-  Future<void> _rejoinRoom(SeatRecord record) async {
+  ///
+  /// [onRouteReturned] is the join sheet's, for a held seat taken back by its
+  /// typed code: it hears, once, that the route has come back. A resume
+  /// never leaves a ban for the sheet to show.
+  Future<void> _rejoinRoom(
+    SeatRecord record, {
+    void Function(bool bannedInSheet)? onRouteReturned,
+  }) async {
     if (_hasNotice) {
-      setState(() {
-        _removedNotice = false;
-        _gameGoneNotice = false;
-        _roomClosedNotice = null;
-        _knockNotice = null;
-        _codeBan = null;
-      });
+      setState(_clearNotices);
     }
-    final AppLocalizations loc = AppLocalizations.of(context);
-    final String name = _resolvedName(loc);
+    // A resume sends no name: the seat already has one. The lobby is handed
+    // whatever the field holds, possibly nothing.
+    final String name = _typedName;
     final RoomController controller = widget.controllerFactory();
     _watchOwnedController(controller);
-    final Object? result = await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => RoomRoute(
-          controller: controller,
-          action: LobbyAction.resume,
-          code: record.code,
-          playerName: name,
-          resume: record,
-        ),
+    final MaterialPageRoute<Object?> roomRoute = MaterialPageRoute<Object?>(
+      builder: (context) => RoomRoute(
+        controller: controller,
+        action: LobbyAction.resume,
+        code: record.code,
+        playerName: name,
+        resume: record,
       ),
     );
+    final Future<Object?> returned = Navigator.of(context)
+        .push<Object?>(roomRoute);
+    if (onRouteReturned != null) {
+      _dropJoinSheetUnder(roomRoute, controller);
+    }
+    final Object? result = await returned;
     // C-447 D4, C-540 D4: a resume the server refused (room reaped, seat
     // taken back) or a seat removed while the route was up goes home with its
     // own true line, set before the retire like the removed notice in
@@ -1445,6 +1680,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (result == GameScreenResult.gameGone ||
         result == GameScreenResult.removed) {
       _showNoticeFor(result);
+      // C-708: a host's kick in play shows its own notice and ban card here
+      // as on the join paths; a gone room keeps the notice set above.
+      _noteKnockOutcome(controller);
       if (mounted && _seatRecord?.code == record.code) {
         setState(() {
           _setSeat(null, null);
@@ -1455,6 +1693,7 @@ class _HomeScreenState extends State<HomeScreen>
     // C-669 r2 D4: a resume the server refused for a gone room leaves a dead
     // code in the field when the player typed it, as a refused join does.
     _clearDeadJoinCode(controller, record.code);
+    onRouteReturned?.call(false);
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
@@ -1464,20 +1703,32 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
     if (result == GameScreenResult.newTable) {
-      await _createRoom();
+      // A new table for the same friends: friends only, as before C-701.
+      await _createRoom(open: false);
     }
   }
 
-  /// Primary action is [ElevatedButton]; the quieter twin is [OutlinedButton].
-  Widget _weightedButton({
+  /// C-701: the two home buttons, stacked, equal in width and height. The
+  /// primary one is an [ElevatedButton] on the strong gold frame; the quiet
+  /// one an [OutlinedButton] on the light frame.
+  Widget _homeButton({
     required Key key,
     required VoidCallback onPressed,
     required String label,
     required Widget icon,
     required bool primary,
   }) {
-    final Widget labelWidget = Text(label);
-    final ButtonStyle style = homeGoldButtonStyle();
+    final Widget labelWidget = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+    final ButtonStyle style =
+        homeGoldButtonStyle(minimumSize: const Size(48, 56)).copyWith(
+          padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
+            EdgeInsets.symmetric(horizontal: kSpace4, vertical: kSpace2),
+          ),
+        );
     final Widget button = primary
         ? ElevatedButton.icon(
             key: key,
@@ -1496,28 +1747,179 @@ class _HomeScreenState extends State<HomeScreen>
     return HomeGoldFrame(strong: primary, child: button);
   }
 
-  Widget _joinButton(bool compact, bool joinPrimary, AppLocalizations loc) {
-    return Padding(
-      padding: EdgeInsets.only(top: compact ? kSpace2 : kSpace3),
-      child: KeyedSubtree(
-        key: _joinButtonScrollKey,
-        child: _weightedButton(
-          key: const Key('join-room-button'),
-          onPressed: () => _joinRoom(fromLink: _codeIsFromLink),
-          label: loc.homeJoinRoomButton,
-          icon: const DirectionalIcon(Icons.login_rounded),
-          primary: joinPrimary,
-        ),
+  /// The one home notice card, worded for whichever notice is up.
+  Widget _noticeCard(AppLocalizations loc) {
+    final Key textKey;
+    final String text;
+    bool refusal = false;
+    final _KnockNotice? knock = _knockNotice;
+    final String? lineError = _lineErrorCode;
+    if (knock != null) {
+      textKey = const Key('home-knock-notice');
+      text = switch (knock) {
+        _KnockNotice.notJoined => loc.knockOutcomeNotJoined,
+        _KnockNotice.full => loc.knockOutcomeFull,
+        _KnockNotice.switchedOff => loc.knockOutcomeSwitchedOff,
+        _KnockNotice.kicked => loc.knockWasKicked,
+      };
+      refusal = true;
+    } else if (lineError != null) {
+      textKey = const Key('home-line-error-notice');
+      text = _lineErrorText(loc, lineError);
+      refusal = true;
+    } else if (_linkInvalidNotice) {
+      textKey = const Key('home-link-invalid-notice');
+      text = loc.homeRoomCodeInvalid;
+      refusal = true;
+    } else if (_roomClosedNotice != null) {
+      textKey = const Key('home-room-closed-notice');
+      text = _roomClosedNotice == GameScreenResult.roomClosedHost
+          ? loc.homeRoomClosedHostNotice
+          : loc.homeRoomClosedGuestNotice;
+    } else if (_gameGoneNotice) {
+      textKey = const Key('home-game-gone-notice');
+      text = loc.homeGameGoneNotice;
+    } else {
+      textKey = const Key('home-removed-notice');
+      text = loc.homeRemovedNotice;
+    }
+    return _HomeNotice(
+      cardKey: const Key('home-notice'),
+      textKey: textKey,
+      text: text,
+      refusal: refusal,
+      dismissLabel: loc.homeNoticeDismiss,
+      onDismiss: _dismissNotice,
+    );
+  }
+
+  /// The name row: the field (its label the hint, C-701), and under it the
+  /// red name-required line with the refusal mark while it stands. A refused
+  /// tap shakes the field; under reduced motion the line and the mark carry
+  /// it alone.
+  Widget _nameField(AppLocalizations loc, TextTheme textTheme, bool compact) {
+    OutlineInputBorder border(Color? color) => OutlineInputBorder(
+      borderRadius: BorderRadius.circular(999),
+      borderSide: color == null
+          ? BorderSide.none
+          : BorderSide(color: color, width: 2),
+    );
+    final bool reduce = MediaQuery.disableAnimationsOf(context);
+    final Widget field = Semantics(
+      label: loc.homeNameFieldLabel,
+      child: ValueListenableBuilder<TextEditingValue>(
+        valueListenable: _nameController,
+        builder: (context, nameValue, _) {
+          final String trimmed = nameValue.text.trim();
+          return TextField(
+            key: const Key('home-name-field'),
+            controller: _nameController,
+            focusNode: _nameFocusNode,
+            textAlign: TextAlign.center,
+            textInputAction: _linkWaitingForName != null
+                ? TextInputAction.go
+                : TextInputAction.done,
+            onSubmitted: (_) => _submitName(),
+            inputFormatters: const <TextInputFormatter>[_NameInputFormatter()],
+            style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            decoration: InputDecoration(
+              hintText: loc.homeNameFieldLabel,
+              filled: true,
+              fillColor: LudoColors.paperElevated,
+              isDense: compact,
+              border: border(_nameRequired ? LudoColors.error : null),
+              enabledBorder: border(_nameRequired ? LudoColors.error : null),
+              focusedBorder: border(
+                _nameRequired ? LudoColors.error : LudoColors.action,
+              ),
+              prefixIcon: CircleAvatar(
+                radius: 16,
+                backgroundColor: LudoColors.action,
+                foregroundColor: LudoColors.actionOn,
+                child: trimmed.isEmpty
+                    ? const Icon(
+                        Icons.person,
+                        size: 20,
+                        color: LudoColors.actionOn,
+                      )
+                    : Text(
+                        trimmed.characters.first.toUpperCase(),
+                        style: const TextStyle(
+                          color: LudoColors.actionOn,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+              ),
+              suffixIcon: const Icon(
+                Icons.edit_outlined,
+                color: LudoColors.inkMuted,
+                size: 20,
+              ),
+            ),
+          );
+        },
       ),
+    );
+    final Widget line = _nameRequired
+        ? Padding(
+            padding: const EdgeInsetsDirectional.only(
+              top: kSpace2,
+              start: kSpace3,
+              end: kSpace3,
+            ),
+            child: Row(
+              key: const Key('home-name-required'),
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                const RefusalNoticeMark(size: 20),
+                const SizedBox(width: kSpace2),
+                Flexible(
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      loc.homeNameRequired,
+                      textAlign: TextAlign.center,
+                      style: textTheme.bodyMedium?.copyWith(
+                        color: LudoColors.error,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          )
+        : const SizedBox(width: double.infinity);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        AnimatedBuilder(
+          animation: _nameShake,
+          builder: (BuildContext context, Widget? child) {
+            final double v = _nameShake.value;
+            final double dx = 6 * math.sin(v * math.pi * 4) * (1 - v);
+            return Transform.translate(offset: Offset(dx, 0), child: child);
+          },
+          child: field,
+        ),
+        // With reduced motion the line takes its place on the next frame; an
+        // AnimatedSize of zero duration is not used for that (C-701 R2).
+        if (reduce)
+          line
+        else
+          AnimatedSize(
+            duration: kMotionShort,
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            child: line,
+          ),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
-    final bool joinPrimary = isValidRoomCode(
-      normalizeRoomCode(_codeController.text),
-    );
     final SeatRecord? seatRecord = _trustedSeat();
     final TextTheme textTheme = Theme.of(context).textTheme;
     final MediaQueryData media = MediaQuery.of(context);
@@ -1538,7 +1940,7 @@ class _HomeScreenState extends State<HomeScreen>
     final double afterBrand = compact ? kSpace3 : kSpace6;
     final double afterDie = compact ? kSpace4 : kSpace7;
     final double beforeCreate = compact ? kSpace3 : kSpace4;
-    final double aroundDivider = compact ? kSpace1 : kSpace2;
+    final double betweenButtons = compact ? kSpace2 : kSpace3;
 
     final Animation<double> brandOpacity = CurvedAnimation(
       parent: _enter,
@@ -1735,41 +2137,7 @@ class _HomeScreenState extends State<HomeScreen>
                                     ),
                                   ],
                                   if (_hasNotice && _hasPlainNotice) ...[
-                                    _HomeNotice(
-                                      cardKey: const Key('home-notice'),
-                                      textKey: _knockNotice != null
-                                          ? const Key('home-knock-notice')
-                                          : _roomClosedNotice != null
-                                          ? const Key('home-room-closed-notice')
-                                          : _gameGoneNotice
-                                          ? const Key('home-game-gone-notice')
-                                          : const Key('home-removed-notice'),
-                                      text: _knockNotice != null
-                                          ? switch (_knockNotice!) {
-                                              _KnockNotice.notJoined =>
-                                                loc.knockOutcomeNotJoined,
-                                              _KnockNotice.full =>
-                                                loc.knockOutcomeFull,
-                                              _KnockNotice.switchedOff =>
-                                                loc.knockOutcomeSwitchedOff,
-                                              _KnockNotice.kicked =>
-                                                loc.knockWasKicked,
-                                            }
-                                          : switch (_roomClosedNotice) {
-                                              GameScreenResult.roomClosedHost =>
-                                                loc.homeRoomClosedHostNotice,
-                                              GameScreenResult
-                                                  .roomClosedGuest =>
-                                                loc.homeRoomClosedGuestNotice,
-                                              _ =>
-                                                _gameGoneNotice
-                                                    ? loc.homeGameGoneNotice
-                                                    : loc.homeRemovedNotice,
-                                            },
-                                      refusal: _knockNotice != null,
-                                      dismissLabel: loc.homeNoticeDismiss,
-                                      onDismiss: _dismissNotice,
-                                    ),
+                                    _noticeCard(loc),
                                     SizedBox(
                                       height: compact ? kSpace3 : kSpace4,
                                     ),
@@ -1789,274 +2157,29 @@ class _HomeScreenState extends State<HomeScreen>
                                       height: compact ? kSpace3 : kSpace5,
                                     ),
                                   ],
-                                  Semantics(
-                                    label: loc.homeNameFieldLabel,
-                                    child:
-                                        ValueListenableBuilder<
-                                          TextEditingValue
-                                        >(
-                                          valueListenable: _nameController,
-                                          builder: (context, nameValue, _) {
-                                            final String trimmed = nameValue
-                                                .text
-                                                .trim();
-                                            return TextField(
-                                              key: const Key('home-name-field'),
-                                              controller: _nameController,
-                                              textAlign: TextAlign.center,
-                                              textInputAction:
-                                                  TextInputAction.go,
-                                              onSubmitted: (_) =>
-                                                  _submitPrimary(),
-                                              inputFormatters:
-                                                  const <TextInputFormatter>[
-                                                    _NameInputFormatter(),
-                                                  ],
-                                              style: textTheme.titleMedium
-                                                  ?.copyWith(
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                              decoration: InputDecoration(
-                                                hintText:
-                                                    loc.homeNameFieldLabel,
-                                                filled: true,
-                                                fillColor:
-                                                    LudoColors.paperElevated,
-                                                isDense: compact,
-                                                border: OutlineInputBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                        999,
-                                                      ),
-                                                  borderSide: BorderSide.none,
-                                                ),
-                                                enabledBorder:
-                                                    OutlineInputBorder(
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            999,
-                                                          ),
-                                                      borderSide:
-                                                          BorderSide.none,
-                                                    ),
-                                                focusedBorder:
-                                                    OutlineInputBorder(
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            999,
-                                                          ),
-                                                      borderSide:
-                                                          const BorderSide(
-                                                            color: LudoColors
-                                                                .action,
-                                                            width: 2,
-                                                          ),
-                                                    ),
-                                                prefixIcon: CircleAvatar(
-                                                  radius: 16,
-                                                  backgroundColor:
-                                                      LudoColors.action,
-                                                  foregroundColor:
-                                                      LudoColors.actionOn,
-                                                  child: trimmed.isEmpty
-                                                      ? const Icon(
-                                                          Icons.person,
-                                                          size: 20,
-                                                          color: LudoColors
-                                                              .actionOn,
-                                                        )
-                                                      : Text(
-                                                          trimmed
-                                                              .characters
-                                                              .first
-                                                              .toUpperCase(),
-                                                          style: const TextStyle(
-                                                            color: LudoColors
-                                                                .actionOn,
-                                                            fontWeight:
-                                                                FontWeight.w600,
-                                                          ),
-                                                        ),
-                                                ),
-                                                suffixIcon: const Icon(
-                                                  Icons.edit_outlined,
-                                                  color: LudoColors.inkMuted,
-                                                  size: 20,
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                  ),
+                                  _nameField(loc, textTheme, compact),
                                   SizedBox(height: beforeCreate),
-                                  _weightedButton(
+                                  _homeButton(
                                     key: const Key('create-room-button'),
-                                    onPressed: _createRoom,
+                                    onPressed: _onCreateTapped,
                                     label: loc.homeCreateRoomButton,
                                     icon: const Icon(Icons.add_rounded),
-                                    primary: !joinPrimary,
+                                    primary: true,
                                   ),
-                                  Padding(
-                                    padding: EdgeInsets.symmetric(
-                                      vertical: aroundDivider,
+                                  SizedBox(height: betweenButtons),
+                                  _homeButton(
+                                    key: const Key('join-game-button'),
+                                    onPressed: _onJoinTapped,
+                                    label: loc.homeJoinGameButton,
+                                    icon: const DirectionalIcon(
+                                      Icons.login_rounded,
                                     ),
-                                    child: Row(
-                                      key: const Key('home-join-divider'),
-                                      children: [
-                                        Expanded(
-                                          child: Container(
-                                            height: 1,
-                                            color: LudoColors.inkMuted
-                                                .withValues(alpha: 0.3),
-                                          ),
-                                        ),
-                                        Flexible(
-                                          flex: 3,
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: kSpace3,
-                                            ),
-                                            child: Text(
-                                              loc.homeJoinDivider,
-                                              textAlign: TextAlign.center,
-                                              style: textTheme.labelMedium
-                                                  ?.copyWith(
-                                                    color: LudoColors.inkMuted,
-                                                  ),
-                                            ),
-                                          ),
-                                        ),
-                                        Expanded(
-                                          child: Container(
-                                            height: 1,
-                                            color: LudoColors.inkMuted
-                                                .withValues(alpha: 0.3),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                                    primary: false,
                                   ),
-                                  KeyedSubtree(
-                                    key: _codeFieldScrollKey,
-                                    child: Semantics(
-                                      label: loc.homeRoomCodeFieldLabel,
-                                      child: HomeGoldFrame(
-                                        child: TextField(
-                                          key: const Key('room-code-field'),
-                                          focusNode: _codeFocusNode,
-                                          controller: _codeController,
-                                          textAlign: TextAlign.center,
-                                          textCapitalization:
-                                              TextCapitalization.characters,
-                                          textInputAction: TextInputAction.go,
-                                          onSubmitted: (_) {
-                                            if (joinPrimary) {
-                                              _joinRoom(
-                                                fromLink: _codeIsFromLink,
-                                              );
-                                            }
-                                          },
-                                          inputFormatters:
-                                              const <TextInputFormatter>[
-                                                _RoomCodeInputFormatter(),
-                                              ],
-                                          style: textTheme.titleLarge?.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: 4,
-                                          ),
-                                          decoration: InputDecoration(
-                                            hintText:
-                                                loc.homeRoomCodeFieldLabel,
-                                            hintStyle: textTheme.bodyLarge
-                                                ?.copyWith(
-                                                  color: LudoColors.inkMuted,
-                                                ),
-                                            errorText: _errorText,
-                                            // Unset, InputDecoration truncates errorText
-                                            // to one line with an ellipsis.
-                                            // homeRoomCodeInvalid needs four lines to
-                                            // clear at this field's width in either
-                                            // locale.
-                                            errorMaxLines: 4,
-                                            filled: false,
-                                            isDense: compact,
-                                            prefixIcon: const Icon(
-                                              Icons.tag,
-                                              color: LudoColors.inkMuted,
-                                            ),
-                                            border: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                    kRadiusControl,
-                                                  ),
-                                              borderSide: BorderSide.none,
-                                            ),
-                                            enabledBorder: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                    kRadiusControl,
-                                                  ),
-                                              borderSide: BorderSide.none,
-                                            ),
-                                            focusedBorder: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                    kRadiusControl,
-                                                  ),
-                                              borderSide: const BorderSide(
-                                                color: LudoColors.action,
-                                                width: 2,
-                                              ),
-                                            ),
-                                            errorBorder: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                    kRadiusControl,
-                                                  ),
-                                              borderSide: const BorderSide(
-                                                color: LudoColors.error,
-                                                width: 2,
-                                              ),
-                                            ),
-                                            focusedErrorBorder:
-                                                OutlineInputBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                        kRadiusControl,
-                                                      ),
-                                                  borderSide: const BorderSide(
-                                                    color: LudoColors.error,
-                                                    width: 2,
-                                                  ),
-                                                ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  // C-523 D3 / A1: Join exists only while there is a
-                                  // full-length code to join. Under reduced motion it
-                                  // is inserted directly, with no AnimatedSize.
-                                  if (MediaQuery.disableAnimationsOf(context))
-                                    _joinShown
-                                        ? _joinButton(compact, joinPrimary, loc)
-                                        : const SizedBox.shrink()
-                                  else
-                                    AnimatedSize(
-                                      duration: kMotionShort,
-                                      curve: Curves.easeOut,
-                                      alignment: Alignment.topCenter,
-                                      child: _joinShown
-                                          ? _joinButton(
-                                              compact,
-                                              joinPrimary,
-                                              loc,
-                                            )
-                                          : const SizedBox(
-                                              width: double.infinity,
-                                            ),
-                                    ),
-                                  if (_showLastGame) ...[
+                                  // C-322 / C-701: the last game's card is
+                                  // for a player signed in with Google only.
+                                  // Its space stays empty otherwise.
+                                  if (googleSignedIn && _showLastGame) ...[
                                     SizedBox(
                                       height: compact ? kSpace3 : kSpace4,
                                     ),
@@ -2194,47 +2317,6 @@ class _NameInputFormatter extends TextInputFormatter {
       end--;
     }
     return value.substring(0, end);
-  }
-}
-
-/// Strips spaces/dashes and upper-cases as the player types or pastes, so
-/// the field shows the same form [normalizeRoomCode] will send on Join.
-/// Selection offsets are mapped through the stripped prefix so the caret
-/// does not jump to the end.
-class _RoomCodeInputFormatter extends TextInputFormatter {
-  const _RoomCodeInputFormatter();
-
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    String normalized = normalizeRoomCode(newValue.text);
-    if (normalized.length > roomCodeLength) {
-      normalized = normalized.substring(0, roomCodeLength);
-    }
-    if (normalized == newValue.text) {
-      return newValue;
-    }
-    return TextEditingValue(
-      text: normalized,
-      selection: TextSelection(
-        baseOffset: _offset(newValue.text, newValue.selection.baseOffset),
-        extentOffset: _offset(newValue.text, newValue.selection.extentOffset),
-        affinity: newValue.selection.affinity,
-        isDirectional: newValue.selection.isDirectional,
-      ),
-    );
-  }
-
-  /// Maps [offset] in [raw] onto the normalised string.
-  static int _offset(String raw, int offset) {
-    if (offset <= 0) {
-      return offset;
-    }
-    final int end = offset < raw.length ? offset : raw.length;
-    final int mapped = normalizeRoomCode(raw.substring(0, end)).length;
-    return mapped > roomCodeLength ? roomCodeLength : mapped;
   }
 }
 
