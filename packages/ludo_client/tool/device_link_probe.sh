@@ -21,12 +21,18 @@
 # talks to kDefaultServerUrl, wss://ludo.provefair.app, production) answers
 # NO_SUCH_ROOM: docs/PROTOCOL.md says an unknown link is NO_SUCH_ROOM. A
 # fromLink join that gets NO_SUCH_ROOM stays on the lobby's error card with
-# lobbyErrorLinkRoomGone (lib/src/lobby_screen.dart, _errorBody). That text
-# is the one thing that proves the join went out and the server answered it,
-# and it is the only text this probe takes as the answered state. The route
-# does not pop on its own (only Back to home pops it), so no home notice is
-# expected. Two other cards the same route can show are printed, never
-# counted: lobbyErrorTransport (the server was not reached, so nothing was
+# lobbyErrorLinkRoomGone (lib/src/lobby_screen.dart, _errorBody). The
+# answered state is exactly one of two cards, and the verdict line says
+# which: that one, "room gone", or the update-required card, "update
+# required", whose title is updateRequiredTitle (UpdateRequiredView, shown
+# by LobbyScreen when controller.updateRequired is set by the server's
+# UPDATE_REQUIRED). The second counts because the probe apk carries the
+# pubspec's build number, which is below production's minimum client build,
+# so production answers every join from it with the update gate (run
+# 45525832503 showed it): the gate is the server's answer to the join the
+# link caused. The route does not pop on its own (only Back to home pops
+# it), so no home notice is expected. Two other cards the same route can
+# show are printed, never counted: lobbyErrorTransport (the server was not reached, so nothing was
 # answered) and lobbyErrorRateLimited (answered, but not for this link).
 #
 # Each leg reports FOUND, MISSING, or INSTRUMENT-BLIND. The control against
@@ -67,17 +73,18 @@ arb_string() {
 CONTROL_TEXT=$(arb_string homeCreateRoomButton)
 NAME_REQUIRED_TEXT=$(arb_string homeNameRequired)
 ANSWERED_TEXT=$(arb_string lobbyErrorLinkRoomGone)
+UPDATE_TEXT=$(arb_string updateRequiredTitle)
 TRANSPORT_TEXT=$(arb_string lobbyErrorTransport)
 RATE_LIMITED_TEXT=$(arb_string lobbyErrorRateLimited)
 BACK_HOME_TEXT=$(arb_string lobbyBackToHomeButton)
 CONNECTING_TEXT=$(arb_string lobbyConnecting)
-for arb_value in "$CONTROL_TEXT" "$NAME_REQUIRED_TEXT" "$ANSWERED_TEXT" "$TRANSPORT_TEXT" "$RATE_LIMITED_TEXT" "$BACK_HOME_TEXT" "$CONNECTING_TEXT"; do
+for arb_value in "$CONTROL_TEXT" "$NAME_REQUIRED_TEXT" "$ANSWERED_TEXT" "$UPDATE_TEXT" "$TRANSPORT_TEXT" "$RATE_LIMITED_TEXT" "$BACK_HOME_TEXT" "$CONNECTING_TEXT"; do
   if [ -z "$arb_value" ]; then
     echo "device-link-probe: a key this probe needs is missing from $ARB; run from packages/ludo_client" >&2
     exit 2
   fi
 done
-echo "device-link-probe: control \"$CONTROL_TEXT\", name-required \"$NAME_REQUIRED_TEXT\", answered \"$ANSWERED_TEXT\""
+echo "device-link-probe: control \"$CONTROL_TEXT\", name-required \"$NAME_REQUIRED_TEXT\", answered \"$ANSWERED_TEXT\" or \"$UPDATE_TEXT\""
 
 # Page-button leg (order 461). LINK_PAGE_HOST is the one input taken from the
 # environment: the staging host serves the same page, with the same
@@ -184,8 +191,37 @@ home_verdict() {
   fi
 }
 
+# poll_for_answer REMOTE_XML LOCAL_XML
+# poll_for_text for the answered state, which is either of two cards. Sets
+# POLL_RESULT to FOUND or MISSING and ANSWER_KIND to "room gone" or "update
+# required" on FOUND, nothing on a miss.
+poll_for_answer() {
+  remote_xml="$1"
+  local_xml="$2"
+  elapsed=0
+  POLL_RESULT="MISSING"
+  ANSWER_KIND=""
+  while true; do
+    dump_screen "$remote_xml" "$local_xml"
+    if has_text "$local_xml" "$ANSWERED_TEXT"; then
+      ANSWER_KIND="room gone"
+    elif has_text "$local_xml" "$UPDATE_TEXT"; then
+      ANSWER_KIND="update required"
+    fi
+    if [ -n "$ANSWER_KIND" ]; then
+      POLL_RESULT="FOUND"
+      break
+    fi
+    if [ "$elapsed" -ge "$POLL_TOTAL_SECONDS" ]; then
+      break
+    fi
+    sleep "$POLL_INTERVAL_SECONDS"
+    elapsed=$((elapsed + POLL_INTERVAL_SECONDS))
+  done
+}
+
 # answered_verdict LOCAL_XML
-# After a poll for the answered state. The control here is wider than home's,
+# After poll_for_answer: "FOUND (room gone)" or "FOUND (update required)". The control here is wider than home's,
 # because the answered state is on the room route, where Create Room is not:
 # the dump is readable when it holds Create Room (still on home), the
 # lobby's connecting line, its Back to home button, or one of the two cards
@@ -193,7 +229,7 @@ home_verdict() {
 # is printed.
 answered_verdict() {
   if [ "$POLL_RESULT" = "FOUND" ]; then
-    echo "FOUND"
+    echo "FOUND ($ANSWER_KIND)"
     return
   fi
   for seen_text in "$TRANSPORT_TEXT" "$RATE_LIMITED_TEXT" "$CONNECTING_TEXT" "$BACK_HOME_TEXT" "$CONTROL_TEXT"; do
@@ -574,11 +610,11 @@ COLD_JOIN_RESULT="NOT-RUN"
 if [ "$COLD_LINE_RESULT" = "FOUND" ]; then
   adb shell input text "$PROBE_NAME"
   adb shell input keyevent KEYCODE_ENTER
-  poll_for_text "$ANSWERED_TEXT" /sdcard/link-cold-join.xml link-cold-join.xml
+  poll_for_answer /sdcard/link-cold-join.xml link-cold-join.xml
   COLD_JOIN_RESULT=$(answered_verdict link-cold-join.xml)
   adb exec-out screencap -p > link-cold-join.png
 fi
-if [ "$COLD_LINE_RESULT" = "FOUND" ] && [ "$COLD_JOIN_RESULT" = "FOUND" ]; then
+if [ "$COLD_LINE_RESULT" = "FOUND" ] && [ "${COLD_JOIN_RESULT%% *}" = "FOUND" ]; then
   COLD_RESULT="FOUND"
 elif [ "$COLD_LINE_RESULT" = "INSTRUMENT-BLIND" ] || [ "$COLD_JOIN_RESULT" = "INSTRUMENT-BLIND" ]; then
   COLD_RESULT="INSTRUMENT-BLIND"
@@ -609,7 +645,7 @@ echo "device-link-probe: home before the warm leg: control $POLL_RESULT"
 # The name typed above is still in the field, so the join goes out with no
 # further input; FOUND is the same answered state as the cold leg's.
 deliver "$WARM_LINK_ID" no
-poll_for_text "$ANSWERED_TEXT" /sdcard/link-warm.xml link-warm.xml
+poll_for_answer /sdcard/link-warm.xml link-warm.xml
 WARM_RESULT=$(answered_verdict link-warm.xml)
 adb exec-out screencap -p > link-warm.png
 
@@ -619,12 +655,12 @@ echo "device-link-probe: cold $COLD_RESULT"
 if [ "$COLD_LINE_RESULT" != "FOUND" ]; then
   print_node_texts link-cold.xml
   print_edittext_values link-cold.xml
-elif [ "$COLD_JOIN_RESULT" != "FOUND" ]; then
+elif [ "${COLD_JOIN_RESULT%% *}" != "FOUND" ]; then
   print_node_texts link-cold-join.xml
 fi
 
 echo "device-link-probe: warm $WARM_RESULT"
-if [ "$WARM_RESULT" != "FOUND" ]; then
+if [ "${WARM_RESULT%% *}" != "FOUND" ]; then
   print_node_texts link-home.xml
   print_node_texts link-warm.xml
 fi
@@ -640,7 +676,7 @@ implicit_tap_probe
 # link-*.png and link-*.xml artifact patterns already pick up.
 page_button_probe
 
-if [ "$COLD_RESULT" = "FOUND" ] && [ "$WARM_RESULT" = "FOUND" ]; then
+if [ "$COLD_RESULT" = "FOUND" ] && [ "${WARM_RESULT%% *}" = "FOUND" ]; then
   exit 0
 fi
 exit 1
