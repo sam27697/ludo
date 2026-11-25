@@ -6,6 +6,8 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'snapshot.dart' show PreRoll;
+
 /// docs/PROTOCOL.md section 1.
 const int maxFrameBytes = 8192;
 
@@ -127,6 +129,21 @@ class Frame {
   int? get seq {
     final Object? value = data['seq'];
     return value is int ? value : null;
+  }
+
+  /// docs/PROTOCOL.md section 35 item 1: the roll in hand that a `turn`
+  /// frame in `await_roll` carries to the socket of the seat on turn. Null
+  /// on every other frame, on another socket's copy, and when the key is
+  /// missing or malformed.
+  PreRoll? get pre {
+    if (type != 'turn') {
+      return null;
+    }
+    final Object? phase = data['phase'];
+    if (phase != null && phase != 'await_roll') {
+      return null;
+    }
+    return PreRoll.tryParse(data['pre']);
   }
 }
 

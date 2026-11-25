@@ -586,40 +586,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   /// The tap handler for `lobby-fill-computer`: one `fill_computer`, and no
-  /// second one until the server has answered. A refusal the controller
-  /// keeps (a host request refused for a race or a rights reason) is shown
-  /// as the lobby's error line and felt as an invalid tap; a lost connection
-  /// goes the way every lost connection goes on this screen. Success needs
-  /// nothing here: the computer seats and the game's start arrive as frames.
+  /// second one until the server has answered. The refusal code this request
+  /// came back with (a host request refused for a race or a rights reason)
+  /// is shown as the lobby's error line and felt as an invalid tap; a lost
+  /// connection goes the way every lost connection goes on this screen.
+  /// Success needs nothing here: the computer seats and the game's start
+  /// arrive as frames.
   Future<void> _fillWithComputer() async {
     if (_fillInFlight) {
       return;
     }
     final RoomController controller = widget.controller;
     FeedbackScope.of(context).play(FeedbackCue.tap);
-    final String? codeBefore = controller.errorCode;
-    final String? messageBefore = controller.errorMessage;
     setState(() {
       _fillInFlight = true;
       _fillErrorCode = null;
     });
-    await controller.fillComputer();
+    final String? code = await controller.fillComputer();
     if (!mounted) {
       return;
     }
-    // The controller keeps the last refused host request's code; one that
-    // was already there before this tap is not this request's answer.
-    final String? code = controller.errorCode;
-    final bool refused =
-        controller.phase == RoomPhase.connected &&
-        code != null &&
-        !(identical(code, codeBefore) &&
-            identical(controller.errorMessage, messageBefore));
     setState(() {
       _fillInFlight = false;
-      _fillErrorCode = refused ? code : null;
+      _fillErrorCode = code;
     });
-    if (refused) {
+    if (code != null) {
       FeedbackScope.of(context).play(FeedbackCue.invalidTap);
       _spokenLine.speak(lobbyErrorMessage(AppLocalizations.of(context), code));
     }

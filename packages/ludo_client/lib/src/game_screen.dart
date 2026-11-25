@@ -57,6 +57,7 @@ import 'refusal_mark.dart';
 import 'roll_tray.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
+import 'seat_names.dart' show seatShownName;
 import 'seat_mark.dart';
 import 'session_memory.dart';
 import 'sound_toggle.dart';
@@ -917,6 +918,13 @@ class _GameScreenState extends State<GameScreen> {
       _onEmoteFrame(frame);
       return;
     }
+    // C-708 (section 35 item 5): my roll was played when my die landed on the
+    // face its `pre` carried. The server's `rolled` that confirms it changes
+    // nothing on screen and plays nothing; one that differs is resynced by
+    // the controller, and the snapshot it brings is what is drawn.
+    if (frame.type == 'rolled' && widget.controller.isPreEcho(frame)) {
+      return;
+    }
     // C-540 D3 items 1 and 2: the new screen (the end card with its cue, or
     // the new board) must not arrive under a scrim, so this runs ahead of
     // every cue and announcement the frame owes.
@@ -1243,8 +1251,7 @@ class _GameScreenState extends State<GameScreen> {
     if (seat == null || seat < 0 || seat >= LudoColors.seats.length) {
       return;
     }
-    final String name =
-        _seatNameFor(seat) ?? _stringAt(frame.data, 'name') ?? '';
+    final String name = _seatNameFor(seat) ?? _joinedSeatName(frame, seat);
     if (name.isEmpty) {
       return;
     }
@@ -1264,6 +1271,34 @@ class _GameScreenState extends State<GameScreen> {
       );
     });
     _announce(AppLocalizations.of(context).lobbyFriendJoined(name));
+  }
+
+  /// C-708: the name a `player_joined` the room has not taken yet is shown
+  /// by. A computer seat (the frame carries `bot`) is its character's name in
+  /// the app's language, through the one name rule, never the wire's English
+  /// name; a person is the name they sent.
+  String _joinedSeatName(Frame frame, int seat) {
+    final String? wireName = _stringAt(frame.data, 'name');
+    if (wireName == null) {
+      return '';
+    }
+    final int? botValue = _intAt(frame.data, 'bot');
+    final int? bot = botValue != null && botValue >= 1 && botValue <= 6
+        ? botValue
+        : null;
+    return seatShownName(
+      AppLocalizations.of(context),
+      SeatState(
+        seat: seat,
+        name: wireName,
+        connected: true,
+        tokens: const <int>[-1, -1, -1, -1],
+        clientSeed: null,
+        seedOrigin: null,
+        via: bot != null ? SeatVia.bot : SeatVia.unknown,
+        bot: bot,
+      ),
+    );
   }
 
   /// C-337 rule 1: the one place a cue is both played through the feedback
@@ -1682,8 +1717,10 @@ class _GameScreenState extends State<GameScreen> {
         (controller.lastFinished?.retired.contains(mySeat) ?? false);
   }
 
-  /// C-656 S6: the host may remove a seat that is in play, whose phone is
-  /// away, in a 2026-11 game that is under way.
+  /// C-656 S6, C-708 (PROTOCOL 33 item 8): the host may remove any seat still
+  /// in play other than their own, in a 2026-11 game that is under way: away
+  /// or connected, a person or a computer. A finished or a retired seat is
+  /// not in play.
   bool _kickEligible(RoomSnapshot room, int seat) {
     final RoomController controller = widget.controller;
     if (!controller.isHost ||
@@ -1694,18 +1731,10 @@ class _GameScreenState extends State<GameScreen> {
         seat == controller.seat) {
       return false;
     }
-    if (!_seatsInPlayOf(room).contains(seat)) {
-      return false;
-    }
-    for (final SeatState s in room.seats) {
-      if (s.seat == seat) {
-        return !s.connected;
-      }
-    }
-    return false;
+    return _seatsInPlayOf(room).contains(seat);
   }
 
-  /// The away marks the host may tap right now.
+  /// The seats the host may tap to remove right now.
   Set<int> _kickSeatsOf(RoomSnapshot room) {
     return <int>{
       for (final SeatState s in room.seats)
@@ -1713,8 +1742,8 @@ class _GameScreenState extends State<GameScreen> {
     };
   }
 
-  /// C-656 S6: the host tapped an away mark. A small sheet in the board's own
-  /// colours asks once; Remove sends `kick`, Wait only closes it.
+  /// C-656 S6: the host tapped a seat it may remove. A small sheet in the
+  /// board's own colours asks once; Remove sends `kick`, Wait only closes it.
   void _onAwayTap(int seat) {
     final RoomSnapshot? room = widget.controller.room;
     if (!mounted || room == null || _kickSheetRoute != null) {
@@ -1730,6 +1759,7 @@ class _GameScreenState extends State<GameScreen> {
       context,
       seat: seat,
       name: name,
+      computer: _isComputerSeat(room, seat),
       onRoute: (Route<bool> route) => _kickSheetRoute = route,
     ).then((bool? remove) {
       _kickSheetRoute = null;
@@ -1748,6 +1778,8 @@ class _GameScreenState extends State<GameScreen> {
     FeedbackScope.of(context).play(FeedbackCue.invalidTap);
     _showRulesetNotice(
       _RulesetNotice(
+        // An older server still refuses a seat whose phone is up; the
+        // server of section 33 item 8 never sends this code.
         code == 'NOT_ABSENT'
             ? _RulesetNoticeKind.kickBack
             : _RulesetNoticeKind.kickFailed,
@@ -3338,7 +3370,7 @@ class _GameScreenState extends State<GameScreen> {
         }
       }
     }
-    if (seatState == null || !seatState.connected) {
+    if (seatState == null || _seatIsAway(seatState)) {
       return;
     }
     final String name = seatLabelsFor(context, room!.seats)[seatState.seat]!;
@@ -4161,6 +4193,15 @@ class _GameScreenState extends State<GameScreen> {
   void _onControllerChanged() {
     final RoomController controller = widget.controller;
     _latchSeatLoss();
+    // C-708 (PROTOCOL 33 item 8): the host removed this seat from the game.
+    // The table goes home at once, where the lobby kick's own notice (and
+    // the ban, when the frame carried one) is shown; no connection-lost card
+    // and no resume come first.
+    if (controller.wasKicked && !_removedLeaveHandled) {
+      _removedLeaveHandled = true;
+      _clearSafeCue();
+      _leaveGameRoute(GameScreenResult.removed);
+    }
     // C-540 D3 item 3: the link dropped under an open sheet. The
     // connection-lost card brings its own Leave. A route that is already
     // leaving has nothing to show it for (D5).
@@ -4694,18 +4735,27 @@ class _GameScreenState extends State<GameScreen> {
     if (widget.controller.seatTakenOver) {
       _seatTakenOverLatched = true;
     }
+    if (widget.controller.wasKicked) {
+      _kickedLatched = true;
+    }
   }
 
   bool _seatRefusedLatched = false;
   bool _roomGoneLatched = false;
   bool _seatTakenOverLatched = false;
+  bool _kickedLatched = false;
 
   /// C-637 D5: this phone no longer holds its seat: it moved to another
-  /// phone, the server refused its token, or the room is gone under a game in
-  /// play. A plain dropped connection is not this, the seat is still mine
+  /// phone, the server refused its token, the host removed it (C-708), or the
+  /// room is gone under a game in play. A plain dropped connection is not this, the seat is still mine
   /// there (C-282, C-290). While it holds, nothing the table draws says this
   /// phone can act or that it is its turn.
-  bool get _seatLost => _seatTakenOver || _seatRefused || _roomGoneWhilePlaying;
+  bool get _seatLost =>
+      _seatTakenOver ||
+      _seatRefused ||
+      _roomGoneWhilePlaying ||
+      _kickedLatched ||
+      widget.controller.wasKicked;
 
   /// C-540 D5: a card that was not up when the route began to leave is not
   /// drawn for the rest of the exit, so the body the player last saw stays.
@@ -4769,7 +4819,8 @@ class _GameScreenState extends State<GameScreen> {
   /// (C-236 rule 5's old contract), so the in-app haptics switch governs
   /// it; `yourTurn` and `canMove`/`noMove` for the roll that follows are
   /// played separately, from `_onFrame`, once the server's own `rolled`
-  /// frame lands. C-426 D3: a die tap always reaches this point exactly
+  /// frame lands, or, with a `pre` in hand (C-708), once the die lands on the
+  /// face it carries. C-426 D3: a die tap always reaches this point exactly
   /// when it is going to send `roll` (the caller only wires `onTap` here
   /// while `rollEnabled`), so this is one of the notice's own three
   /// clearing events for my own seat.
@@ -4789,7 +4840,15 @@ class _GameScreenState extends State<GameScreen> {
       _timerPlayedMineVisible = false;
     });
     _rollNoAnswerTimer = Timer(_rollNoAnswerDelay, _onRollNoAnswer);
-    widget.controller.roll();
+    // C-708 (section 35 item 5): with a `pre` in hand the die lands on its
+    // face after the same tumble a thrown die takes, whatever the line does;
+    // reduced motion lands it at once. Without one this is unused and the
+    // die waits for `rolled` as before.
+    widget.controller.roll(
+      landAfter: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : kThrowTumble,
+    );
   }
 
   /// Clears the tumble the moment any of the three things that end it (a
@@ -6829,7 +6888,7 @@ class _GameScreenState extends State<GameScreen> {
                 seatNames: names,
                 awaySeats: <int, String>{
                   for (final SeatState s in room.seats)
-                    if (!s.connected &&
+                    if (_seatIsAway(s) &&
                         s.seat != seat &&
                         !room.retired.contains(s.seat))
                       s.seat: loc.gameSeatOffline(names[s.seat]!),
@@ -7667,6 +7726,8 @@ class _GameScreenState extends State<GameScreen> {
         : ringSeatColor;
     final bool myTurn = !gateShut && turn != null && turn.seat == seat;
     final bool offline = offlineTurnSeat != null;
+    final bool turnIsComputer =
+        !gateShut && turn != null && _isComputerSeat(room, turn.seat);
     final TextScaler scaler = _clampedScaler(context, clampScale);
     final double headerRowHeight = _headerRowHeightFor(context, scaler);
     final int bannerMaxLines = headerRowHeight > _headerRowHeightAtRest ? 2 : 1;
@@ -7707,6 +7768,22 @@ class _GameScreenState extends State<GameScreen> {
                     // icon while the turn seat is offline.
                     if (offline) ...[
                       Icon(Icons.wifi_off, size: kSpace4, color: seatColor),
+                      const SizedBox(width: kSpace1),
+                    ],
+                    // C-708 (doctrine P3): a computer's turn says so, so it
+                    // is never read as a person's.
+                    if (turnIsComputer) ...[
+                      Semantics(
+                        key: const Key('game-header-chip-bot'),
+                        label: loc.seatOriginBot,
+                        child: ExcludeSemantics(
+                          child: Icon(
+                            Icons.smart_toy_rounded,
+                            size: kSpace4,
+                            color: seatColor,
+                          ),
+                        ),
+                      ),
                       const SizedBox(width: kSpace1),
                     ],
                     Expanded(
@@ -8677,6 +8754,14 @@ class _GameScreenState extends State<GameScreen> {
         onFairHintRoute: (Route<void> route) => _fairHintRoute = route,
         friendJoined: _rematchJoin,
         places: _endCardPlaces(finished, rematchSeatNames),
+        // C-708: the computer seats of the finished game and of the room
+        // now, so a computer's row is never read as a person's.
+        computerSeats: <int>{
+          for (final SeatState s in finished.seats)
+            if (s.bot != null) s.seat,
+          for (final SeatState s in room.seats)
+            if (s.bot != null) s.seat,
+        },
         myPlace: myPlace,
         iAmOut: iAmOut,
         fairCheck: _fairSourceOf(finished),
@@ -9561,7 +9646,7 @@ String _waitingForSeatText(
 
 /// The seat whose turn it currently is, when that seat's socket has
 /// dropped: `room.turn` names a seat, that seat has an entry in
-/// `room.seats`, and that entry's `connected` is `false`. Null in every
+/// `room.seats`, and that entry is away ([_seatIsAway]). Null in every
 /// other case, including when there is no current turn at all or when the
 /// turn names a seat absent from `room.seats`. Backs the offline line
 /// `_playingBody` renders under the turn banner; does not touch
@@ -9573,10 +9658,27 @@ SeatState? _offlineTurnSeat(RoomSnapshot room) {
   }
   for (final SeatState seatState in room.seats) {
     if (seatState.seat == turn.seat) {
-      return seatState.connected ? null : seatState;
+      return _seatIsAway(seatState) ? seatState : null;
     }
   }
   return null;
+}
+
+/// C-708: a seat drawn as away, its phone down. A computer seat is played by
+/// the server and is never away, whatever `connected` says.
+bool _seatIsAway(SeatState seat) => seat.bot == null && !seat.connected;
+
+/// C-708: [seat] is a computer seat in [room] (PROTOCOL 34 item 1).
+bool _isComputerSeat(RoomSnapshot? room, int seat) {
+  if (room == null) {
+    return false;
+  }
+  for (final SeatState s in room.seats) {
+    if (s.seat == seat) {
+      return s.bot != null;
+    }
+  }
+  return false;
 }
 
 /// `data[key]` from a frame's `d`, when present and an `int`; null
@@ -10189,6 +10291,7 @@ Future<bool?> showKickSheet(
   BuildContext context, {
   required int seat,
   required String name,
+  bool computer = false,
   void Function(Route<bool> route)? onRoute,
 }) {
   final AppLocalizations loc = AppLocalizations.of(context);
@@ -10206,6 +10309,8 @@ Future<bool?> showKickSheet(
       }
       return KickSheet(
         seat: seat,
+        computer: computer,
+        computerLabel: loc.seatOriginBot,
         title: loc.kickSheetTitle(name),
         removeLabel: loc.kickSheetRemove,
         waitLabel: loc.kickSheetWait,
@@ -10219,11 +10324,14 @@ Future<bool?> showKickSheet(
 
 /// C-656 S6: the host's remove sheet. The absent seat's mark on a disc of its
 /// colour, one question, two big buttons. Remove is the filled one; Wait is
-/// the way back and is as easy to reach.
+/// the way back and is as easy to reach. C-708: a computer seat's title
+/// carries the robot mark ahead of its name.
 class KickSheet extends StatelessWidget {
   const KickSheet({
     super.key,
     required this.seat,
+    this.computer = false,
+    this.computerLabel = '',
     required this.title,
     required this.removeLabel,
     required this.waitLabel,
@@ -10232,6 +10340,12 @@ class KickSheet extends StatelessWidget {
   });
 
   final int seat;
+
+  /// The seat is a computer's: the title wears the robot mark.
+  final bool computer;
+
+  /// What the robot mark says to a screen reader.
+  final String computerLabel;
   final String title;
   final String removeLabel;
   final String waitLabel;
@@ -10277,13 +10391,34 @@ class KickSheet extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: kSpace3),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: LudoColors.ink,
-                  fontWeight: FontWeight.w700,
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  if (computer) ...<Widget>[
+                    Semantics(
+                      key: Key('kick-sheet-bot-$seat'),
+                      label: computerLabel,
+                      child: ExcludeSemantics(
+                        child: Icon(
+                          Icons.smart_toy_rounded,
+                          size: 24,
+                          color: seatColor,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: kSpace2),
+                  ],
+                  Flexible(
+                    child: Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: LudoColors.ink,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: kSpace4),
               Row(
