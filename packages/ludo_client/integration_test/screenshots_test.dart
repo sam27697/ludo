@@ -134,7 +134,7 @@ import 'dart:convert';
 import 'dart:io' show Platform, SocketException;
 import 'dart:typed_data' show Uint8List;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart' show MethodCall, MethodChannel;
@@ -150,7 +150,8 @@ import 'package:ludo_client/src/board_geometry.dart' show cellFor;
 import 'package:ludo_client/src/chat_bubble.dart' show kChatMinDwell;
 import 'package:ludo_client/src/code_ban_notice.dart'
     show RefusalNoticeMark, kRefusalNoticeFrame, kRefusalNoticeFrameWidth;
-import 'package:ludo_client/src/die_cube.dart' show BoardThrownDie;
+import 'package:ludo_client/src/die_cube.dart'
+    show BoardThrownDie, kThrowTumble;
 import 'package:ludo_client/src/end_card.dart' show EndCard;
 import 'package:ludo_client/src/fair_check.dart' show debugFairSourceOverride;
 import 'package:ludo_client/src/feedback.dart'
@@ -167,7 +168,8 @@ import 'package:ludo_client/src/net/snapshot.dart'
 import 'package:ludo_client/src/room_code.dart'
     show isValidRoomCode, normalizeRoomCode, roomCodeLength;
 import 'package:ludo_client/src/seat_mark.dart' show SeatMark;
-import 'package:ludo_client/src/seat_names.dart' show botCharacterName;
+import 'package:ludo_client/src/seat_names.dart'
+    show botCharacterName, seatShownName;
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart'
     show LastGame, SeatRecord, SessionMemory;
@@ -7338,6 +7340,57 @@ void main() {
         binding,
         shotName: '193-end-fair-unavailable-$lang',
         locale: locale,
+      );
+    });
+  }
+
+  // ==========================================================================
+  // 194-197: order 716t (C-716t), what order 708 changed on the game screen.
+  // A game of four in play, me in seat 0 and the host, computers in seats 1
+  // and 3, a person in seat 2. 194 a computer's turn; 195 the kick sheet over
+  // the person; 196 the kick sheet over a computer; 197 my die landed on the
+  // `pre` face before any `rolled`. Bodies live at the bottom of the file.
+  // ==========================================================================
+  for (final String lang in <String>['en', 'ar']) {
+    final Locale locale = Locale(lang);
+
+    testWidgets('capture 194-play-computer-turn-$lang', (tester) async {
+      await _shootC716Table(
+        tester,
+        binding,
+        shotName: '194-play-computer-turn-$lang',
+        locale: locale,
+        shape: _C716Table.computerTurn,
+      );
+    });
+
+    testWidgets('capture 195-play-kick-connected-$lang', (tester) async {
+      await _shootC716Table(
+        tester,
+        binding,
+        shotName: '195-play-kick-connected-$lang',
+        locale: locale,
+        shape: _C716Table.kickPerson,
+      );
+    });
+
+    testWidgets('capture 196-play-kick-computer-$lang', (tester) async {
+      await _shootC716Table(
+        tester,
+        binding,
+        shotName: '196-play-kick-computer-$lang',
+        locale: locale,
+        shape: _C716Table.kickComputer,
+      );
+    });
+
+    testWidgets('capture 197-play-pre-landed-$lang', (tester) async {
+      await _shootC716Table(
+        tester,
+        binding,
+        shotName: '197-play-pre-landed-$lang',
+        locale: locale,
+        shape: _C716Table.preLanded,
       );
     });
   }
@@ -29036,5 +29089,521 @@ Future<void> _shootC712EndFairUnavailable(
     await _capture(binding, tester, shotName);
   } finally {
     await _finishShot(tester, factory);
+  }
+}
+
+// ============================================================================
+// 194-197: order 716t (C-716t)
+// ============================================================================
+
+enum _C716Table { computerTurn, kickPerson, kickComputer, preLanded }
+
+/// The person's seat and the two computer seats (seat, bot) of 194-197.
+const int _c716PersonSeat = 2;
+const List<(int, int)> _c716Computers = <(int, int)>[(1, 1), (3, 4)];
+
+/// My tokens in 197: two out, two in the yard, so a 4 moves token 0 or
+/// token 1 and no single legal token arms the auto-move.
+const List<int> _c716MyTokens = <int>[10, 20, -1, -1];
+
+/// Section 35 item 1: the `pre` on my turn in 197, a 4 with tokens 0 and 1
+/// legal.
+const Map<String, Object?> _c716Pre = <String, Object?>{
+  'seat': 0,
+  'value': 4,
+  'legal': <int>[0, 1],
+  'k': 1,
+  'queue': <int>[4],
+  'legal_by_face': <Map<String, Object?>>[
+    <String, Object?>{
+      'face': 4,
+      'tokens': <int>[0, 1],
+    },
+  ],
+};
+
+/// Every text a RichText under [of] draws, the root included.
+List<String> _c716TextsUnder(Finder of) => <String>[
+  for (final Element e
+      in find
+          .descendant(of: of, matching: find.byType(RichText), matchRoot: true)
+          .evaluate())
+    (e.widget as RichText).text.toPlainText(),
+];
+
+/// 194-197: GameScreen mounted directly, as captures 27 and 28 are, over a
+/// RoomController whose create reply is already a 2026-11 room in play:
+/// me in seat 0 and the host, computer `bot` 1 in seat 1, a person on a
+/// link in seat 2, computer `bot` 4 in seat 3, every seat connected.
+/// 194: seat 1's turn, `await_roll`. 195 and 196: the person's turn; the
+/// host taps the name plate of seat 2 (195) or seat 1 (196) and the kick
+/// sheet is held up, nothing tapped on it. 197: my turn with `pre` (a 4,
+/// tokens 0 and 1 legal), my die tapped, the tumble over and no `rolled`
+/// delivered.
+Future<void> _shootC716Table(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required _C716Table shape,
+}) async {
+  final bool ar = locale.languageCode == 'ar';
+  const String roomCode = 'KP7M4Q';
+  final String myName = _c712Name(locale);
+  final String personName = ar ? 'كريم' : 'Karim';
+  final int turnSeat = switch (shape) {
+    _C716Table.computerTurn => 1,
+    _C716Table.kickPerson || _C716Table.kickComputer => _c716PersonSeat,
+    _C716Table.preLanded => 0,
+  };
+  final bool withPre = shape == _C716Table.preLanded;
+  final Map<String, Object?> turn = <String, Object?>{
+    'seat': turnSeat,
+    'phase': 'await_roll',
+    'deadline_ms': 45000,
+    'k': 0,
+    'queue': const <int>[],
+    'pre': ?(withPre ? _c716Pre : null),
+  };
+  final List<Map<String, Object?>> seats = <Map<String, Object?>>[
+    <String, Object?>{
+      ..._seatJson(
+        0,
+        name: myName,
+        tokens: withPre ? _c716MyTokens : const <int>[-1, -1, -1, -1],
+      ),
+      'via': 'host',
+    },
+    _c712BotSeat(1, 1),
+    _x202Seat(_c716PersonSeat, personName, 'link'),
+    _c712BotSeat(3, 4),
+  ];
+  final List<String> pushed = <String>[];
+  final String repro = _x203Repro(shotName);
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, PLAYING, ruleset '
+      '2026-11, me seat 0 host "$myName", seat 1 bot 1, seat 2 "$personName" '
+      'via link, seat 3 bot 4, turn ${jsonEncode(turn)}';
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+  // The phone size _openHostGame pins for the game screen captures off a
+  // device (C-667: from 600 dp up the die band moves).
+  if (!(!kIsWeb && Platform.isAndroid)) {
+    tester.view.physicalSize = const Size(360, 780);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
+
+  final FakeTransport socket = FakeTransport();
+  RoomController? controller;
+  try {
+    controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async => socket,
+    );
+    final Future<void> created = controller.createRoom(
+      name: myName,
+      players: 4,
+    );
+    var pumps = 0;
+    while (_sentOfType(socket, 'create_room').isEmpty) {
+      if (pumps >= 200) {
+        fail(
+          'capture $shotName ($scenario): no create_room was sent after 200 '
+          'frames; sent ${socket.sentRaw.map(_typeOf).toList()}. Reproduce: '
+          '$repro',
+        );
+      }
+      await tester.pump(const Duration(milliseconds: 16));
+      pumps += 1;
+    }
+    socket.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-$shotName'},
+      ),
+    );
+    socket.pushText(
+      _frame(
+        type: 'room',
+        re: _idOf(_sentOfType(socket, 'create_room').single),
+        data: <String, Object?>{
+          ..._roomJson(
+            code: roomCode,
+            state: 'PLAYING',
+            players: 4,
+            seats: seats,
+            turn: turn,
+            ruleset: '2026-11',
+            seq: 1,
+          ),
+          'open': false,
+          'placings': const <int>[],
+          'retired': const <int>[],
+        },
+      ),
+    );
+    pushed.add('seat_assigned');
+    pushed.add('room');
+    await created;
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        GameScreen(controller: controller),
+        locale: locale,
+      ),
+    );
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('board-seat-name-0')),
+      'capture $shotName ($scenario): board-seat-name-0 on the game screen. '
+      'Reproduce: $repro',
+    );
+    // The board's enter motion runs out in these frames.
+    await _pumpRealDurationFrames(tester, frameCount: 12);
+    expect(
+      <Object?>[controller.isHost, controller.room?.state],
+      <Object?>[true, RoomState.playing],
+      reason:
+          'capture $shotName ($scenario): fixture, expected me the host of a '
+          'room in play, got isHost ${controller.isHost}, state '
+          '${controller.room?.state}. Reproduce: $repro',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    final RoomController room = controller;
+    SeatState seatOf(int seat) =>
+        room.room!.seats.firstWhere((SeatState s) => s.seat == seat);
+
+    switch (shape) {
+      case _C716Table.computerTurn:
+        _c712ExpectKeys(
+          tester,
+          const <Key>[
+            Key('board-seat-bot-1'),
+            Key('board-seat-bot-3'),
+            Key('game-header-chip-bot'),
+          ],
+          shotName: shotName,
+          scenario: scenario,
+          repro: repro,
+        );
+        _c712ExpectNoKeys(
+          tester,
+          const <Key>[Key('board-seat-bot-0'), Key('board-seat-bot-2')],
+          shotName: shotName,
+          scenario: scenario,
+          repro: repro,
+        );
+        for (final (int seat, int bot) in _c716Computers) {
+          final String shown = seatShownName(loc, seatOf(seat));
+          expect(
+            shown,
+            botCharacterName(loc, bot),
+            reason:
+                'capture $shotName ($scenario): fixture, seat $seat must be '
+                'read as computer bot $bot, seatShownName gives "$shown". '
+                'Reproduce: $repro',
+          );
+          final Finder plate = find.byKey(Key('board-seat-name-$seat'));
+          final List<String> texts = _c716TextsUnder(plate);
+          expect(
+            texts.any((String t) => t.contains(shown)),
+            isTrue,
+            reason:
+                'capture $shotName ($scenario): expected board-seat-name-'
+                '$seat to read "$shown" (seatShownName), it reads $texts. '
+                'Reproduce: $repro',
+          );
+          final String wire = _c712WireBotNames[bot]!;
+          if (wire != shown) {
+            expect(
+              texts.any((String t) => t.contains(wire)),
+              isFalse,
+              reason:
+                  'capture $shotName ($scenario): board-seat-name-$seat must '
+                  'not read the wire name "$wire", it reads $texts. '
+                  'Reproduce: $repro',
+            );
+          }
+          _expectRectInsideView(
+            tester,
+            find.byKey(Key('board-seat-bot-$seat')),
+            label: 'board-seat-bot-$seat',
+            context: 'before capture $shotName ($scenario). Reproduce: $repro',
+          );
+        }
+        _expectRectInsideView(
+          tester,
+          find.byKey(const Key('game-header-chip-bot')),
+          label: 'game-header-chip-bot',
+          context: 'before capture $shotName ($scenario). Reproduce: $repro',
+        );
+        _c712ExpectNoLayoutError(
+          tester,
+          shotName: shotName,
+          scenario: scenario,
+          repro: repro,
+        );
+        _c712Print(
+          shotName,
+          'game-header-chip-bot',
+          tester.getRect(find.byKey(const Key('game-header-chip-bot'))),
+          'board-seat-bot-1='
+              '${_c712Rect(tester.getRect(find.byKey(const Key('board-seat-bot-1'))))} '
+              'board-seat-bot-3='
+              '${_c712Rect(tester.getRect(find.byKey(const Key('board-seat-bot-3'))))}',
+          scenario,
+        );
+        await _capture(binding, tester, shotName);
+
+      case _C716Table.kickPerson:
+      case _C716Table.kickComputer:
+        final bool computer = shape == _C716Table.kickComputer;
+        final int target = computer ? 1 : _c716PersonSeat;
+        final Key sheetKey = Key('kick-sheet-$target');
+        _c712ExpectNoKeys(
+          tester,
+          <Key>[
+            sheetKey,
+            const Key('kick-sheet-wait'),
+            const Key('kick-sheet-remove'),
+          ],
+          shotName: shotName,
+          scenario: scenario,
+          repro: repro,
+        );
+        final Finder plate = find.byKey(Key('board-seat-name-$target'));
+        _expectRectInsideView(
+          tester,
+          plate,
+          label: 'board-seat-name-$target',
+          context: 'before the tap in $shotName ($scenario). Reproduce: $repro',
+        );
+        final int sentBefore = socket.sentRaw.length;
+        await tester.tap(plate);
+        await tester.pump();
+        await _pumpUntilFound(
+          tester,
+          find.byKey(sheetKey),
+          'capture $shotName ($scenario): kick-sheet-$target after a tap on '
+          'board-seat-name-$target at ${_c712Rect(tester.getRect(plate))}; '
+          'texts on screen: ${_c712Texts(tester)}. Reproduce: $repro',
+        );
+        // The sheet's enter motion runs out in these frames.
+        await _pumpRealDurationFrames(tester, frameCount: 12);
+        _c712ExpectKeys(
+          tester,
+          <Key>[
+            sheetKey,
+            const Key('kick-sheet-wait'),
+            const Key('kick-sheet-remove'),
+          ],
+          shotName: shotName,
+          scenario: scenario,
+          repro: repro,
+        );
+        for (final Key control in const <Key>[
+          Key('kick-sheet-wait'),
+          Key('kick-sheet-remove'),
+        ]) {
+          expect(
+            tester.widget<ButtonStyleButton>(find.byKey(control)).onPressed,
+            isNotNull,
+            reason:
+                'capture $shotName ($scenario): expected $control enabled on '
+                'kick-sheet-$target. Reproduce: $repro',
+          );
+          _expectRectInsideView(
+            tester,
+            find.byKey(control),
+            label: '$control',
+            context: 'before capture $shotName ($scenario). Reproduce: $repro',
+          );
+        }
+        final Finder botMark = find.descendant(
+          of: find.byKey(sheetKey),
+          matching: find.byKey(Key('kick-sheet-bot-$target')),
+        );
+        expect(
+          botMark,
+          computer ? findsOneWidget : findsNothing,
+          reason:
+              'capture $shotName ($scenario): expected '
+              '${computer ? 'the robot mark kick-sheet-bot-$target in' : 'no robot mark kick-sheet-bot-$target in'} '
+              'the sheet title of ${computer ? 'computer' : 'person'} seat '
+              '$target. Reproduce: $repro',
+        );
+        final List<String> sentSince = socket.sentRaw
+            .skip(sentBefore)
+            .map(_typeOf)
+            .toList();
+        expect(
+          sentSince,
+          isEmpty,
+          reason:
+              'capture $shotName ($scenario): a tap on the name plate only '
+              'opens the sheet, nothing is sent until Remove; sent since the '
+              'tap $sentSince. Reproduce: $repro',
+        );
+        expect(
+          _sentOfType(socket, 'kick'),
+          isEmpty,
+          reason:
+              'capture $shotName ($scenario): no kick on the wire before a '
+              'control is tapped; sent ${socket.sentRaw.map(_typeOf).toList()}. '
+              'Reproduce: $repro',
+        );
+        _c712ExpectNoLayoutError(
+          tester,
+          shotName: shotName,
+          scenario: scenario,
+          repro: repro,
+        );
+        _c712Print(
+          shotName,
+          'kick-sheet-$target',
+          tester.getRect(find.byKey(sheetKey)),
+          'kick-sheet-wait='
+              '${_c712Rect(tester.getRect(find.byKey(const Key('kick-sheet-wait'))))} '
+              'kick-sheet-remove='
+              '${_c712Rect(tester.getRect(find.byKey(const Key('kick-sheet-remove'))))}',
+          scenario,
+        );
+        await _capture(binding, tester, shotName);
+
+      case _C716Table.preLanded:
+        final Finder die = find.byKey(const Key('game-die'));
+        List<int> faces() => <int>[
+          for (int v = 1; v <= 6; v++)
+            if (find
+                .descendant(
+                  of: die,
+                  matching: find.byKey(Key('game-die-face-$v')),
+                )
+                .evaluate()
+                .isNotEmpty)
+              v,
+        ];
+        bool tumbling() => find
+            .descendant(
+              of: die,
+              matching: find.byKey(const Key('game-die-tumbling')),
+            )
+            .evaluate()
+            .isNotEmpty;
+        List<int> rings() => <int>[
+          for (int token = 0; token < 4; token++)
+            if (find
+                .byKey(Key('board-legal-ring-0-$token'))
+                .evaluate()
+                .isNotEmpty)
+              token,
+        ];
+        String observed() =>
+            'die faces ${faces()}, tumbling ${tumbling()}, legal rings '
+            '${rings()}, pushed $pushed, sent '
+            '${socket.sentRaw.map(_typeOf).toList()}';
+        _c712ExpectKeys(
+          tester,
+          const <Key>[Key('game-die')],
+          shotName: shotName,
+          scenario: scenario,
+          repro: repro,
+        );
+        expect(
+          _sentOfType(socket, 'roll'),
+          isEmpty,
+          reason:
+              'capture $shotName ($scenario): no roll before the tap; '
+              '${observed()}. Reproduce: $repro',
+        );
+        final Stopwatch sinceTap = Stopwatch();
+        await tester.tap(die);
+        sinceTap.start();
+        await tester.pump();
+        var waited = 0;
+        while (tumbling() || !listEquals(faces(), const <int>[4])) {
+          if (waited >= 300) {
+            fail(
+              'capture $shotName ($scenario): expected my die to land on the '
+              'pre face 4 after the tumble ($kThrowTumble) with no rolled '
+              'delivered; after $waited frames of 16 ms '
+              '(${sinceTap.elapsedMilliseconds} ms) ${observed()}. '
+              'Reproduce: $repro',
+            );
+          }
+          await tester.pump(const Duration(milliseconds: 16));
+          waited += 1;
+        }
+        final int landedMs = sinceTap.elapsedMilliseconds;
+        // The ring's enter motion runs out in these frames; the no-answer
+        // line is 4 s away.
+        await _pumpRealDurationFrames(tester, frameCount: 12);
+        expect(
+          _sentOfType(socket, 'roll'),
+          hasLength(1),
+          reason:
+              'capture $shotName ($scenario): one tap, one roll on the wire; '
+              '${observed()}. Reproduce: $repro',
+        );
+        expect(
+          pushed.where((String t) => t == 'rolled'),
+          isEmpty,
+          reason:
+              'capture $shotName ($scenario): fixture, no rolled is pushed in '
+              'this capture; ${observed()}. Reproduce: $repro',
+        );
+        expect(
+          <Object?>[faces(), tumbling(), rings()],
+          <Object?>[
+            const <int>[4],
+            false,
+            const <int>[0, 1],
+          ],
+          reason:
+              'capture $shotName ($scenario): expected my die resting on face '
+              '4 (pre.value) with the legal rings on tokens 0 and 1 '
+              '(pre.legal), landed after $landedMs ms; ${observed()}. '
+              'Reproduce: $repro',
+        );
+        _c712ExpectNoKeys(
+          tester,
+          const <Key>[Key('game-die-no-answer'), Key('game-die-no-move-mark')],
+          shotName: shotName,
+          scenario: scenario,
+          repro: repro,
+        );
+        for (final int token in const <int>[0, 1]) {
+          _expectRectInsideView(
+            tester,
+            find.byKey(Key('board-legal-ring-0-$token')),
+            label: 'board-legal-ring-0-$token',
+            context: 'before capture $shotName ($scenario). Reproduce: $repro',
+          );
+        }
+        _c712ExpectNoLayoutError(
+          tester,
+          shotName: shotName,
+          scenario: scenario,
+          repro: repro,
+        );
+        _c712Print(
+          shotName,
+          'game-die',
+          tester.getRect(die),
+          'landed_ms=$landedMs board-legal-ring-0-0='
+              '${_c712Rect(tester.getRect(find.byKey(const Key('board-legal-ring-0-0'))))}',
+          scenario,
+        );
+        await _capture(binding, tester, shotName, frames: 12);
+    }
+  } finally {
+    await _releaseTrayGame(tester, controller);
   }
 }
