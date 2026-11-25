@@ -249,6 +249,183 @@ class FaceLegal {
   final List<int> tokens;
 }
 
+/// docs/PROTOCOL.md section 35 item 1: the `rolled` the server would publish
+/// if the seat on turn rolled now, sent only to that seat's own socket in
+/// `await_roll`, on the `turn` frame and in the snapshot's `turn`. It is the
+/// server's face, computed from the same chain link the roll uses; the
+/// client shows it when its own die lands and invents nothing.
+///
+/// Decoded leniently by [tryParse]: a missing or malformed `pre` reads as
+/// none, and the die then waits for `rolled` as it always has (item 5).
+class PreRoll {
+  const PreRoll._(
+    this._wire, {
+    required this.seat,
+    required this.value,
+    required this.legal,
+    required this.k,
+    required this.queue,
+    required this.legalByFace,
+    required this.release,
+    required this.offer,
+  });
+
+  /// The seat the roll belongs to.
+  final int seat;
+
+  /// The face, 1..6.
+  final int value;
+
+  /// The tokens that may move with [value]; empty when none may.
+  final List<int> legal;
+
+  /// The roll number the `rolled` that follows carries.
+  final int k;
+
+  /// The unspent faces after this roll; `[]` when the wire sends none.
+  final List<int> queue;
+
+  /// Section 21.1's `legal_by_face`, null when the wire sends none.
+  final List<FaceLegal>? legalByFace;
+
+  /// Section 28 rule 2: the roll grants or lapses a yard release.
+  final bool release;
+
+  /// Section 30 rule 2, read as `rolled` is read: true only on a release
+  /// that is owed (a non-empty [legal]) and offered.
+  final bool offer;
+
+  final Map<String, Object?> _wire;
+
+  /// The data of the `rolled` frame this roll stands for, as the server
+  /// would send it, with [deadlineMs] in place of the one the server has not
+  /// sent yet and no `seq`, `reveal` or `by`.
+  Map<String, Object?> rolledData({required int deadlineMs}) {
+    return <String, Object?>{..._wire, 'seat': seat, 'deadline_ms': deadlineMs};
+  }
+
+  /// True when [data], the `d` of a `rolled` frame, carries the same roll:
+  /// the same seat, face, `k`, legal list, queue, per-face legal lists and
+  /// release flags. Section 35 item 2 says it always does; a difference is
+  /// the server's truth and the caller resyncs (item 5, ruling 7 (e)).
+  bool sameRollAs(Map<String, Object?> data) {
+    final PreRoll? other = tryParse(data);
+    if (other == null) {
+      return false;
+    }
+    return other.seat == seat &&
+        other.value == value &&
+        other.k == k &&
+        other.release == release &&
+        other.offer == offer &&
+        _sameInts(other.legal, legal) &&
+        _sameInts(other.queue, queue) &&
+        (data['queue'] != null) == (_wire['queue'] != null) &&
+        _sameFaceLegal(other.legalByFace, legalByFace);
+  }
+
+  /// [value] read as a `pre` object; null when it is absent or any field it
+  /// needs is missing or of the wrong shape.
+  static PreRoll? tryParse(Object? value) {
+    if (value is! Map<String, Object?>) {
+      return null;
+    }
+    final Object? seat = value['seat'];
+    final Object? face = value['value'];
+    final Object? k = value['k'];
+    final List<int>? legal = _lenientInts(value['legal']);
+    if (seat is! int ||
+        seat < 0 ||
+        seat > 3 ||
+        face is! int ||
+        face < 1 ||
+        face > 6 ||
+        k is! int ||
+        legal == null) {
+      return null;
+    }
+    final Object? queueRaw = value['queue'];
+    final List<int>? queue = queueRaw == null
+        ? const <int>[]
+        : _lenientInts(queueRaw);
+    if (queue == null) {
+      return null;
+    }
+    final Object? byFaceRaw = value['legal_by_face'];
+    List<FaceLegal>? legalByFace;
+    if (byFaceRaw != null) {
+      if (byFaceRaw is! List) {
+        return null;
+      }
+      legalByFace = <FaceLegal>[];
+      for (final Object? entry in byFaceRaw) {
+        if (entry is! Map<String, Object?>) {
+          return null;
+        }
+        final Object? entryFace = entry['face'];
+        final List<int>? tokens = _lenientInts(entry['tokens']);
+        if (entryFace is! int || tokens == null) {
+          return null;
+        }
+        legalByFace.add(FaceLegal(face: entryFace, tokens: tokens));
+      }
+    }
+    final bool release = value['release'] == true;
+    return PreRoll._(
+      Map<String, Object?>.unmodifiable(value),
+      seat: seat,
+      value: face,
+      legal: List<int>.unmodifiable(legal),
+      k: k,
+      queue: List<int>.unmodifiable(queue),
+      legalByFace: legalByFace,
+      release: release,
+      offer: release && legal.isNotEmpty && value['offer'] == true,
+    );
+  }
+}
+
+List<int>? _lenientInts(Object? value) {
+  if (value is! List) {
+    return null;
+  }
+  final List<int> result = <int>[];
+  for (final Object? element in value) {
+    if (element is! int) {
+      return null;
+    }
+    result.add(element);
+  }
+  return result;
+}
+
+bool _sameInts(List<int> a, List<int> b) {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (int i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _sameFaceLegal(List<FaceLegal>? a, List<FaceLegal>? b) {
+  if (a == null || b == null) {
+    return a == null && b == null;
+  }
+  if (a.length != b.length) {
+    return false;
+  }
+  for (int i = 0; i < a.length; i++) {
+    if (a[i].face != b[i].face || !_sameInts(a[i].tokens, b[i].tokens)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 class TurnState {
   const TurnState({
     required this.seat,
@@ -266,6 +443,7 @@ class TurnState {
     this.offer = false,
     this.banked,
     this.graceMs,
+    this.pre,
   });
 
   final int seat;
@@ -317,6 +495,11 @@ class TurnState {
   /// wire sends none (no grace, or a `2026-10` room).
   final int? graceMs;
 
+  /// docs/PROTOCOL.md section 35 item 1: the roll in hand for the seat on
+  /// turn, in `await_roll`, on that seat's own socket only. Null everywhere
+  /// else, and on a server that sends none.
+  final PreRoll? pre;
+
   factory TurnState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');
     if (seat < 0 || seat > 3) {
@@ -338,6 +521,9 @@ class TurnState {
     final bool offer = _optBool(json, 'offer') ?? false;
     final int? banked = _optInt(json, 'banked');
     final int? graceMs = _optInt(json, 'grace_ms');
+    final PreRoll? pre = phase == TurnPhase.awaitRoll
+        ? PreRoll.tryParse(json['pre'])
+        : null;
 
     return TurnState(
       seat: seat,
@@ -354,6 +540,7 @@ class TurnState {
       offer: offer,
       banked: banked,
       graceMs: graceMs,
+      pre: pre,
     );
   }
 }

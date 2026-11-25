@@ -249,6 +249,28 @@ class RoomController extends ChangeNotifier {
   KnockState _knock = const KnockState();
   bool _wasKicked = false;
 
+  /// docs/PROTOCOL.md section 35 ruling 7 (f): set by a `seat_retired` naming
+  /// this phone's own seat. Final whatever the `seq` gap: from then on no gap
+  /// starts a resync and no `resume` is sent for the seat.
+  bool _selfRetired = false;
+
+  /// Section 35 item 5: my roll in flight. [_preThrown] is the `pre` a die tap
+  /// sent `roll` under, until [_landPre] shows it; [_preConnection] is the
+  /// socket it was sent on. Once my `rolled` for that `k` arrives while the
+  /// die is still in the air, it and every state-changing frame after it
+  /// wait in [_heldFrames] for the landing, so the table changes in the
+  /// order the server sent it and the face lands at a fixed time after the
+  /// tap. [_landedPre] is the one shown and not yet confirmed by its
+  /// `rolled`; [_preEchoes] marks that `rolled` once it arrives, so the
+  /// screen does not play it a second time.
+  PreRoll? _preThrown;
+  RoomConnection? _preConnection;
+  Timer? _preLandTimer;
+  bool _holdingFrames = false;
+  final List<Frame> _heldFrames = <Frame>[];
+  PreRoll? _landedPre;
+  final Expando<bool> _preEchoes = Expando<bool>('pre echo');
+
   /// Section 32 item 12: the `ban` a `CODE_BANNED` error, a rejecting
   /// `knock_failed` or a `kicked` frame carried, or null.
   CodeBan? _ban;
@@ -376,8 +398,44 @@ class RoomController extends ChangeNotifier {
   KnockState get knockState => _knock;
 
   /// Section 31 item 6: set when the host removed this phone from a lobby
-  /// (a `kicked` frame); cleared by the next join.
+  /// (a `kicked` frame); cleared by the next join. Section 33 item 8: the
+  /// same frame in a game in play sets it too.
   bool get wasKicked => _wasKicked;
+
+  /// docs/PROTOCOL.md section 35 item 1: the roll in hand for my seat, the
+  /// `pre` the server sent with my `await_roll` turn. Null when it is not my
+  /// turn to roll, when the server sent none (an older server, a resume that
+  /// has not answered), and from the moment my `rolled` for that `k` is
+  /// applied or the turn moves on.
+  PreRoll? get pre {
+    if (_holdingFrames) {
+      // My `rolled` for it has arrived and waits for the die to land.
+      return null;
+    }
+    if (_hasDesynced) {
+      // A frame went missing: the turn this `pre` rode may have moved on
+      // already. Nothing is in hand until the resync's snapshot says so.
+      return null;
+    }
+    final RoomSnapshot? room = _room;
+    final int? mySeat = _cachedSeat;
+    final TurnState? turn = room?.turn;
+    if (room == null ||
+        mySeat == null ||
+        turn == null ||
+        room.state != RoomState.playing ||
+        turn.seat != mySeat ||
+        turn.phase != TurnPhase.awaitRoll) {
+      return null;
+    }
+    final PreRoll? inHand = turn.pre;
+    return inHand != null && inHand.seat == mySeat ? inHand : null;
+  }
+
+  /// Section 35 item 5: true for the `rolled` that confirms a roll of mine
+  /// already shown from its `pre`. Applied here for its `seq`, and nothing on
+  /// screen is to change for it.
+  bool isPreEcho(Frame frame) => _preEchoes[frame] ?? false;
 
   /// The code ban the server last told this controller about, exactly as
   /// sent; null when the last answer carried none or it was unreadable.
@@ -695,6 +753,7 @@ class RoomController extends ChangeNotifier {
     _room = snapshot;
     _clearLastFinished();
     _lastRetirement = null;
+    _selfRetired = false;
     _phase = RoomPhase.connected;
     _blocked = false;
     _seatTakenOver = false;
@@ -793,6 +852,7 @@ class RoomController extends ChangeNotifier {
         _room = snapshot;
         _clearLastFinished();
         _lastRetirement = null;
+        _selfRetired = false;
         _phase = RoomPhase.connected;
         _blocked = false;
         _seatTakenOver = false;
@@ -925,6 +985,7 @@ class RoomController extends ChangeNotifier {
       _room = snapshot;
       _clearLastFinished();
       _lastRetirement = null;
+      _selfRetired = false;
       _phase = RoomPhase.connected;
       _blocked = false;
       _seatTakenOver = false;
@@ -1052,6 +1113,7 @@ class RoomController extends ChangeNotifier {
         return;
       }
       _room = snapshot;
+      _landedPre = null;
       _recordLastFinished(snapshot);
       _phase = RoomPhase.connected;
       _blocked = false;
@@ -1225,8 +1287,11 @@ class RoomController extends ChangeNotifier {
     }
   }
 
-  /// Host-only, in a game. docs/PROTOCOL.md section 28 rule 4: asks the
-  /// server to retire a seat whose socket is down. Null when the server
+  /// Host-only, in a game. docs/PROTOCOL.md section 33 item 8 (replacing
+  /// section 28 rule 4's case): asks the server to retire any playing seat,
+  /// connected, away or a computer's. An older server still refuses a seat
+  /// whose socket is up with `NOT_ABSENT`, which is passed back like any
+  /// other refusal below. Null when the server
   /// answered with `seat_retired`, which [_reduceSeatRetired] applies like
   /// any other push (this method changes nothing itself). The error code
   /// when the server refused with one of [_kickRejectedCodes]; the
@@ -1308,26 +1373,37 @@ class RoomController extends ChangeNotifier {
   /// reduced like any other; a `room` answer is applied as [setGuestApproval]
   /// applies its own. A refusal goes the way of every host request. A silent
   /// no-op when not connected.
-  Future<void> fillComputer() async {
+  ///
+  /// Completes with the refusal code when the server refused with one the
+  /// host can act on (kept in [errorCode] too, as for every host request);
+  /// null when the request was accepted, when nothing was sent, and when the
+  /// connection was lost under it.
+  Future<String?> fillComputer() async {
     final RoomConnection? connection = _connection;
     if (_disposed || _phase != RoomPhase.connected || connection == null) {
-      return;
+      return null;
     }
     try {
       final Frame frame = await connection.fillComputer();
       if (_disposed) {
-        return;
+        return null;
       }
       final RoomSnapshot? room = _room;
       if (room != null && frame.type == 'room') {
         final int? seqValue = frame.seq;
         if (seqValue != null && seqValue <= room.seq) {
-          return;
+          return null;
         }
         _applyRoomFrame(frame, room);
       }
+      return null;
     } catch (error) {
       _failFromHostRequest(error);
+      if (error is ProtocolErrorException &&
+          _hostRequestSoftCodes.contains(error.code)) {
+        return error.code;
+      }
+      return null;
     }
   }
 
@@ -1446,16 +1522,168 @@ class RoomController extends ChangeNotifier {
   /// is not parsed as one and changes nothing here. The `rolled` frame that
   /// follows reaches [frames] like every other frame and is what actually
   /// moves the turn forward.
-  Future<void> roll() async {
+  ///
+  /// docs/PROTOCOL.md section 35 item 5: with a [pre] in hand, `roll` still
+  /// goes out at once, and [landAfter] later the roll lands from that `pre`:
+  /// the turn becomes what its `rolled` will say and [frames] carries a
+  /// `rolled` built from it (never recorded in [gameTranscript]), so a screen
+  /// plays the landing exactly as it plays a `rolled` from the server. The
+  /// server's own `rolled`, whenever it comes, is then only checked against
+  /// it ([isPreEcho]); one that differs is the truth and starts one resync.
+  /// Without a `pre`, [landAfter] is unused and nothing changes from before.
+  Future<void> roll({Duration landAfter = Duration.zero}) async {
     final RoomConnection? connection = _connection;
     if (_disposed || _phase != RoomPhase.connected || connection == null) {
       return;
     }
+    final PreRoll? inHand = _preThrown == null && !_holdingFrames ? pre : null;
+    if (inHand != null) {
+      _preThrown = inHand;
+      _preConnection = connection;
+      _preLandTimer?.cancel();
+      _preLandTimer = Timer(landAfter, _landPre);
+    }
     try {
       await connection.roll();
     } catch (error) {
+      if (inHand != null &&
+          error is ProtocolErrorException &&
+          _rejectedIntentionCodes.contains(error.code)) {
+        // The roll shown from `pre` was not taken on this request. The face
+        // is still the one the server publishes for that `k` (section 35
+        // item 3), but the turn it leads to is the server's to say, so the
+        // table is fetched again rather than left on a guess.
+        unawaited(resync());
+        return;
+      }
       _failFromRollOrMove(error);
     }
+  }
+
+  /// Section 35 item 5: the die thrown under [_preThrown] lands. Shows the
+  /// roll from its `pre` when the table still holds that turn on the socket
+  /// the roll went out on, then lets through, in order, every frame held
+  /// back since my `rolled` arrived. On any other table the `pre` is stale
+  /// and nothing is shown from it: the held frames go on as if they had just
+  /// arrived, or, when the socket they came on is gone, go with it.
+  void _landPre() {
+    _preLandTimer = null;
+    final PreRoll? thrown = _preThrown;
+    final RoomConnection? thrownOn = _preConnection;
+    _preThrown = null;
+    _preConnection = null;
+    if (thrown == null || _disposed) {
+      return;
+    }
+    final bool sameSocket =
+        _phase == RoomPhase.connected &&
+        thrownOn != null &&
+        identical(_connection, thrownOn);
+    final RoomSnapshot? room = _room;
+    final TurnState? turn = room?.turn;
+    final bool stillInHand =
+        room != null &&
+        turn != null &&
+        room.state == RoomState.playing &&
+        turn.seat == thrown.seat &&
+        turn.phase == TurnPhase.awaitRoll &&
+        turn.pre?.k == thrown.k;
+    if (!sameSocket) {
+      _holdingFrames = false;
+      _heldFrames.clear();
+      return;
+    }
+    if (_resyncInFlight || _selfRetired || !stillInHand) {
+      _releaseHeldFrames();
+      return;
+    }
+    final int deadlineMs = turn.segmentMs ?? room.rules.turnSeconds * 1000;
+    final Map<String, Object?> data = thrown.rolledData(deadlineMs: deadlineMs);
+    _room = room.copyWith(
+      turn: _rolledTurn(
+        data,
+        room,
+        seat: thrown.seat,
+        value: thrown.value,
+        legal: thrown.legal,
+        deadlineMs: deadlineMs,
+        k: thrown.k,
+      ),
+      recentRolls: _appendRecentRoll(room.recentRolls, thrown.k, thrown.value),
+      recentRollSeats: _appendRecentRollSeat(room.recentRollSeats, thrown.seat),
+      lastSpentFace: null,
+    );
+    _landedPre = thrown;
+    if (!_framesController.isClosed) {
+      _framesController.add(
+        Frame(type: 'rolled', id: newMessageId(), data: data),
+      );
+    }
+    notifyListeners();
+    if (_heldFrames.isEmpty) {
+      _holdingFrames = false;
+      return;
+    }
+    // The landing reaches the screen before the frames that came after it.
+    Timer.run(() {
+      if (_disposed || !identical(_connection, thrownOn)) {
+        _holdingFrames = false;
+        _heldFrames.clear();
+        return;
+      }
+      _releaseHeldFrames();
+    });
+  }
+
+  /// Hands the frames held behind a landing on, in order, each through
+  /// [_handleFrame] as if it had just arrived.
+  void _releaseHeldFrames() {
+    _holdingFrames = false;
+    if (_heldFrames.isEmpty) {
+      return;
+    }
+    final List<Frame> held = List<Frame>.of(_heldFrames);
+    _heldFrames.clear();
+    for (final Frame frame in held) {
+      if (_disposed) {
+        return;
+      }
+      _handleFrame(frame);
+    }
+  }
+
+  /// True when [frame] is to wait for the landing of my roll in the air:
+  /// my `rolled` for the thrown `k`, and every state-changing frame after
+  /// it until the landing lets them through.
+  bool _holdForLanding(Frame frame) {
+    if (!_stateChangingTypes.contains(frame.type)) {
+      return false;
+    }
+    if (!_holdingFrames) {
+      final PreRoll? thrown = _preThrown;
+      if (thrown == null ||
+          frame.type != 'rolled' ||
+          _asInt(frame.data, 'seat') != thrown.seat ||
+          _asInt(frame.data, 'k') != thrown.k) {
+        return false;
+      }
+      _holdingFrames = true;
+    }
+    _heldFrames.add(frame);
+    return true;
+  }
+
+  /// Forgets every roll of mine in the air or shown and not yet confirmed,
+  /// with the frames held for it: the seat, the socket or the room under it
+  /// is gone.
+  void _dropPreState() {
+    _preLandTimer?.cancel();
+    _preLandTimer = null;
+    _preThrown = null;
+    _preConnection = null;
+    _landedPre = null;
+    _holdingFrames = false;
+    _heldFrames.clear();
   }
 
   /// docs/PROTOCOL.md section 30 rule 4: declines the pending shared release.
@@ -1602,6 +1830,7 @@ class RoomController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _dropPreState();
     _sendRematchOnResume = false;
     _queueRetryTimer?.cancel();
     _queueRetryTimer = null;
@@ -1644,6 +1873,7 @@ class RoomController extends ChangeNotifier {
   /// Makes an open [connection] the current one: forwards its frames and
   /// watches for it ending on its own.
   void _attach(RoomConnection connection) {
+    _dropPreState();
     unawaited(_frameSub?.cancel());
     final RoomConnection? previous = _connection;
     _connection = connection;
@@ -1779,6 +2009,9 @@ class RoomController extends ChangeNotifier {
   /// handed to the reducer when it is one of the types docs/PROTOCOL.md
   /// section 5 marks as carrying `seq`.
   void _handleFrame(Frame frame) {
+    if (_holdForLanding(frame)) {
+      return;
+    }
     if (frame.type == 'room') {
       _noteSnapshotGame(frame);
     }
@@ -1897,6 +2130,7 @@ class RoomController extends ChangeNotifier {
     _room = decoded;
     _clearLastFinished();
     _lastRetirement = null;
+    _selfRetired = false;
     _knock = KnockState(phase: KnockPhase.accepted, knockId: _knock.knockId);
     _phase = RoomPhase.connected;
     _blocked = false;
@@ -1945,6 +2179,7 @@ class RoomController extends ChangeNotifier {
   /// resume is ever tried, and [wasKicked] says why.
   void _onKicked(Frame frame) {
     _wasKicked = true;
+    _dropPreState();
     _ban = CodeBan.tryParse(frame.data['ban']);
     _blocked = true;
     _cancelAutoReconnect();
@@ -1962,6 +2197,7 @@ class RoomController extends ChangeNotifier {
 
   /// Closes and forgets the current connection without a `leave_room`.
   void _dropConnection() {
+    _dropPreState();
     final RoomConnection? connection = _connection;
     _connection = null;
     unawaited(_frameSub?.cancel());
@@ -2019,6 +2255,14 @@ class RoomController extends ChangeNotifier {
   /// unconditional: a resync already running or no room held yet both leave
   /// the frame changing nothing here, before any per-type rule ever runs.
   void _reduce(Frame frame) {
+    // Section 35 ruling 7 (f): my own seat's retire is final whatever came
+    // before it, a resync in flight included.
+    if (frame.type == 'seat_retired' &&
+        _cachedSeat != null &&
+        _asInt(frame.data, 'seat') == _cachedSeat) {
+      _reduceOwnRetire(frame);
+      return;
+    }
     if (_resyncInFlight) {
       return;
     }
@@ -2101,6 +2345,7 @@ class RoomController extends ChangeNotifier {
       return;
     }
     _room = decoded;
+    _landedPre = null;
     _recordLastFinished(decoded);
     _hasDesynced = false;
     notifyListeners();
@@ -2357,6 +2602,7 @@ class RoomController extends ChangeNotifier {
     );
     _clearLastFinished();
     _lastRetirement = null;
+    _selfRetired = false;
     notifyListeners();
   }
 
@@ -2439,6 +2685,7 @@ class RoomController extends ChangeNotifier {
       offer: frame.data['offer'] == true && phase == TurnPhase.awaitMove,
       banked: _asInt(frame.data, 'banked'),
       graceMs: _asInt(frame.data, 'grace_ms'),
+      pre: phase == TurnPhase.awaitRoll ? frame.pre : null,
     );
     // Section 30 rule 5: the sixes banked for this seat are in the queue now,
     // so the count held on the seat goes back to 0.
@@ -2487,21 +2734,72 @@ class RoomController extends ChangeNotifier {
       return;
     }
 
+    // Section 35 item 5: the `rolled` of a roll already shown from its `pre`.
+    // It is marked before anything else, so the screen never plays it as a
+    // new roll, whichever way it is applied below.
+    final PreRoll? landed = _landedPre;
+    _landedPre = null;
+    final bool echo =
+        landed != null && seatValue == landed.seat && k == landed.k;
+    if (echo) {
+      _preEchoes[frame] = true;
+    }
+
     if (seqValue != room.seq + 1) {
       _beginResync(room);
       return;
     }
 
-    final List<int>? queueRaw = _asIntList(frame.data, 'queue');
-    final List<FaceLegal>? legalByFace = _asFaceLegalList(
+    if (echo) {
+      _room = room.copyWith(seq: seqValue);
+      if (!landed.sameRollAs(frame.data)) {
+        // Ruling 7 (e): the `rolled` is the truth. One resync, no error.
+        unawaited(resync());
+      }
+      return;
+    }
+
+    final TurnState turn = _rolledTurn(
       frame.data,
+      room,
+      seat: seatValue,
+      value: value,
+      legal: legal,
+      deadlineMs: deadlineMs,
+      k: k,
+    );
+    _room = room.copyWith(
+      turn: turn,
+      seq: seqValue,
+      recentRolls: _appendRecentRoll(room.recentRolls, k, value),
+      recentRollSeats: _appendRecentRollSeat(room.recentRollSeats, seatValue),
+      lastSpentFace: null,
+    );
+    notifyListeners();
+  }
+
+  /// The turn a `rolled` with [data] leaves (section 21.3 ruling 3, section
+  /// 28 rule 2, section 30 rule 2): what [_reduceRolled] applies for the
+  /// server's frame and [_landPre] for a roll shown from its `pre`.
+  TurnState _rolledTurn(
+    Map<String, Object?> data,
+    RoomSnapshot room, {
+    required int seat,
+    required int value,
+    required List<int> legal,
+    required int deadlineMs,
+    required int k,
+  }) {
+    final List<int>? queueRaw = _asIntList(data, 'queue');
+    final List<FaceLegal>? legalByFace = _asFaceLegalList(
+      data,
       'legal_by_face',
     );
     // Section 28 rule 2: a roll that grants a yard release has no
     // `legal_by_face` and a non-empty `legal`, and the server is in
     // await_move with nothing to spend a face on. A lapse is the same frame
     // with `legal: []` and reads as any roll-queue roll with no legal move.
-    final bool release = frame.data['release'] == true;
+    final bool release = data['release'] == true;
     final bool releaseOwed = release && legal.isNotEmpty;
     final TurnPhase phase = releaseOwed
         ? TurnPhase.awaitMove
@@ -2517,11 +2815,11 @@ class RoomController extends ChangeNotifier {
         (legal.isNotEmpty ||
             (legalByFace?.any((FaceLegal f) => f.tokens.isNotEmpty) ?? false));
     final int? segmentMs =
-        _asInt(frame.data, 'segment_ms') ??
+        _asInt(data, 'segment_ms') ??
         (movePending ? deadlineMs : room.turn?.segmentMs);
 
-    final TurnState turn = TurnState(
-      seat: seatValue,
+    return TurnState(
+      seat: seat,
       phase: phase,
       deadlineMs: deadlineMs,
       k: k,
@@ -2532,16 +2830,8 @@ class RoomController extends ChangeNotifier {
       legalByFace: releaseOwed ? null : legalByFace,
       segmentMs: segmentMs,
       release: release,
-      offer: releaseOwed && frame.data['offer'] == true,
+      offer: releaseOwed && data['offer'] == true,
     );
-    _room = room.copyWith(
-      turn: turn,
-      seq: seqValue,
-      recentRolls: _appendRecentRoll(room.recentRolls, k, value),
-      recentRollSeats: _appendRecentRollSeat(room.recentRollSeats, seatValue),
-      lastSpentFace: null,
-    );
-    notifyListeners();
   }
 
   /// `{seat, token, from, to, captured, extra_roll}`. The moving seat's
@@ -2891,6 +3181,40 @@ class RoomController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// docs/PROTOCOL.md section 33 item 8 and section 35 ruling 7 (f): a
+  /// `seat_retired` naming my own seat. The departing socket is not sent the
+  /// frames between its last one and this, so a gap here is expected and is
+  /// not a desync: the retire is applied as it stands, nothing resyncs, and
+  /// no gap after it starts a `resume` (the `kicked` that follows a host's
+  /// removal ends the connection).
+  void _reduceOwnRetire(Frame frame) {
+    final RoomSnapshot? room = _room;
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final String? reason = _asString(frame.data, 'reason');
+    final int? hostSeat = _asInt(frame.data, 'host_seat');
+    final int? seqValue = frame.seq;
+    if (room == null ||
+        seatValue == null ||
+        reason == null ||
+        hostSeat == null ||
+        seqValue == null ||
+        hostSeat < -1 ||
+        hostSeat > 3) {
+      return;
+    }
+    _selfRetired = true;
+    _dropPreState();
+    _room = room.copyWith(
+      retired: room.retired.contains(seatValue)
+          ? room.retired
+          : <int>[...room.retired, seatValue],
+      hostSeat: hostSeat,
+      seq: seqValue > room.seq ? seqValue : room.seq,
+    );
+    _lastRetirement = (seat: seatValue, reason: reason);
+    notifyListeners();
+  }
+
   /// A gap on any state-changing push resynchronises this controller on its
   /// own open socket rather than leaving it to the caller. `hasDesynced` is
   /// set and a listener notified first, unconditionally, so a screen can
@@ -2929,8 +3253,10 @@ class RoomController extends ChangeNotifier {
   /// only the attempt to resolve it has failed, and the next gapped frame
   /// will try again.
   void _beginResync(RoomSnapshot room) {
-    if (_seatTakenOver) {
+    if (_seatTakenOver || _selfRetired) {
       // C-637 D3: a late gapped frame must not raise the desync state again.
+      // Section 35 ruling 7 (f): nor one after this seat's own retire, which
+      // is final; its token is dead and no `resume` is sent for it.
       return;
     }
     _hasDesynced = true;
@@ -2954,6 +3280,7 @@ class RoomController extends ChangeNotifier {
             }
             _resyncInFlight = false;
             _room = snapshot;
+            _landedPre = null;
             _recordLastFinished(snapshot);
             _hasDesynced = false;
             notifyListeners();
@@ -3086,6 +3413,7 @@ class RoomController extends ChangeNotifier {
     if (_disposed) {
       return;
     }
+    _dropPreState();
     final RoomConnection? connection = _connection;
     _connection = null;
     unawaited(_frameSub?.cancel());

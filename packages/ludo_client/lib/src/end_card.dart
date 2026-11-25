@@ -266,6 +266,11 @@ class EndCard extends StatefulWidget {
   /// draws no line.
   final EndCardFairSource? fairCheck;
 
+  /// C-708: the seats a computer plays (PROTOCOL 34). Their rows (the places
+  /// list and the ready chips) carry the robot mark beside the name, so a
+  /// computer is never taken for a person. Empty draws no mark.
+  final Set<int> computerSeats;
+
   const EndCard({
     super.key,
     required this.mySeat,
@@ -299,6 +304,7 @@ class EndCard extends StatefulWidget {
     this.myPlace,
     this.iAmOut = false,
     this.fairCheck,
+    this.computerSeats = const <int>{},
   });
 
   @override
@@ -903,6 +909,23 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     ];
   }
 
+  /// C-708: the robot mark beside a computer seat's name (the glyph the lobby
+  /// draws for a computer seat), with its spoken words.
+  Widget _computerMark(
+    AppLocalizations loc, {
+    required Key key,
+    required Color color,
+    required double size,
+  }) {
+    return Semantics(
+      key: key,
+      label: loc.seatOriginBot,
+      child: ExcludeSemantics(
+        child: Icon(Icons.smart_toy_rounded, size: size, color: color),
+      ),
+    );
+  }
+
   /// One place: a medal disc (first in gold, the others in the seat's colour,
   /// each with its number, a retired seat with a cross), the name, and for a
   /// seat that left the word "out". The number or the word is always there,
@@ -955,6 +978,15 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
                 ),
               ),
             ),
+            if (widget.computerSeats.contains(row.seat)) ...<Widget>[
+              const SizedBox(width: kSpace1),
+              _computerMark(
+                loc,
+                key: Key('end-card-place-bot-${row.seat}'),
+                color: seatColor,
+                size: 18,
+              ),
+            ],
             if (mine) ...<Widget>[
               const SizedBox(width: kSpace2),
               Text(
@@ -1641,6 +1673,15 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: LudoColors.ink),
                   ),
+                ),
+              ],
+              if (widget.computerSeats.contains(seat)) ...<Widget>[
+                const SizedBox(width: kSpace1),
+                _computerMark(
+                  loc,
+                  key: Key('end-card-ready-bot-$seat'),
+                  color: seatColor,
+                  size: 16,
                 ),
               ],
               if (ready) ...<Widget>[
