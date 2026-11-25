@@ -269,7 +269,7 @@ class RoomController extends ChangeNotifier {
   bool _holdingFrames = false;
   final List<Frame> _heldFrames = <Frame>[];
   PreRoll? _landedPre;
-  final Expando<bool> _preEchoes = Expando<bool>('pre echo');
+  final Expando<PreRoll> _preEchoes = Expando<PreRoll>('pre echo');
 
   /// Section 32 item 12: the `ban` a `CODE_BANNED` error, a rejecting
   /// `knock_failed` or a `kicked` frame carried, or null.
@@ -412,6 +412,10 @@ class RoomController extends ChangeNotifier {
       // My `rolled` for it has arrived and waits for the die to land.
       return null;
     }
+    if (_selfRetired) {
+      // My seat is out of the game: there is no roll of mine to show.
+      return null;
+    }
     if (_hasDesynced) {
       // A frame went missing: the turn this `pre` rode may have moved on
       // already. Nothing is in hand until the resync's snapshot says so.
@@ -435,7 +439,7 @@ class RoomController extends ChangeNotifier {
   /// Section 35 item 5: true for the `rolled` that confirms a roll of mine
   /// already shown from its `pre`. Applied here for its `seq`, and nothing on
   /// screen is to change for it.
-  bool isPreEcho(Frame frame) => _preEchoes[frame] ?? false;
+  bool isPreEcho(Frame frame) => _preEchoes[frame] != null;
 
   /// The code ban the server last told this controller about, exactly as
   /// sent; null when the last answer carried none or it was unreadable.
@@ -2255,13 +2259,22 @@ class RoomController extends ChangeNotifier {
   /// unconditional: a resync already running or no room held yet both leave
   /// the frame changing nothing here, before any per-type rule ever runs.
   void _reduce(Frame frame) {
-    // Section 35 ruling 7 (f): my own seat's retire is final whatever came
-    // before it, a resync in flight included.
+    // Section 35 ruling 7 (f): my own seat's retire for a kick or a leave is
+    // final whatever came before it, a resync in flight included. Any other
+    // retire of my seat (`absent`, met by a socket that came back) is reduced
+    // like any seat's, gap check included, and the watching view goes on.
     if (frame.type == 'seat_retired' &&
         _cachedSeat != null &&
-        _asInt(frame.data, 'seat') == _cachedSeat) {
+        _asInt(frame.data, 'seat') == _cachedSeat &&
+        (frame.data['reason'] == 'kicked' || frame.data['reason'] == 'left')) {
       _reduceOwnRetire(frame);
       return;
+    }
+    // Section 35 item 5: the `rolled` of a roll already shown from its `pre`
+    // is marked before any early return, so the screen never plays it as a
+    // new roll, a resync in flight included.
+    if (frame.type == 'rolled') {
+      _markPreEcho(frame);
     }
     if (_resyncInFlight) {
       return;
@@ -2734,16 +2747,9 @@ class RoomController extends ChangeNotifier {
       return;
     }
 
-    // Section 35 item 5: the `rolled` of a roll already shown from its `pre`.
-    // It is marked before anything else, so the screen never plays it as a
-    // new roll, whichever way it is applied below.
-    final PreRoll? landed = _landedPre;
-    _landedPre = null;
-    final bool echo =
-        landed != null && seatValue == landed.seat && k == landed.k;
-    if (echo) {
-      _preEchoes[frame] = true;
-    }
+    // Section 35 item 5: marked by [_reduce] before it got here.
+    final PreRoll? landed = _preEchoes[frame];
+    final bool echo = landed != null;
 
     if (seqValue != room.seq + 1) {
       _beginResync(room);
@@ -2776,6 +2782,20 @@ class RoomController extends ChangeNotifier {
       lastSpentFace: null,
     );
     notifyListeners();
+  }
+
+  /// Section 35 item 5: when [frame] is the `rolled` for the roll last shown
+  /// from its `pre` (same seat, same `k`), records that `pre` against it for
+  /// [isPreEcho] and lets go of it. Any other `rolled` lets go of it too: the
+  /// roll it stood for has been answered or overtaken.
+  void _markPreEcho(Frame frame) {
+    final PreRoll? landed = _landedPre;
+    _landedPre = null;
+    if (landed != null &&
+        _asInt(frame.data, 'seat') == landed.seat &&
+        _asInt(frame.data, 'k') == landed.k) {
+      _preEchoes[frame] = landed;
+    }
   }
 
   /// The turn a `rolled` with [data] leaves (section 21.3 ruling 3, section

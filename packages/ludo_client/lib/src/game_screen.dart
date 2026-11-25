@@ -1290,8 +1290,10 @@ class _GameScreenState extends State<GameScreen> {
   /// name; a person is the name they sent.
   String _joinedSeatName(Frame frame, int seat) {
     final String? wireName = _stringAt(frame.data, 'name');
+    // No name on the frame: the empty name, which the caller skips.
+    final String noName = wireName ?? '';
     if (wireName == null) {
-      return '';
+      return noName;
     }
     final int? botValue = _intAt(frame.data, 'bot');
     final int? bot = botValue != null && botValue >= 1 && botValue <= 6
@@ -6802,6 +6804,9 @@ class _GameScreenState extends State<GameScreen> {
         turn != null &&
         turn.seat == seat &&
         turn.phase == TurnPhase.awaitRoll &&
+        // C-708: a retired seat of mine rolls no more, whatever turn the
+        // table still shows.
+        !room.retired.contains(seat) &&
         _rollWaitK == null &&
         ownRollHeld == null;
 
@@ -8795,11 +8800,13 @@ class _GameScreenState extends State<GameScreen> {
         onFairHintRoute: (Route<void> route) => _fairHintRoute = route,
         friendJoined: _rematchJoin,
         places: _endCardPlaces(finished, rematchSeatNames),
-        // C-708: the computer seats of the finished game and of the room
-        // now, so a computer's row is never read as a person's.
+        // C-708: the places rows are the finished game's seats, the ready
+        // chips whoever holds each seat now; each reads its own computers.
         computerSeats: <int>{
           for (final SeatState s in finished.seats)
             if (s.bot != null) s.seat,
+        },
+        computerReadySeats: <int>{
           for (final SeatState s in room.seats)
             if (s.bot != null) s.seat,
         },
