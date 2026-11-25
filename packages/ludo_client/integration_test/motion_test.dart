@@ -2262,11 +2262,33 @@ Future<void> _runJoinerSeat2(
   const String joinerName = 'Karim';
 
   await tester.enterText(find.byKey(const Key('home-name-field')), joinerName);
-  await enterCodeInEntry(tester, _roomCode);
+  _motion('1a name typed');
+  await tester.pump(const Duration(milliseconds: 300));
+  _motion('1b name frame');
+  await tester.tap(find.byKey(const Key('join-game-button')));
+  _motion('1c join tapped');
+  for (int i = 0; i < 12; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+    _motion('1d sheet frame $i');
+  }
+  await tester.tap(find.byKey(const Key('join-code-tile')));
+  _motion('1e code tile tapped');
+  for (int i = 0; i < 12; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+    _motion('1f entry frame $i');
+  }
+  await tester.enterText(find.byKey(const Key('room-code-field')), _roomCode);
+  _motion('1g code typed');
+  for (int i = 0; i < 12; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+    _motion('1h typed frame $i');
+  }
   // Join is in the tree only once the field holds a full code (C-523 D3);
   // let its entry finish before the tap.
   await tester.pumpAndSettle();
+  _motion('1i settled');
   await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+  _motion('1j route pushed');
 
   expect(factory.controllers, hasLength(1));
   final RoomController controller = factory.controllers.single;
@@ -2312,12 +2334,15 @@ Future<void> _runJoinerSeat2(
     ),
   );
   await tester.pump();
+  _motion('1k reply frame 1');
   await tester.pump();
+  _motion('1l reply frame 2');
   await _pumpUntilFound(
     tester,
     find.byType(LobbyScreen),
     'LobbyScreen after the join_room reply carrying code "$_roomCode"',
   );
+  _motion('1m lobby found');
 
   expect(find.byKey(const Key('lobby-room-code')), findsOneWidget);
   expect(

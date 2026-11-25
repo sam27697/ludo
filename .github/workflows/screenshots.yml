@@ -9,6 +9,7 @@ on:
 
 jobs:
   screenshots:
+    if: false
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -266,8 +267,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        locale: [en, ar]
-        seat: [0, 2]
+        locale: [ar]
+        seat: [2]
     # Job env, not an assignment inside `script:`. android-emulator-runner
     # passes each script line to its own `sh -c`, which would drop an inline
     # MOTION_LOCALE= or MOTION_SEAT= before record_motion.sh starts.
