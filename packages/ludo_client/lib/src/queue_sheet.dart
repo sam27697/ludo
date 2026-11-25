@@ -175,19 +175,17 @@ class _QueueSheetState extends State<QueueSheet>
       child: SingleChildScrollView(
         key: const Key('queue-sheet'),
         padding: const EdgeInsets.fromLTRB(kSpace5, kSpace3, kSpace5, kSpace6),
-        // The content crossfades and the window takes the new content's
-        // height on the next frame: the swap to the computer choice and the
-        // ahead line coming or going. There is no size easing because an
-        // AnimatedSize in the join sheet, the same construct, took the
-        // Android 16 emulator offline on the Arabic motion leg. With reduced
-        // motion the content swaps at once.
+        // The window eases every change of height (the swap to the computer
+        // choice, the ahead line coming or going) and the content swaps in
+        // place. A crossfade inside the size easing, as in the join sheet,
+        // took the Android 16 emulator offline on the Arabic motion leg. With
+        // reduced motion the content swaps at once.
         child: reduce
             ? content
-            : AnimatedSwitcher(
+            : AnimatedSize(
                 duration: kMotionShort,
-                switchInCurve: Curves.easeOut,
-                switchOutCurve: Curves.easeIn,
-                layoutBuilder: homeSheetSwitcherLayout,
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
                 child: content,
               ),
       ),

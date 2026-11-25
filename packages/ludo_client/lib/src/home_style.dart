@@ -162,38 +162,6 @@ Future<T?> showHomeSheet<T>(
   );
 }
 
-/// The layout of a home sheet's content swap ([AnimatedSwitcher]). The
-/// incoming content alone gives the size, so the sheet takes the new height
-/// on the frame after the tap; the outgoing content fades out over the same
-/// top edge, takes no height and no taps, and nothing clips it. The sheets
-/// have no size easing: an [AnimatedSize] around this switcher took the
-/// Android 16 emulator offline on the Arabic motion leg. Each child keeps its
-/// switcher key, so nothing is rebuilt as it moves from incoming to outgoing.
-Widget homeSheetSwitcherLayout(
-  Widget? currentChild,
-  List<Widget> previousChildren,
-) {
-  return Stack(
-    alignment: Alignment.topCenter,
-    clipBehavior: Clip.none,
-    children: <Widget>[
-      for (final Widget previous in previousChildren)
-        Align(
-          key: previous.key,
-          alignment: Alignment.topCenter,
-          heightFactor: 0,
-          child: previous,
-        ),
-      if (currentChild != null)
-        Align(
-          key: currentChild.key,
-          alignment: Alignment.topCenter,
-          child: currentChild,
-        ),
-    ],
-  );
-}
-
 /// Fades its child in once, when it first appears; give it a new key to fade
 /// in new content. The child's size is final from the first frame, so a home
 /// sheet takes the new height at once while the new content fades in, and a
