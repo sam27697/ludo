@@ -191,16 +191,7 @@ class _JoinSheetState extends State<JoinSheet> {
             // arriving and the ban notice. There is no size easing because an
             // AnimatedSize here took the Android 16 emulator offline on the
             // Arabic motion leg. With reduced motion the content swaps at once.
-            if (reduce)
-              content
-            else
-              AnimatedSwitcher(
-                duration: kMotionShort,
-                switchInCurve: Curves.easeOut,
-                switchOutCurve: Curves.easeIn,
-                layoutBuilder: homeSheetSwitcherLayout,
-                child: content,
-              ),
+            content,
           ],
         ),
       ),
