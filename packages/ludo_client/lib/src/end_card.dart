@@ -266,10 +266,14 @@ class EndCard extends StatefulWidget {
   /// draws no line.
   final EndCardFairSource? fairCheck;
 
-  /// C-708: the seats a computer plays (PROTOCOL 34). Their rows (the places
-  /// list and the ready chips) carry the robot mark beside the name, so a
-  /// computer is never taken for a person. Empty draws no mark.
+  /// C-708: the seats a computer played in the finished game (PROTOCOL 34).
+  /// Their places rows carry the robot mark beside the name, so a computer
+  /// is never taken for a person. Empty draws no mark.
   final Set<int> computerSeats;
+
+  /// C-708: the seats a computer holds in the room now. Their ready chips
+  /// carry the robot mark; a person who took a computer's seat does not.
+  final Set<int> computerReadySeats;
 
   const EndCard({
     super.key,
@@ -305,6 +309,7 @@ class EndCard extends StatefulWidget {
     this.iAmOut = false,
     this.fairCheck,
     this.computerSeats = const <int>{},
+    this.computerReadySeats = const <int>{},
   });
 
   @override
@@ -1675,7 +1680,7 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
                   ),
                 ),
               ],
-              if (widget.computerSeats.contains(seat)) ...<Widget>[
+              if (widget.computerReadySeats.contains(seat)) ...<Widget>[
                 const SizedBox(width: kSpace1),
                 _computerMark(
                   loc,

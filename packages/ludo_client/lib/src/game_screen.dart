@@ -8795,11 +8795,13 @@ class _GameScreenState extends State<GameScreen> {
         onFairHintRoute: (Route<void> route) => _fairHintRoute = route,
         friendJoined: _rematchJoin,
         places: _endCardPlaces(finished, rematchSeatNames),
-        // C-708: the computer seats of the finished game and of the room
-        // now, so a computer's row is never read as a person's.
+        // C-708: the places rows are the finished game's seats, the ready
+        // chips whoever holds each seat now; each reads its own computers.
         computerSeats: <int>{
           for (final SeatState s in finished.seats)
             if (s.bot != null) s.seat,
+        },
+        computerReadySeats: <int>{
           for (final SeatState s in room.seats)
             if (s.bot != null) s.seat,
         },
