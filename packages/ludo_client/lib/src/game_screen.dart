@@ -1290,8 +1290,10 @@ class _GameScreenState extends State<GameScreen> {
   /// name; a person is the name they sent.
   String _joinedSeatName(Frame frame, int seat) {
     final String? wireName = _stringAt(frame.data, 'name');
+    // No name on the frame: the empty name, which the caller skips.
+    final String noName = wireName ?? '';
     if (wireName == null) {
-      return '';
+      return noName;
     }
     final int? botValue = _intAt(frame.data, 'bot');
     final int? bot = botValue != null && botValue >= 1 && botValue <= 6
