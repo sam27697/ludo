@@ -781,8 +781,10 @@ void main() {
       );
       const String why =
           'C-708t "PreRoll parsing: turn moves on" (no widget). Snapshot with '
-          'my pre (k 1), then turn_passed (my seat, timeout) and the next '
-          'seat\'s turn, no rolled. rerun: flock /tmp/ludo-suite.lock flutter '
+          'my pre (k 1) and no tap; the clock runs out, so the server rolls '
+          'for me: rolled (my seat, k 1, the pre\'s face, no legal move), '
+          'turn_passed no_legal_move and the next seat\'s turn, each one seq '
+          'on. rerun: flock /tmp/ludo-suite.lock flutter '
           "test $_file --plain-name 'RoomController.pre is cleared when the "
           "turn moves on'";
       try {
@@ -795,15 +797,33 @@ void main() {
           isNotNull,
           reason: 'pre in hand from the snapshot. $why',
         );
+        await drive.push(tester, 'rolled', _rolledOf(_preNoMove()));
+        expect(
+          (drive.controller as dynamic).pre,
+          isNull,
+          reason: 'pre still held after its own rolled was applied. $why',
+        );
         await drive.push(tester, 'turn_passed', <String, Object?>{
           'seat': _me,
-          'reason': 'timeout',
+          'reason': 'no_legal_move',
         });
         await drive.push(tester, 'turn', _turnFrame(_opp));
         expect(
           (drive.controller as dynamic).pre,
           isNull,
           reason: 'pre still held after the turn passed to seat 1. $why',
+        );
+        expect(
+          drive.controller.hasDesynced,
+          isFalse,
+          reason:
+              'the three frames are in seq order and must apply as they '
+              'stand, with no resync. $why',
+        );
+        expect(
+          drive.controller.room?.turn?.seat,
+          _opp,
+          reason: 'the turn is seat 1\'s after the pass. $why',
         );
       } finally {
         drive.controller.dispose();
