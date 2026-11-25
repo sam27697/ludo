@@ -137,6 +137,54 @@ Future<void> _run() async {
     exit(64);
   }
 
+  // docs/PROTOCOL.md section 36.2: optional Google sign-in. Off (no client id)
+  // is a normal state. With a client id, an empty LUDO_ACCOUNT_DIR or a
+  // LUDO_ACCOUNT_SALT under 32 characters stops the server before the port
+  // opens; the line names the variable, never its value.
+  final String googleClientId =
+      Platform.environment['LUDO_GOOGLE_CLIENT_ID'] ?? '';
+  final String accountDir = Platform.environment['LUDO_ACCOUNT_DIR'] ?? '';
+  final String accountSalt = Platform.environment['LUDO_ACCOUNT_SALT'] ?? '';
+  final Uri certsUrl;
+  try {
+    certsUrl = parseCertsUrl(Platform.environment['LUDO_GOOGLE_CERTS_URL']);
+  } on FormatException catch (error) {
+    stderr.writeln(error.message);
+    exit(64);
+  }
+  GoogleTokenVerifier? googleVerifier;
+  AccountStore? accountStore;
+  if (googleClientId.isNotEmpty) {
+    if (accountDir.isEmpty) {
+      stderr.writeln('LUDO_ACCOUNT_DIR is empty but sign-in is on');
+      exit(64);
+    }
+    if (accountSalt.length < minAccountSaltLength) {
+      stderr.writeln(
+        'LUDO_ACCOUNT_SALT is shorter than $minAccountSaltLength characters '
+        'but sign-in is on',
+      );
+      exit(64);
+    }
+    try {
+      accountStore = AccountStore(
+        dir: Directory(accountDir),
+        salt: accountSalt,
+        clock: const SystemClock(),
+      );
+    } on FileSystemException catch (error) {
+      stderr.writeln('LUDO_ACCOUNT_DIR is unusable: ${error.message}');
+      exit(64);
+    }
+    googleVerifier = GoogleTokenVerifier(
+      clientId: googleClientId,
+      fetch: httpJwksFetcher(certsUrl),
+      clock: const SystemClock(),
+    );
+  }
+  // ignore: avoid_print
+  print('sign-in: ${googleVerifier == null ? 'off' : 'on'}');
+
   final RoomRegistry registry = RoomRegistry(
     clock: const SystemClock(),
     secure: Random.secure(),
@@ -154,6 +202,11 @@ Future<void> _run() async {
     version: version,
     privacyContactEmail: privacyContactEmail,
     minClientBuild: minClientBuild,
+    googleVerifier: googleVerifier,
+    accountStore: accountStore,
+    googleClientId: googleClientId.isEmpty || googleVerifier == null
+        ? null
+        : googleClientId,
   );
 
   // Startup is everything up to and including the socket being bound and

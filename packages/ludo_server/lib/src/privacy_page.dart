@@ -112,11 +112,24 @@ StringBuffer _englishBody(String? trimmedEmail) {
       'This policy explains what the app and its server handle, and what '
       'they do not.</p>',
     )
-    ..writeln('<h2>We do not collect personal information.</h2>')
+    ..writeln('<h2>We collect almost no personal information.</h2>')
     ..writeln(
-      '<p>Ludo RNG has no account, no sign-in, no email address, no '
-      'password and no profile. You do not tell us who you are and we do '
-      'not ask.</p>',
+      '<p>You do not need an account, a sign-in, a password or a profile to '
+      'play Ludo RNG. You do not tell us who you are and we do not ask. The '
+      'one optional exception, signing in with Google, is described under '
+      '"Signing in with Google (optional)" below.</p>',
+    )
+    ..writeln('<h2>Signing in with Google (optional).</h2>')
+    ..writeln(
+      '<p>Signing in with Google is optional. You can play every game '
+      'without it. If you sign in, Google sends us your name, your email '
+      'address and an account number. We keep your name and a coded form '
+      'of the account number that cannot be turned back into it, so the '
+      'game knows you next time. We do not keep your email address: the '
+      'server discards it at once, and it never reaches a log or a file. '
+      'You can delete your account at any time in the app, or at '
+      '<a href="/account/delete">ludo.provefair.app/account/delete</a>, and '
+      'it is gone immediately.</p>',
     )
     ..writeln('<h2>No advertising, no analytics, no tracking.</h2>')
     ..writeln(
@@ -175,18 +188,23 @@ StringBuffer _englishBody(String? trimmedEmail) {
     ..writeln('<h2>Children.</h2>')
     ..writeln(
       '<p>Ludo RNG is not directed at children under 13. We do not '
-      'knowingly collect any personal information from anyone, including '
-      'children.</p>',
+      'knowingly collect any personal information from children.</p>',
     )
     ..writeln('<h2>Data you can ask about.</h2>')
     ..writeln(
       trimmedEmail != null
-          ? '<p>Because we hold no account and no personal profile, there is '
-              'normally nothing to give you a copy of or to delete. If you '
-              'believe we hold something about you and you want it removed, '
-              'write to the address below and we will act on it.</p>'
-          : '<p>Because we hold no account and no personal profile, there is '
-              'normally nothing to give you a copy of or to delete.</p>',
+          ? '<p>If you have never signed in, we hold no account and no '
+              'personal profile, so there is normally nothing to give you a '
+              'copy of or to delete. If you signed in with Google, you can '
+              'delete your account yourself, at once, as described above. If '
+              'you believe we hold something about you and you want it '
+              'removed, write to the address below and we will act on '
+              'it.</p>'
+          : '<p>If you have never signed in, we hold no account and no '
+              'personal profile, so there is normally nothing to give you a '
+              'copy of or to delete. If you signed in with Google, you can '
+              'delete your account yourself, at once, as described '
+              'above.</p>',
     )
     ..writeln('<h2>Changes to this policy.</h2>')
     ..writeln(
@@ -221,12 +239,26 @@ StringBuffer _arabicBody(String? trimmedEmail) {
       'بيانات، وما لا يتعامل معه.</p>',
     )
     ..writeln(
-      '<h2>لا نجمع معلومات شخصية.</h2>',
+      '<h2>نجمع أقل قدر من المعلومات الشخصية.</h2>',
     )
     ..writeln(
-      '<p>لا يوجد في Ludo RNG حساب، ولا تسجيل دخول، ولا بريد '
-      'إلكتروني، ولا كلمة مرور، ولا ملف شخصي. لا تخبرنا من أنت، '
-      'ولا نسألك.</p>',
+      '<p>لا تحتاج إلى حساب، ولا تسجيل دخول، ولا كلمة مرور، ولا ملف '
+      'شخصي لتلعب Ludo RNG. لا تخبرنا من أنت، ولا نسألك. الاستثناء '
+      'الوحيد الاختياري هو تسجيل الدخول بحساب Google، الموضّح أدناه في '
+      'فقرة «تسجيل الدخول بحساب Google (اختياري)».</p>',
+    )
+    ..writeln(
+      '<h2>تسجيل الدخول بحساب Google (اختياري).</h2>',
+    )
+    ..writeln(
+      '<p>تسجيل الدخول بحساب Google اختياري، وتقدر تلعب كل الألعاب من '
+      'دونه. إذا سجّلت الدخول، ترسل لنا Google اسمك وبريدك الإلكتروني '
+      'ورقم حسابك. نحتفظ باسمك وبصيغة مرمّزة من رقم الحساب لا يمكن '
+      'إرجاعها إليه، حتى تعرفك اللعبة في المرة القادمة. لا نحتفظ ببريدك '
+      'الإلكتروني: الخادم يتخلص منه فورًا، ولا يصل إلى أي سجل أو ملف. '
+      'تقدر تحذف حسابك متى شئت من داخل اللعبة، أو من '
+      '<a href="/account/delete" dir="ltr">ludo.provefair.app/account/delete'
+      '</a>، ويُحذف فورًا.</p>',
     )
     ..writeln(
       '<h2>لا إعلانات، ولا تحليلات، ولا تتبّع.</h2>',
@@ -294,19 +326,23 @@ StringBuffer _arabicBody(String? trimmedEmail) {
     )
     ..writeln(
       '<p>Ludo RNG غير موجّهة للأطفال دون 13 عامًا. لا نجمع عن علم '
-      'أي معلومات شخصية من أي أحد، بمن في ذلك الأطفال.</p>',
+      'أي معلومات شخصية من الأطفال.</p>',
     )
     ..writeln(
       '<h2>بيانات يمكنك السؤال عنها.</h2>',
     )
     ..writeln(
       hasEmail
-          ? '<p>لأننا لا نحتفظ بأي حساب ولا ملف شخصي، فعادةً لا يوجد ما '
-              'نعطيك نسخة منه أو نحذفه. إذا كنت تعتقد أننا نحتفظ بشيء '
+          ? '<p>إذا لم تسجّل الدخول من قبل، فلا نحتفظ بأي حساب ولا ملف '
+              'شخصي، فعادةً لا يوجد ما نعطيك نسخة منه أو نحذفه. وإذا '
+              'سجّلت الدخول بحساب Google فتقدر أن تحذف حسابك بنفسك '
+              'فورًا كما هو موضّح أعلاه. وإذا كنت تعتقد أننا نحتفظ بشيء '
               'عنك وتريد إزالته، راسلنا على العنوان أدناه وسنتصرف بناءً '
               'على طلبك.</p>'
-          : '<p>لأننا لا نحتفظ بأي حساب ولا ملف شخصي، فعادةً لا يوجد ما '
-              'نعطيك نسخة منه أو نحذفه.</p>',
+          : '<p>إذا لم تسجّل الدخول من قبل، فلا نحتفظ بأي حساب ولا ملف '
+              'شخصي، فعادةً لا يوجد ما نعطيك نسخة منه أو نحذفه. وإذا '
+              'سجّلت الدخول بحساب Google فتقدر أن تحذف حسابك بنفسك '
+              'فورًا كما هو موضّح أعلاه.</p>',
     )
     ..writeln(
       '<h2>التغييرات على هذه السياسة.</h2>',

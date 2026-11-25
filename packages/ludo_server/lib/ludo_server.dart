@@ -85,6 +85,21 @@ export 'src/client_build.dart'
 // what section 12 says goes on the wire for it, and the wire layer only
 // broadcasts. Exported so both halves are testable without a socket.
 export 'src/snapshot.dart' show OutFrame, buildExpiryFrames;
+export 'src/google_token.dart'
+    show
+        JwksResponse,
+        JwksFetcher,
+        googleCertsUrl,
+        httpJwksFetcher,
+        parseCertsUrl,
+        TokenCheck,
+        TokenOk,
+        TokenBad,
+        TokenUnavailable,
+        GoogleTokenVerifier;
+export 'src/account_store.dart' show AccountStore, minAccountSaltLength;
+export 'src/account_page.dart'
+    show buildAccountDeletePageHtml, buildAccountResultPageHtml, AccountResult;
 export 'src/privacy_page.dart' show buildPrivacyPageHtml, privacyLastUpdated;
 export 'src/verify_store.dart'
     show

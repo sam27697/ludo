@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 import 'package:shelf/shelf.dart' as shelf;
@@ -18,10 +19,13 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'account_page.dart';
+import 'account_store.dart';
 import 'client_build.dart';
 import 'clock.dart';
 import 'connection.dart';
 import 'envelope.dart' show logSafeError;
+import 'google_token.dart';
 import 'link_id.dart';
 import 'link_pages.dart';
 import 'privacy_page.dart';
@@ -81,6 +85,26 @@ const String _privacyPathWithSlash = '/privacy/';
 /// the fingerprint this document carries has to be the Play App Signing
 /// key's, never the upload key's.
 const String _assetLinksPath = '/.well-known/assetlinks.json';
+
+/// Section 36.4 and 36.5: the sign-in routes and the deletion page.
+const String _authConfigPath = '/auth/config';
+const String _authGooglePath = '/auth/google';
+const String _accountDeletePath = '/account/delete';
+const String _accountDeletePathWithSlash = '/account/delete/';
+
+/// Section 36.4: request bodies over this many bytes are refused with 413.
+const int _maxAccountBodyBytes = 8192;
+
+/// Section 36.4: more than [_accountRateLimit] requests to the two POST routes
+/// from one IP inside [_accountRateWindow] are refused with 429.
+const int _accountRateLimit = 10;
+const Duration _accountRateWindow = Duration(seconds: 60);
+
+const Map<String, String> _jsonHeaders = <String, String>{
+  'content-type': 'application/json; charset=utf-8',
+  'cache-control': 'no-store',
+  'x-content-type-options': 'nosniff',
+};
 
 /// Matches `/r/<anything with no further slash>`, the shared-room landing
 /// page. The captured group is looked up as a link id by [_handleRoomLink];
@@ -156,7 +180,14 @@ class WireServer {
     this.automaticTurnExpiry = true,
     Duration? keepaliveInterval,
     int minClientBuild = 0,
-  })  : keepaliveInterval = keepaliveInterval ?? defaultKeepaliveInterval,
+    GoogleTokenVerifier? googleVerifier,
+    AccountStore? accountStore,
+    String? googleClientId,
+  })  : _privacyContactEmail = privacyContactEmail,
+        _googleVerifier = googleVerifier,
+        _accountStore = accountStore,
+        _googleClientId = googleClientId,
+        keepaliveInterval = keepaliveInterval ?? defaultKeepaliveInterval,
         minClientBuild = _checkedMinClientBuild(minClientBuild),
         _random = random ?? Random.secure(),
         _trustedProxies = trustedProxies,
@@ -187,6 +218,25 @@ class WireServer {
     // Section 34 item 4: what the computer sweep does is published here.
     registry.onComputerAction = _publishComputerStep;
   }
+
+  /// Section 36: sign-in is on only when all three of these are set and the
+  /// client id is not empty; otherwise every sign-in route answers
+  /// `SIGN_IN_OFF` and `GET /auth/config` answers null.
+  final GoogleTokenVerifier? _googleVerifier;
+  final AccountStore? _accountStore;
+  final String? _googleClientId;
+
+  /// The `PRIVACY_CONTACT_EMAIL` value, shown on the deletion page too.
+  final String? _privacyContactEmail;
+
+  bool get _signInOn =>
+      _googleVerifier != null &&
+      _accountStore != null &&
+      _googleClientId != null &&
+      _googleClientId.isNotEmpty;
+
+  /// Section 36.4's per-IP window, one list of hit times per IP.
+  final Map<String, List<DateTime>> _accountHits = <String, List<DateTime>>{};
 
   final RoomRegistry registry;
   final RateLimiter rateLimiter;
@@ -258,6 +308,15 @@ class WireServer {
       }
       if (path == _assetLinksPath) {
         return _handleAssetLinks(request);
+      }
+      if (path == _authConfigPath) {
+        return _handleAuthConfig(request);
+      }
+      if (path == _authGooglePath) {
+        return _handleAuthGoogle(request);
+      }
+      if (path == _accountDeletePath || path == _accountDeletePathWithSlash) {
+        return _handleAccountDelete(request);
       }
       final RegExpMatch? roomLinkMatch = _roomLinkPathPattern.firstMatch(path);
       if (roomLinkMatch != null) {
@@ -520,6 +579,336 @@ class WireServer {
       print('housekeeping reaped=$reaped');
     }
     rateLimiter.prune();
+    _pruneAccountHits();
+  }
+
+  // --- section 36: sign-in routes -----------------------------------------
+
+  /// Records one hit for [ip] and says whether it is within the limit. A
+  /// refused hit is not recorded, so it does not push the window out.
+  bool _admitAccountRequest(String ip) {
+    final DateTime now = clock.now;
+    final List<DateTime> hits =
+        _accountHits.putIfAbsent(ip, () => <DateTime>[]);
+    hits.removeWhere((DateTime t) => now.difference(t) >= _accountRateWindow);
+    if (hits.length >= _accountRateLimit) {
+      return false;
+    }
+    hits.add(now);
+    return true;
+  }
+
+  void _pruneAccountHits() {
+    final DateTime now = clock.now;
+    _accountHits.removeWhere((String ip, List<DateTime> hits) {
+      hits.removeWhere((DateTime t) => now.difference(t) >= _accountRateWindow);
+      return hits.isEmpty;
+    });
+  }
+
+  shelf.Response _accountJson(int status, Map<String, Object?> body) =>
+      shelf.Response(status, body: jsonEncode(body), headers: _jsonHeaders);
+
+  shelf.Response _accountError(int status, String code) =>
+      _accountJson(status, <String, Object?>{'code': code});
+
+  /// One structured line per decision; never the token, the hash, the name,
+  /// the address or the IP.
+  void _logAccount(String route, String outcome, {String? error}) {
+    // ignore: avoid_print
+    print('account route=$route outcome=$outcome'
+        '${error == null ? '' : ' error=$error'}');
+  }
+
+  /// `GET /auth/config`: the client id the app asks Google for a token with,
+  /// null when sign-in is off.
+  shelf.Response _handleAuthConfig(shelf.Request request) {
+    if (request.method != 'GET' && request.method != 'HEAD') {
+      return shelf.Response(405, headers: const <String, String>{
+        'allow': 'GET, HEAD',
+      });
+    }
+    final Map<String, Object?> body = <String, Object?>{
+      'google_client_id': _signInOn ? _googleClientId : null,
+    };
+    return shelf.Response.ok(
+      request.method == 'HEAD' ? '' : jsonEncode(body),
+      headers: _jsonHeaders,
+    );
+  }
+
+  /// What reading a JSON request body came to: the token, or the response to
+  /// send instead.
+  Future<({String? token, shelf.Response? refusal})> _readTokenBody(
+    shelf.Request request,
+  ) async {
+    final List<int>? bytes = await _readCapped(request);
+    if (bytes == null) {
+      return (token: null, refusal: _accountError(413, 'TOO_LARGE'));
+    }
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(utf8.decode(bytes));
+    } on FormatException {
+      return (token: null, refusal: _accountError(400, 'BAD_REQUEST'));
+    }
+    if (decoded is! Map<String, Object?> ||
+        decoded.length != 1 ||
+        decoded['id_token'] is! String) {
+      return (token: null, refusal: _accountError(400, 'BAD_REQUEST'));
+    }
+    return (token: decoded['id_token'] as String, refusal: null);
+  }
+
+  /// The request body, or null when it is over [_maxAccountBodyBytes]. The
+  /// declared length is checked first, and reading stops at the cap, so an
+  /// oversize body is never held whole.
+  Future<List<int>?> _readCapped(shelf.Request request) async {
+    final int? declared = request.contentLength;
+    if (declared != null && declared > _maxAccountBodyBytes) {
+      return null;
+    }
+    final BytesBuilder bytes = BytesBuilder(copy: false);
+    await for (final List<int> chunk in request.read()) {
+      bytes.add(chunk);
+      if (bytes.length > _maxAccountBodyBytes) {
+        return null;
+      }
+    }
+    return bytes.takeBytes();
+  }
+
+  /// `POST /auth/google`.
+  Future<shelf.Response> _handleAuthGoogle(shelf.Request request) async {
+    if (request.method != 'POST') {
+      return shelf.Response(405, headers: const <String, String>{
+        'allow': 'POST',
+      });
+    }
+    if (!_admitAccountRequest(_clientIp(request))) {
+      _logAccount('auth_google', 'rate_limited');
+      return _accountError(429, 'RATE_LIMITED');
+    }
+    if (!_signInOn) {
+      _logAccount('auth_google', 'sign_in_off');
+      return _accountError(503, 'SIGN_IN_OFF');
+    }
+    final body = await _readTokenBody(request);
+    if (body.refusal != null) {
+      _logAccount('auth_google', 'refused_${body.refusal!.statusCode}');
+      return body.refusal!;
+    }
+    final TokenCheck check = await _googleVerifier!.verify(body.token!);
+    switch (check) {
+      case TokenBad():
+        _logAccount('auth_google', 'bad_token');
+        return _accountError(401, 'BAD_TOKEN');
+      case TokenUnavailable():
+        _logAccount('auth_google', 'unavailable');
+        return _accountError(503, 'SIGN_IN_UNAVAILABLE');
+      case TokenOk():
+        try {
+          _accountStore!.upsert(check.sub, check.name);
+        } on FileSystemException catch (error) {
+          _logAccount('auth_google', 'store_failed',
+              error: '${error.runtimeType}');
+          return _accountError(500, 'STORE_FAILED');
+        } on ProcessException catch (error) {
+          _logAccount('auth_google', 'store_failed',
+              error: '${error.runtimeType}');
+          return _accountError(500, 'STORE_FAILED');
+        }
+        _logAccount('auth_google', 'ok');
+        return _accountJson(200, <String, Object?>{'name': check.name});
+    }
+  }
+
+  /// `GET /account/delete` (the page) and `POST /account/delete`: JSON from
+  /// the app, or the form Google's button posts, told apart by content type.
+  Future<shelf.Response> _handleAccountDelete(shelf.Request request) async {
+    switch (request.method) {
+      case 'GET':
+      case 'HEAD':
+        return _accountDeletePage(request);
+      case 'POST':
+        break;
+      default:
+        return shelf.Response(405, headers: const <String, String>{
+          'allow': 'GET, HEAD, POST',
+        });
+    }
+    final String type = (request.headers['content-type'] ?? '').toLowerCase();
+    final bool isForm = type.startsWith('application/x-www-form-urlencoded');
+    if (!_admitAccountRequest(_clientIp(request))) {
+      _logAccount('account_delete', 'rate_limited');
+      return isForm
+          ? _accountResultPage(request, AccountResult.rateLimited)
+          : _accountError(429, 'RATE_LIMITED');
+    }
+    if (!_signInOn) {
+      _logAccount('account_delete', 'sign_in_off');
+      return isForm
+          ? _accountResultPage(request, AccountResult.signInOff)
+          : _accountError(503, 'SIGN_IN_OFF');
+    }
+    if (isForm) {
+      return _handleAccountDeleteForm(request);
+    }
+    final body = await _readTokenBody(request);
+    if (body.refusal != null) {
+      _logAccount('account_delete', 'refused_${body.refusal!.statusCode}');
+      return body.refusal!;
+    }
+    final TokenCheck check = await _googleVerifier!.verify(body.token!);
+    switch (check) {
+      case TokenBad():
+        _logAccount('account_delete', 'bad_token');
+        return _accountError(401, 'BAD_TOKEN');
+      case TokenUnavailable():
+        _logAccount('account_delete', 'unavailable');
+        return _accountError(503, 'SIGN_IN_UNAVAILABLE');
+      case TokenOk():
+        try {
+          final bool deleted = _accountStore!.delete(check.sub);
+          _logAccount('account_delete', deleted ? 'deleted' : 'none');
+          return _accountJson(200, <String, Object?>{'deleted': deleted});
+        } on FileSystemException catch (error) {
+          _logAccount('account_delete', 'store_failed',
+              error: '${error.runtimeType}');
+          return _accountError(500, 'STORE_FAILED');
+        }
+    }
+  }
+
+  /// The form Google posts in redirect mode: `credential` and
+  /// `g_csrf_token`, with a cookie of the same name. Accepted only when the
+  /// cookie and the field are both present and equal.
+  Future<shelf.Response> _handleAccountDeleteForm(shelf.Request request) async {
+    final List<int>? bytes = await _readCapped(request);
+    if (bytes == null) {
+      _logAccount('account_delete', 'refused_413');
+      return _accountResultPage(request, AccountResult.tooLarge);
+    }
+    final Map<String, String> fields;
+    try {
+      fields = Uri.splitQueryString(utf8.decode(bytes));
+    } on FormatException {
+      return _accountResultPage(request, AccountResult.badRequest);
+    } on ArgumentError {
+      return _accountResultPage(request, AccountResult.badRequest);
+    }
+    final String? field = fields['g_csrf_token'];
+    final String? cookie = _cookie(request, 'g_csrf_token');
+    final String? credential = fields['credential'];
+    if (field == null ||
+        field.isEmpty ||
+        cookie == null ||
+        cookie != field ||
+        credential == null) {
+      _logAccount('account_delete', 'form_refused');
+      return _accountResultPage(request, AccountResult.badRequest);
+    }
+    final TokenCheck check = await _googleVerifier!.verify(credential);
+    switch (check) {
+      case TokenBad():
+        _logAccount('account_delete', 'bad_token');
+        return _accountResultPage(request, AccountResult.badToken);
+      case TokenUnavailable():
+        _logAccount('account_delete', 'unavailable');
+        return _accountResultPage(request, AccountResult.unavailable);
+      case TokenOk():
+        try {
+          final bool deleted = _accountStore!.delete(check.sub);
+          _logAccount('account_delete', deleted ? 'deleted' : 'none');
+          return _accountResultPage(
+            request,
+            deleted ? AccountResult.deleted : AccountResult.noAccount,
+          );
+        } on FileSystemException catch (error) {
+          _logAccount('account_delete', 'store_failed',
+              error: '${error.runtimeType}');
+          return _accountResultPage(request, AccountResult.storeFailed);
+        }
+    }
+  }
+
+  /// The value of cookie [name] in the request's `cookie` header, or null.
+  String? _cookie(shelf.Request request, String name) {
+    final String? header = request.headers['cookie'];
+    if (header == null) {
+      return null;
+    }
+    for (final String pair in header.split(';')) {
+      final int eq = pair.indexOf('=');
+      if (eq > 0 && pair.substring(0, eq).trim() == name) {
+        return pair.substring(eq + 1).trim();
+      }
+    }
+    return null;
+  }
+
+  static final RegExp _hostShape = RegExp(r'^[A-Za-z0-9.\-]+(:\d{1,5})?$');
+
+  /// `GET /account/delete`: the page, with Google's button only when sign-in
+  /// is on and the request's host is one a URL can safely carry.
+  shelf.Response _accountDeletePage(shelf.Request request) {
+    final String language = resolveVerifyLanguage(
+      query: request.url.queryParameters,
+      acceptLanguageHeader: request.headers['accept-language'],
+    );
+    final Uri requested = request.requestedUri;
+    final String authority = requested.hasPort
+        ? '${requested.host}:${requested.port}'
+        : requested.host;
+    final bool hostOk = _hostShape.hasMatch(authority);
+    final bool loopback =
+        requested.host == '127.0.0.1' || requested.host == 'localhost';
+    final bool button = _signInOn && hostOk;
+    final String? loginUri = button
+        ? '${loopback ? requested.scheme : 'https'}://$authority'
+            '$_accountDeletePath'
+        : null;
+    final String html = buildAccountDeletePageHtml(
+      language: language,
+      googleClientId: button ? _googleClientId : null,
+      loginUri: loginUri,
+      contactEmail: _privacyContactEmail,
+    );
+    return shelf.Response.ok(
+      request.method == 'HEAD' ? '' : html,
+      headers: <String, String>{
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'vary': 'accept-language',
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+        'content-security-policy': button
+            ? signInPageContentSecurityPolicy
+            : basePageContentSecurityPolicy,
+      },
+    );
+  }
+
+  shelf.Response _accountResultPage(
+    shelf.Request request,
+    AccountResult result,
+  ) {
+    final String language = resolveVerifyLanguage(
+      query: request.url.queryParameters,
+      acceptLanguageHeader: request.headers['accept-language'],
+    );
+    return shelf.Response(
+      accountResultStatus(result),
+      body: buildAccountResultPageHtml(language: language, result: result),
+      headers: <String, String>{
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'vary': 'accept-language',
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+        'content-security-policy': basePageContentSecurityPolicy,
+      },
+    );
   }
 
   void _accept(WebSocketChannel channel, String ip, int build) {

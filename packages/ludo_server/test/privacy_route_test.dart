@@ -815,20 +815,33 @@ void main() {
       body = await _bodyOf(response);
     });
 
-    test('there is no account and no sign-in', () {
+    test('no account is needed, Google sign-in is optional, deletion linked',
+        () {
       final String lower = body.toLowerCase();
       expect(
-        lower.contains('no account'),
+        body.contains('You do not need an account'),
         isTrue,
-        reason: 'expected the phrase "no account" in the document; '
-            'see work/ludo/PRIVACY_DRAFT.md "no account, no sign-in"; '
-            'full body: $body',
+        reason: 'expected the phrase "You do not need an account" in the '
+            'document (order X223: no account is needed to play); full '
+            'body: $body',
       );
       expect(
-        lower.contains('no sign-in'),
+        body.contains('Signing in with Google is optional'),
         isTrue,
-        reason: 'expected the phrase "no sign-in" in the document; full '
-            'body: $body',
+        reason: 'expected "Signing in with Google is optional" in the '
+            'document; full body: $body',
+      );
+      expect(
+        lower.contains('can play every game without it'),
+        isTrue,
+        reason: 'expected the page to say the game is fully playable '
+            'without signing in; full body: $body',
+      );
+      expect(
+        RegExp(r'<a\s[^>]*href="/account/delete"[^>]*>').hasMatch(body),
+        isTrue,
+        reason: 'expected a real anchor with href exactly /account/delete; '
+            'full body: $body',
       );
     });
 

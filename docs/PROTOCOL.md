@@ -2401,3 +2401,135 @@ own turn to roll.
    transport: tap with `pre` shows the face and the legal marks with no `rolled` delivered, sends
    one `roll`; a token tap then sends `move`; the late `rolled` repaints nothing; a `rolled` that
    differs from `pre` triggers one resync; no `pre`, today's behaviour; en and ar.
+
+## 36. Optional Google sign-in and account deletion, 2026-11-25
+
+Sam's order X223, with his decision of 2026-11-25 00:20. Playing never needs an account and nothing
+in sections 1-35 changes: no frame, no field, no error code of the game socket is added. Sign-in is
+three plain HTTPS routes on the same host, next to `/health` and `/privacy`, plus one web page.
+
+### 36.1 What is kept, and what never is
+
+1. **Kept, per account:** a keyed hash of the Google subject id (the `sub` claim), the display name
+   (the `name` claim, trimmed, at most 40 characters, the same limit section 4 puts on `name`), and
+   the time the account was first created and last signed in (milliseconds since the epoch).
+2. **Never kept, logged or sent anywhere:** the email address, the raw `sub`, the ID token itself,
+   the picture URL, the locale. The server reads the email claim nowhere: it decodes the payload into
+   a map and takes `sub`, `name`, `iss`, `aud`, `exp` and `iat` from it, and nothing else from that
+   map reaches a variable, a log line, an error message, a file or a response. A token that fails
+   any check is not echoed in a log line or a response, in whole or in part.
+3. **The hash:** `HMAC-SHA256(key = LUDO_ACCOUNT_SALT as UTF-8 bytes, message = "google:" + sub)`,
+   lowercase hex, 64 characters. It is the account's file name and its only id. Nothing on the wire
+   carries it.
+
+### 36.2 Configuration
+
+| Variable | Meaning |
+|---|---|
+| `LUDO_GOOGLE_CLIENT_ID` | The OAuth **Web** client id from Sam's Google Cloud project. It is the only accepted `aud`. Absent or empty = sign-in is off. |
+| `LUDO_ACCOUNT_DIR` | Directory holding one JSON file per account. Created if missing, mode 0700. |
+| `LUDO_ACCOUNT_SALT` | The HMAC key of 36.1.3, at least 32 characters. A secret: `.env` only, never in the repo or a log. |
+| `LUDO_GOOGLE_CERTS_URL` | Where 36.3.1 fetches keys. Absent or empty = Google's URL. Any other value must be `https://`, or `http://` to `127.0.0.1` or `localhost` (for the process tests of 36.7); anything else stops the server at start. |
+
+Sign-in off is a normal state, not an error: the server starts and plays as today. When
+`LUDO_GOOGLE_CLIENT_ID` is set and `LUDO_ACCOUNT_DIR` is empty or `LUDO_ACCOUNT_SALT` is shorter than
+32 characters, the server stops at start with one stderr line naming the variable (not its value),
+before the port opens, as section 27 item 3 does.
+
+### 36.3 Verifying a Google ID token
+
+A token is a JWT (three base64url parts). It is accepted only when every one of these holds, checked
+in this order, and the first failure decides the answer (`BAD_TOKEN` for all of them):
+
+1. The whole token is at most 4096 bytes and has exactly three non-empty parts.
+2. The header is a JSON object with `alg` exactly `RS256` and a string `kid`.
+3. `kid` names a key in Google's key set (36.3.1), and the RSASSA-PKCS1-v1_5 SHA-256 signature over
+   `<header>.<payload>` (the ASCII bytes as received) verifies with that key.
+4. The payload is a JSON object; `iss` is `accounts.google.com` or `https://accounts.google.com`.
+5. `aud` equals `LUDO_GOOGLE_CLIENT_ID` (a string; a list `aud` is refused).
+6. `exp` is a number greater than now minus 60 seconds; `iat` is a number less than now plus 60
+   seconds. Now comes from the server's `Clock`.
+7. `sub` is a string of 1 to 255 characters.
+
+`name` is optional: absent, not a string, or empty after trimming gives the display name `""`, and the
+client then keeps the name the player typed.
+
+#### 36.3.1 Google's keys
+
+Fetched from `https://www.googleapis.com/oauth2/v3/certs` (a JWK set: `kty` `RSA`, `kid`, `n`, `e`).
+Kept in memory for the `max-age` of the response's `Cache-Control` (1 hour if absent or unreadable,
+never more than 24 hours). A token whose `kid` is not in the cached set triggers one refetch, at most
+one per 60 seconds for the whole process. A fetch that fails or times out (5 seconds) leaves the
+cached set in place; with no set at all the answer is `SIGN_IN_UNAVAILABLE`. The fetcher is injected,
+so tests use their own key pair and never touch the network.
+
+### 36.4 The routes
+
+Every route answers JSON (`content-type: application/json; charset=utf-8`) except the page in 36.5.
+Request bodies over 8192 bytes are refused with 413 `TOO_LARGE` before they are parsed. Errors are
+`{ "code": <string> }` with the status below, and nothing else.
+
+| Route | Request | 200 answer |
+|---|---|---|
+| `GET /auth/config` | none | `{ "google_client_id": <string or null> }` (null when sign-in is off) |
+| `POST /auth/google` | `{ "id_token": string }` | `{ "name": string }`: the account is created, or its name and last-sign-in time are updated |
+| `POST /account/delete` (JSON) | `{ "id_token": string }` | `{ "deleted": bool }`: true when a file was removed, false when there was none |
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `BAD_REQUEST` | body not a JSON object, `id_token` missing or not a string, an unknown key |
+| 401 | `BAD_TOKEN` | any check of 36.3 fails |
+| 413 | `TOO_LARGE` | body over 8192 bytes |
+| 429 | `RATE_LIMITED` | more than 10 requests to the two POST routes (36.4 and 36.5 counted together) from one client IP (section 7's IP, trusted proxies honoured) in 60 seconds |
+| 503 | `SIGN_IN_OFF` | sign-in is off (36.2) |
+| 503 | `SIGN_IN_UNAVAILABLE` | no Google key set could be obtained |
+| 500 | `STORE_FAILED` | the account file could not be written or removed; the log line names the operation and the error class, never the hash, the name or the token |
+
+The account file is written whole to a temporary file in the same directory and renamed over the old
+one, mode 0600: `{ "name": string, "created_ms": int, "last_ms": int }`. Nothing else is in it.
+
+### 36.5 The web deletion page, `/account/delete`
+
+Play requires a web route to ask for deletion. `GET /account/delete` (and the trailing-slash form)
+serves one page, English and Arabic as the other pages choose their language, RTL for Arabic, in the
+look of the privacy page. It says: what an account holds (36.1.1, in plain words), that deleting it
+removes that at once and cannot be undone, that game records at `/v/<id>` hold no account and are
+removed after 90 days anyway, how to delete inside the app, and the support address
+(`PRIVACY_CONTACT_EMAIL`) for anyone who cannot sign in.
+
+When sign-in is on, the page also shows Google's own sign-in button (Google Identity Services,
+`https://accounts.google.com/gsi/client`, redirect mode, `data-login_uri` = this page's absolute URL
+on the request's host). Google then POSTs a form to `/account/delete` with `credential` (an ID token)
+and `g_csrf_token`, and sets a cookie of the same name. That form POST is accepted only when the cookie
+and the field are present and equal; the token is verified by 36.3 and the account deleted. The answer
+is a page in the same style: "Your account is deleted." or "There was no account for this Google
+account." or the matching error in words. Only this page widens its Content-Security-Policy, and only
+by the GIS origins Google documents for the button (`script-src`, `frame-src`, `connect-src`,
+`style-src` on `https://accounts.google.com/gsi/`). When sign-in is off the page shows no button and
+loads no script.
+
+### 36.6 The client (informative, the order holds the design)
+
+The app asks `GET /auth/config` on the HTTPS origin of its server. Null, an error or no answer: no
+sign-in control anywhere, and nothing else changes. Otherwise home shows an optional Google sign-in.
+The app asks Google for an ID token with the configured id as the server client id, sends it to
+`POST /auth/google`, and on 200 uses the returned name as the player's name (an empty name leaves the
+typed one). It keeps on the device only "signed in" and that name; it keeps no token. Deleting asks
+Google for a fresh token and sends it to `POST /account/delete`, then signs out on the device.
+Signing out is local and touches nothing on the server.
+
+### 36.7 Tests this section requires before it is implemented
+
+Server, with a test RSA key pair and an injected key fetcher and clock: each check of 36.3 refused on
+its own (bad part count, oversize, `alg` `none` and `HS256`, unknown `kid`, flipped signature byte,
+wrong `iss`, list `aud`, wrong `aud`, expired past the 60 s skew, `iat` in the future, missing `sub`);
+a good token creates the file with exactly the three keys and the 64-hex name; a second sign-in keeps
+`created_ms` and moves `last_ms`; delete removes it and a second delete answers `deleted: false`; the
+key set is refetched once for an unknown `kid` and not again within 60 s; `max-age` honoured; sign-in
+off answers `SIGN_IN_OFF` and config null; the start-time refusals of 36.2; 413, 429, 400 cases; the
+form POST without the cookie, with a mismatched cookie, and with a good one; the page with sign-in off
+loads no script. **The email test:** a real server process, its stdout and stderr captured, a token
+whose `email` claim is a unique address and whose `sub` is a unique string; sign in, sign in again,
+send three bad tokens carrying the same claims, delete; then neither string appears in the captured
+output, in any file under the account directory at any point (read after each step), or in any
+response body.
