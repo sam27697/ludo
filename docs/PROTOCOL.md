@@ -2429,6 +2429,7 @@ three plain HTTPS routes on the same host, next to `/health` and `/privacy`, plu
 | `LUDO_GOOGLE_CLIENT_ID` | The OAuth **Web** client id from Sam's Google Cloud project. It is the only accepted `aud`. Absent or empty = sign-in is off. |
 | `LUDO_ACCOUNT_DIR` | Directory holding one JSON file per account. Created if missing, mode 0700. |
 | `LUDO_ACCOUNT_SALT` | The HMAC key of 36.1.3, at least 32 characters. A secret: `.env` only, never in the repo or a log. |
+| `LUDO_GOOGLE_CERTS_URL` | Where 36.3.1 fetches keys. Absent or empty = Google's URL. Any other value must be `https://`, or `http://` to `127.0.0.1` or `localhost` (for the process tests of 36.7); anything else stops the server at start. |
 
 Sign-in off is a normal state, not an error: the server starts and plays as today. When
 `LUDO_GOOGLE_CLIENT_ID` is set and `LUDO_ACCOUNT_DIR` is empty or `LUDO_ACCOUNT_SALT` is shorter than
