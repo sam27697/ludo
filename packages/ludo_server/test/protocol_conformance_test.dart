@@ -34,6 +34,7 @@ import 'support/engine_search.dart';
 import 'support/raw_wire_client.dart';
 import 'support/scripted_bytes.dart';
 import 'support/wire_harness.dart';
+import 'support/pre_copies.dart';
 
 /// The exact JSON text of a minimal, well-formed `ping` envelope, built
 /// without going through `WireTestClient` so a raw socket can send it too.
@@ -279,9 +280,16 @@ void main() {
           '$actingSeat saw "${mine['t']}", the other socket saw '
           '"${theirs['t']}"',
     );
+    expectPreOnRollerOnly(
+        mine['t']! as String,
+        <(int?, Map<String, Object?>)>[
+          (actingSeat, mine['d']! as Map<String, Object?>),
+          (other.seat, theirs['d']! as Map<String, Object?>),
+        ],
+        'room ${lobby.code}');
     expect(
-      theirs['d'],
-      mine['d'],
+      dWithoutPre(theirs),
+      dWithoutPre(mine),
       reason: 'room ${lobby.code}: a broadcast push must reach every '
           'socket with the identical payload (section 12.3); seat '
           '$actingSeat saw ${mine['d']}, the other socket saw ${theirs['d']}',

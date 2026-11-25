@@ -2240,7 +2240,8 @@ stand except where an item below says otherwise. Needs `MIN_CLIENT_BUILD` raised
    `{ "seat": int }` from the host in PLAYING removes any playing seat, connected or not. The
    ladder: `NOT_HOST`; `seat` an int 0..3 and no other key (`BAD_FIELD`); the host's own seat, an
    empty seat, a finished seat or a retired seat `ILLEGAL_MOVE`. `NOT_ABSENT` is no longer sent.
-   Under `2026-10` the PLAYING kick stays `WRONG_PHASE` as today. On acceptance: the room gets
+   Under `2026-10` the PLAYING kick stays `BAD_TYPE` as today (`kick` is an unknown type there,
+   section 31 item 11 (e2)). On acceptance: the room gets
    `seat_retired` `{ "seat", "reason": "kicked", "host_seat" }` (with `re` on the host's copy) and
    what section 28 item 4 says follows a retire; the kicked seat's socket, when it has one, first
    gets that `seat_retired`, then `kicked` `{ }` (no `seq`; with `ban` when item 6 fired a ban,
@@ -2252,8 +2253,10 @@ stand except where an item below says otherwise. Needs `MIN_CLIENT_BUILD` raised
    oldest matchable room and skips a friends-only room, a PLAYING room, a full room, a room whose
    host socket is down and a room with a computer seat; `via: "public"` on that seat and after its
    resume; `find_game` without `install` and with a seated socket; the line in order over three
-   tickets and one new open room of two free seats (first two seated in order, the third told
-   `position` 1); `queued` re-sent on every position change and not otherwise; the two-strangers
+   tickets (the head and the second detached, the third attached at `position` 3) and one new open
+   room: the third is seated past the two detached tickets, which keep their places; `queued` re-sent
+   on every position change (a detached ticket ahead expiring, a cancel) and not otherwise. At rest
+   the line never holds two ATTACHED tickets: two attached strangers are always a room (item 4); the two-strangers
    room (host is the head, `players` 4, `open` true, the second ticket seated in it, a third and a
    fourth too, a fifth stays queued until a seat frees); a single ticket alone creates nothing;
    `cancel_find` with and without a ticket; a detached ticket is passed over, re-attached by
@@ -2349,8 +2352,8 @@ own turn to roll.
 1. **`pre`.** Whenever the server sends a `turn` frame in phase `await_roll`, the copy that goes to
    the socket of the seat on turn carries `"pre"`: the `d` of the `rolled` frame the server would
    broadcast if that seat's `roll` arrived now, without `seq`, `reveal`, `deadline_ms` and `by`
-   (so: `seat`, `value`, `legal`, `k`, `queue`, and `legal_by_face` or `release` when that frame
-   would carry them). Every other socket's copy has no `pre`. The snapshot's `turn` object carries
+   (so: `seat`, `value`, `legal`, `k`, `queue`, and `offer`, `legal_by_face` or `release` when that
+   frame would carry them). Every other socket's copy has no `pre`. The snapshot's `turn` object carries
    the same `pre` for the seat on turn's own socket in `await_roll`, and for nobody else. A
    computer seat gets none. `pre` is computed from the same chain link and the same engine call the
    roll itself uses, without advancing the roll counter and without publishing the link.
@@ -2372,6 +2375,20 @@ own turn to roll.
    token tapped before `rolled` arrives sends `move` right after `roll` on the same socket; the
    server takes them in order. Without a `pre` (an old server, a resume race) the die waits for
    `rolled` as it does today.
+7. **Rulings of 2026-11-24 (run 169).** (a) "Was sent a `pre`" in item 3 means the last `pre`
+   handed to a socket of that seat for that roll; a seat on turn whose socket was down for the
+   whole of its turn was never sent one and is retired with no roll taken. (b) `pre` is added at
+   the per-socket send, to a copy; the map given to the broadcast, the game log and the answer to
+   `game_log` never hold it. (c) The frames of a roll forced by a host's kick carry the kick's `re`
+   on the host's copies, as every frame a request causes does. (d) When another seat's retire ends
+   the game while the roller holds a `pre`, that face is never published: there is no next roll.
+   (e) When another seat is retired while the roller holds a `pre`, no new `turn` frame is sent;
+   the `rolled` that follows is the truth, and a client that finds it differs from its `pre`
+   resyncs (item 5). (f) The socket of the seat that leaves or is kicked is not sent the frames
+   of its forced roll: it gets its `seat_retired` (and `kicked`), whose `seq` is past the frames it
+   was not sent. A client treats `seat_retired` for its own seat and `kicked` as final whatever
+   the gap. (g) When the forced roll is a six, the same-seat `turn` that follows carries no `pre`
+   and the retire discards the roll it owed.
 6. **Tests this section requires** (server, real sockets, fake clock): `pre` on the roller's `turn`
    and on no other socket's copy of the same frame, at the first turn, after a passed turn, after a
    six, after a capture bonus; `pre` equals the following `rolled` minus the four keys, over a whole
