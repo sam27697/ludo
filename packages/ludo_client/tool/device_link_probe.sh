@@ -1,20 +1,48 @@
 #!/bin/sh
 # Delivers a room link to the installed app on the one booted device on adb,
-# cold (fresh process, no prior task) and then warm (app already in the
-# foreground), and proves the code lands where uiautomator can read it --
-# the same accessibility tree Flutter exposes a text field's contents
-# through, which is what the join field's dumped text actually is. See
-# order 190. Run from packages/ludo_client, with app.fayad.ludo already
-# installed; assumes exactly one device on adb.
+# cold (fresh process, no saved name) and then warm (app already in the
+# foreground, a name in the field), and reads what home and the room route
+# show through uiautomator, the accessibility tree Flutter exposes its
+# semantics through. See orders 190 and 718. Run from packages/ludo_client,
+# with app.fayad.ludo already installed; assumes exactly one device on adb.
 #
-# Each leg reports FOUND, MISSING, or INSTRUMENT-BLIND. MISSING means the
-# accessibility tree was read but the code was not in it; INSTRUMENT-BLIND
-# means the tree itself had nothing to read -- no EditText node carried any
-# text at all, not even the name field's, which always does -- so a missing
-# code there is not evidence the link failed to land, only that this probe
-# could not tell either way. Order 190 RESPEC 1 added this distinction after
-# run 36220114933 reported plain MISSING on both legs for a reason that
-# turned out to be neither: the wrong apk was installed.
+# What the app does with a link since order 701 (lib/src/home_screen.dart,
+# _handleLink and _decideLinkAction): /r/<x> is read as a link id, shape
+# [0-9a-z]{4,10}-[0-9a-z]{6} (roomLinkIdFromUri in lib/src/deep_link.dart).
+# A six-letter room code in /r/ is not a link id and only raises the
+# invalid-code home notice, so the probe sends link ids, never codes. With no
+# name in the field the link waits: home shows the name-required line
+# (Key home-name-required, homeNameRequired in lib/l10n/app_en.arb) and the
+# name field takes focus. A name submitted from the keyboard sends
+# join_room with the link, and RoomRoute is pushed with fromLink true.
+#
+# The answered state. The link ids below are made up, so the server (the
+# probe apk is a plain `flutter build apk --profile`, no dart-define, so it
+# talks to kDefaultServerUrl, wss://ludo.provefair.app, production) answers
+# NO_SUCH_ROOM: docs/PROTOCOL.md says an unknown link is NO_SUCH_ROOM. A
+# fromLink join that gets NO_SUCH_ROOM stays on the lobby's error card with
+# lobbyErrorLinkRoomGone (lib/src/lobby_screen.dart, _errorBody). That text
+# is the one thing that proves the join went out and the server answered it,
+# and it is the only text this probe takes as the answered state. The route
+# does not pop on its own (only Back to home pops it), so no home notice is
+# expected. Two other cards the same route can show are printed, never
+# counted: lobbyErrorTransport (the server was not reached, so nothing was
+# answered) and lobbyErrorRateLimited (answered, but not for this link).
+#
+# Each leg reports FOUND, MISSING, or INSTRUMENT-BLIND. The control against
+# blindness is the Create Room button's label (homeCreateRoomButton), on home
+# in every state since order 701; the hint of the name field is not used,
+# since an empty field exposes no text. MISSING means the control was in the
+# tree and the leg's text was not; INSTRUMENT-BLIND means the dump did not
+# hold the control, so this probe could not tell either way. The cold leg is
+# FOUND only when both its halves are: the name-required line after the link,
+# then the answered state after the name is typed. Order 190 RESPEC 1 added
+# the blind verdict after run 36220114933 reported plain MISSING on both legs
+# for a reason that turned out to be neither: the wrong apk was installed.
+#
+# Every text looked for is read from lib/l10n/app_en.arb at run time, by key,
+# so a copy change there does not leave a stale string here. The device runs
+# in English. None of the strings used holds a character uiautomator escapes.
 #
 # POSIX sh, not bash: no arrays, no `local`, no `[[`, so this also runs
 # under dash. Not `set -e`: a poll that finds nothing on its first attempt
@@ -22,24 +50,50 @@
 # below both need to run and report even when the other one missed.
 
 PACKAGE="app.fayad.ludo"
-COLD_CODE="K7M2QP"
-WARM_CODE="H4XR9T"
+ARB="lib/l10n/app_en.arb"
+COLD_LINK_ID="probec-k7m2qp"
+WARM_LINK_ID="probew-h4xr9t"
+PROBE_NAME="Probe"
 POLL_TOTAL_SECONDS=45
 POLL_INTERVAL_SECONDS=3
 
+# arb_string KEY
+# Echoes the English string for KEY from ARB, or nothing when the key is not
+# there. The arb file holds one "key": "value", pair per line.
+arb_string() {
+  sed -n "s/^  \"$1\": \"\\(.*\\)\",\\{0,1\\}\$/\\1/p" "$ARB" | head -n 1
+}
+
+CONTROL_TEXT=$(arb_string homeCreateRoomButton)
+NAME_REQUIRED_TEXT=$(arb_string homeNameRequired)
+ANSWERED_TEXT=$(arb_string lobbyErrorLinkRoomGone)
+TRANSPORT_TEXT=$(arb_string lobbyErrorTransport)
+RATE_LIMITED_TEXT=$(arb_string lobbyErrorRateLimited)
+BACK_HOME_TEXT=$(arb_string lobbyBackToHomeButton)
+CONNECTING_TEXT=$(arb_string lobbyConnecting)
+for arb_value in "$CONTROL_TEXT" "$NAME_REQUIRED_TEXT" "$ANSWERED_TEXT" "$TRANSPORT_TEXT" "$RATE_LIMITED_TEXT" "$BACK_HOME_TEXT" "$CONNECTING_TEXT"; do
+  if [ -z "$arb_value" ]; then
+    echo "device-link-probe: a key this probe needs is missing from $ARB; run from packages/ludo_client" >&2
+    exit 2
+  fi
+done
+echo "device-link-probe: control \"$CONTROL_TEXT\", name-required \"$NAME_REQUIRED_TEXT\", answered \"$ANSWERED_TEXT\""
+
 # Page-button leg (order 461). LINK_PAGE_HOST is the one input taken from the
 # environment: the staging host serves the same page, with the same
-# intent:// link to ludo.provefair.app, so a run can measure either.
+# intent:// link to ludo.provefair.app, so a run can measure either. The id
+# is a link id since order 718: run 08a1dda showed the page answers a
+# six-letter code with "This invite link looks cut off" and no button.
 LINK_PAGE_HOST="${LINK_PAGE_HOST:-ludo.provefair.app}"
-BUTTON_CODE="B8NV3K"
+BUTTON_CODE="probeb-b8nv3k"
 BUTTON_LABEL="Open in Ludo RNG"
 BUTTON_PAGE_SECONDS=45
 BUTTON_APP_SECONDS=30
 POLL_DECLINE_MAX=4
 CHROME_PACKAGE="com.android.chrome"
 
-# deliver CODE FORCE_STOP
-# Sends the room link for CODE to PACKAGE explicitly, by package name, via
+# deliver LINK_ID FORCE_STOP
+# Sends the room link for LINK_ID to PACKAGE explicitly, by package name, via
 # `am start -W`. FORCE_STOP is "yes" for the cold leg (force-stops the app
 # first, so the link starts a fresh process) and "no" for the warm leg
 # (leaves the app in the foreground from the previous leg, so the link
@@ -58,34 +112,13 @@ deliver() {
   fi
 }
 
-# poll_for_code CODE REMOTE_XML LOCAL_XML
-# Polls up to POLL_TOTAL_SECONDS, every POLL_INTERVAL_SECONDS: dumps the
-# accessibility tree to REMOTE_XML on the device, pulls it to LOCAL_XML,
-# and looks for CODE in it. Sets result to FOUND or MISSING in
-# POLL_RESULT. LOCAL_XML holds whatever the last pull produced either way,
-# found or not, for the caller to read back on a miss. MISSING here is not
-# yet the final word: the caller still runs edittext_has_text on LOCAL_XML
-# to tell an empty join field apart from a dump that exposed nothing at
-# all (INSTRUMENT-BLIND).
-poll_for_code() {
-  code="$1"
-  remote_xml="$2"
-  local_xml="$3"
-  elapsed=0
-  POLL_RESULT="MISSING"
-  while true; do
-    adb shell uiautomator dump "$remote_xml" >/dev/null 2>&1
-    adb pull "$remote_xml" "$local_xml" >/dev/null 2>&1
-    if [ -f "$local_xml" ] && grep -q "$code" "$local_xml"; then
-      POLL_RESULT="FOUND"
-      break
-    fi
-    if [ "$elapsed" -ge "$POLL_TOTAL_SECONDS" ]; then
-      break
-    fi
-    sleep "$POLL_INTERVAL_SECONDS"
-    elapsed=$((elapsed + POLL_INTERVAL_SECONDS))
-  done
+# dump_screen REMOTE_XML LOCAL_XML
+# One uiautomator dump, pulled to LOCAL_XML. LOCAL_XML is removed first so a
+# dump that failed cannot leave an old one to be read as this one.
+dump_screen() {
+  rm -f "$2"
+  adb shell uiautomator dump "$1" >/dev/null 2>&1
+  adb pull "$1" "$2" >/dev/null 2>&1
 }
 
 # split_nodes LOCAL_XML
@@ -98,16 +131,79 @@ split_nodes() {
 <node/g' "$local_xml"
 }
 
-# edittext_has_text LOCAL_XML
-# True (exit 0) only if LOCAL_XML contains at least one
-# android.widget.EditText node whose text attribute is non-empty. The name
-# field always has text, cold or warm, so this is the control: it is what
-# tells an empty join field (the code really is MISSING) apart from a dump
-# that exposed nothing usable at all (INSTRUMENT-BLIND), which run
-# 36220114933 could not, having only the first 4000 characters to read.
-edittext_has_text() {
-  local_xml="$1"
-  split_nodes "$local_xml" | grep 'class="android.widget.EditText"' | grep -Eq 'text="[^"]+"'
+# has_text LOCAL_XML TEXT
+# True (exit 0) only if LOCAL_XML exists and some node's text or
+# content-desc attribute holds TEXT. A substring match, because Flutter
+# merges a button's label and a field's label and hint into one attribute
+# (run 08a1dda dumped the name field's hint as "Your name&#10;Your name").
+# The hint attribute is never read.
+has_text() {
+  if [ ! -f "$1" ]; then
+    return 1
+  fi
+  {
+    split_nodes "$1" | sed -n 's/.* text="\([^"]*\)".*/\1/p'
+    split_nodes "$1" | sed -n 's/.* content-desc="\([^"]*\)".*/\1/p'
+  } | grep -qF -e "$2"
+}
+
+# poll_for_text TEXT REMOTE_XML LOCAL_XML
+# Polls up to POLL_TOTAL_SECONDS, every POLL_INTERVAL_SECONDS, for TEXT in
+# the dump. Sets POLL_RESULT to FOUND or MISSING. LOCAL_XML holds the last
+# dump either way, for the caller to tell MISSING from INSTRUMENT-BLIND.
+poll_for_text() {
+  want="$1"
+  remote_xml="$2"
+  local_xml="$3"
+  elapsed=0
+  POLL_RESULT="MISSING"
+  while true; do
+    dump_screen "$remote_xml" "$local_xml"
+    if has_text "$local_xml" "$want"; then
+      POLL_RESULT="FOUND"
+      break
+    fi
+    if [ "$elapsed" -ge "$POLL_TOTAL_SECONDS" ]; then
+      break
+    fi
+    sleep "$POLL_INTERVAL_SECONDS"
+    elapsed=$((elapsed + POLL_INTERVAL_SECONDS))
+  done
+}
+
+# home_verdict LOCAL_XML
+# After a poll on home: FOUND stays FOUND; otherwise MISSING when the
+# control (the Create Room label) is in the dump, INSTRUMENT-BLIND when not.
+home_verdict() {
+  if [ "$POLL_RESULT" = "FOUND" ]; then
+    echo "FOUND"
+  elif has_text "$1" "$CONTROL_TEXT"; then
+    echo "MISSING"
+  else
+    echo "INSTRUMENT-BLIND"
+  fi
+}
+
+# answered_verdict LOCAL_XML
+# After a poll for the answered state. The control here is wider than home's,
+# because the answered state is on the room route, where Create Room is not:
+# the dump is readable when it holds Create Room (still on home), the
+# lobby's connecting line, its Back to home button, or one of the two cards
+# that are not this answer (transport, rate limited). Which of those it was
+# is printed.
+answered_verdict() {
+  if [ "$POLL_RESULT" = "FOUND" ]; then
+    echo "FOUND"
+    return
+  fi
+  for seen_text in "$TRANSPORT_TEXT" "$RATE_LIMITED_TEXT" "$CONNECTING_TEXT" "$BACK_HOME_TEXT" "$CONTROL_TEXT"; do
+    if has_text "$1" "$seen_text"; then
+      echo "device-link-probe: no answer in $1, it shows \"$seen_text\"" >&2
+      echo "MISSING"
+      return
+    fi
+  done
+  echo "INSTRUMENT-BLIND"
 }
 
 # print_edittext_values LOCAL_XML
@@ -116,6 +212,9 @@ edittext_has_text() {
 # can be read from the step log alone.
 print_edittext_values() {
   local_xml="$1"
+  if [ ! -f "$local_xml" ]; then
+    return
+  fi
   split_nodes "$local_xml" | grep 'class="android.widget.EditText"' | while IFS= read -r node_line; do
     text_value=$(printf '%s' "$node_line" | sed -n 's/.*text="\([^"]*\)".*/\1/p')
     hint_value=$(printf '%s' "$node_line" | sed -n 's/.*hint="\([^"]*\)".*/\1/p')
@@ -223,7 +322,7 @@ node_centre() {
 }
 
 # poll_for_node LABEL REMOTE_XML LOCAL_XML TOTAL_SECONDS
-# The poll_for_code loop, looking for a node by its label instead of a code,
+# The poll_for_text loop, looking for a node by its exact label,
 # with its own timeout. Sets NODE_CENTRE to "X Y", or to nothing on a miss.
 # LOCAL_XML is removed first so a dump that failed cannot leave an old one
 # to be read as this one.
@@ -338,7 +437,7 @@ chrome_first_run_tap() {
 # page_button_probe
 # Walks the friend's whole path on the device: Chrome shows the room link
 # page, the "Open in Ludo RNG" button is tapped, and the app comes to the
-# front with the code in the join field. The implicit-tap leg measures
+# front and shows that it read the link id (see the APP branch below). The implicit-tap leg measures
 # whether Android hands a tapped link to the app; this one measures the way
 # in that does not depend on the domain being verified, the intent:// link
 # on the page (order 457). The page is opened in Chrome by package, so what
@@ -350,8 +449,8 @@ chrome_first_run_tap() {
 # failure: nothing here touches the probe's exit code. Variables are
 # btn_-prefixed so none of them can touch the cold and warm results.
 # Chrome's notification promo is pre-empted with pm grant and, if it still
-# shows, declined inside the button poll. One verdict line: APP FOUND, APP MISSING (app in front, code not in an
-# EditText), NOT-APP (<component>), or NO-BUTTON (<reason>), with the dumps
+# shows, declined inside the button poll. One verdict line: APP FOUND, APP MISSING (app in front, neither
+# the name-required line nor the answered state), NOT-APP (<component>), or NO-BUTTON (<reason>), with the dumps
 # printed on anything but FOUND.
 page_button_probe() {
   btn_url="https://${LINK_PAGE_HOST}/r/${BUTTON_CODE}?lang=en"
@@ -417,17 +516,36 @@ page_button_probe() {
       print_dump link-page.xml
       print_dump link-button.xml
     else
-      # The page itself shows the code, so a bare grep for it would pass
-      # while Chrome is still in front; the app is confirmed first and the
-      # code must then sit in an EditText, the join field.
-      rm -f link-button.xml
-      poll_for_code "$BUTTON_CODE" /sdcard/link-button.xml link-button.xml
+      # The app is confirmed in front first, so nothing on the page can be
+      # read as the app's answer. Since order 701 a link with no saved name
+      # shows the name-required line, and with a name it goes to the room
+      # route; the legs above never save a name (an unknown link id never
+      # connects, and only a connected join records one), so after the
+      # force-stop above this is expected to be the name-required line.
+      # Either text counts: both are only on screen after the app read the
+      # link id.
+      btn_seen=""
+      btn_elapsed=0
+      while true; do
+        dump_screen /sdcard/link-button.xml link-button.xml
+        for btn_text in "$NAME_REQUIRED_TEXT" "$ANSWERED_TEXT"; do
+          if has_text link-button.xml "$btn_text"; then
+            btn_seen="$btn_text"
+            break
+          fi
+        done
+        if [ -n "$btn_seen" ] || [ "$btn_elapsed" -ge "$POLL_TOTAL_SECONDS" ]; then
+          break
+        fi
+        sleep "$POLL_INTERVAL_SECONDS"
+        btn_elapsed=$((btn_elapsed + POLL_INTERVAL_SECONDS))
+      done
       adb exec-out screencap -p > link-button.png
-      if [ "$POLL_RESULT" = "FOUND" ] && split_nodes link-button.xml | grep 'class="android.widget.EditText"' | grep -q "$BUTTON_CODE"; then
-        echo "device-link-probe: page button -> APP FOUND"
+      if [ -n "$btn_seen" ]; then
+        echo "device-link-probe: page button -> APP FOUND (\"$btn_seen\")"
       else
         echo "device-link-probe: page button -> APP MISSING"
-        print_edittext_values link-button.xml
+        print_node_texts link-button.xml
         print_dump link-page.xml
         print_dump link-button.xml
       fi
@@ -438,34 +556,77 @@ page_button_probe() {
   adb shell input keyevent KEYCODE_HOME
 }
 
-# Cold leg.
-deliver "$COLD_CODE" yes
-poll_for_code "$COLD_CODE" /sdcard/link-cold.xml link-cold.xml
-COLD_RESULT="$POLL_RESULT"
-if [ "$COLD_RESULT" = "MISSING" ] && ! edittext_has_text link-cold.xml; then
-  COLD_RESULT="INSTRUMENT-BLIND"
-fi
+# Cold leg. pm clear first: the leg is "no saved name", and a name stored
+# by anything before this probe (an earlier run, the launch test) would turn
+# it into the warm case. The link waits for a name; FOUND for the first half
+# is the name-required line on home.
+adb shell pm clear "$PACKAGE"
+deliver "$COLD_LINK_ID" yes
+poll_for_text "$NAME_REQUIRED_TEXT" /sdcard/link-cold.xml link-cold.xml
+COLD_LINE_RESULT=$(home_verdict link-cold.xml)
 adb exec-out screencap -p > link-cold.png
 
-# Warm leg. No force-stop: the app is still in the foreground from the cold
-# leg above, so this link has to reach it through singleTop / onNewIntent
-# instead of a cold start.
-deliver "$WARM_CODE" no
-poll_for_code "$WARM_CODE" /sdcard/link-warm.xml link-warm.xml
-WARM_RESULT="$POLL_RESULT"
-if [ "$WARM_RESULT" = "MISSING" ] && ! edittext_has_text link-warm.xml; then
-  WARM_RESULT="INSTRUMENT-BLIND"
+# Second half of the cold leg: the name goes into the focused field and is
+# submitted from the keyboard, which is what sends the waiting link's
+# join_room. Only when the line was there; otherwise there is no waiting
+# link to send and the half is not run.
+COLD_JOIN_RESULT="NOT-RUN"
+if [ "$COLD_LINE_RESULT" = "FOUND" ]; then
+  adb shell input text "$PROBE_NAME"
+  adb shell input keyevent KEYCODE_ENTER
+  poll_for_text "$ANSWERED_TEXT" /sdcard/link-cold-join.xml link-cold-join.xml
+  COLD_JOIN_RESULT=$(answered_verdict link-cold-join.xml)
+  adb exec-out screencap -p > link-cold-join.png
 fi
+if [ "$COLD_LINE_RESULT" = "FOUND" ] && [ "$COLD_JOIN_RESULT" = "FOUND" ]; then
+  COLD_RESULT="FOUND"
+elif [ "$COLD_LINE_RESULT" = "INSTRUMENT-BLIND" ] || [ "$COLD_JOIN_RESULT" = "INSTRUMENT-BLIND" ]; then
+  COLD_RESULT="INSTRUMENT-BLIND"
+else
+  COLD_RESULT="MISSING"
+fi
+
+# Back to home for the warm leg. A link that arrives while the room route is
+# above home does nothing (rule B5 in _decideLinkAction), so the error card
+# is left by its Back to home button, or by the back key when the button is
+# not in the dump. The process and the typed name stay.
+back_xy=""
+if [ -f link-cold-join.xml ]; then
+  back_xy=$(node_centre link-cold-join.xml "$BACK_HOME_TEXT")
+fi
+if [ -n "$back_xy" ]; then
+  echo "device-link-probe: tapping \"$BACK_HOME_TEXT\" at $back_xy"
+  adb shell input tap $back_xy
+else
+  echo "device-link-probe: no \"$BACK_HOME_TEXT\" node, pressing back"
+  adb shell input keyevent KEYCODE_BACK
+fi
+poll_for_text "$CONTROL_TEXT" /sdcard/link-home.xml link-home.xml
+echo "device-link-probe: home before the warm leg: control $POLL_RESULT"
+
+# Warm leg. No force-stop: the app is still in the foreground, so this link
+# has to reach it through singleTop / onNewIntent instead of a cold start.
+# The name typed above is still in the field, so the join goes out with no
+# further input; FOUND is the same answered state as the cold leg's.
+deliver "$WARM_LINK_ID" no
+poll_for_text "$ANSWERED_TEXT" /sdcard/link-warm.xml link-warm.xml
+WARM_RESULT=$(answered_verdict link-warm.xml)
 adb exec-out screencap -p > link-warm.png
 
+echo "device-link-probe: cold name-required $COLD_LINE_RESULT"
+echo "device-link-probe: cold answered $COLD_JOIN_RESULT"
 echo "device-link-probe: cold $COLD_RESULT"
-if [ "$COLD_RESULT" != "FOUND" ]; then
+if [ "$COLD_LINE_RESULT" != "FOUND" ]; then
+  print_node_texts link-cold.xml
   print_edittext_values link-cold.xml
+elif [ "$COLD_JOIN_RESULT" != "FOUND" ]; then
+  print_node_texts link-cold-join.xml
 fi
 
 echo "device-link-probe: warm $WARM_RESULT"
 if [ "$WARM_RESULT" != "FOUND" ]; then
-  print_edittext_values link-warm.xml
+  print_node_texts link-home.xml
+  print_node_texts link-warm.xml
 fi
 
 # Implicit-tap leg. After both legs have reported, so their lines and the
