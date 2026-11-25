@@ -922,17 +922,39 @@ void main() {
               for (final Frame f in frames)
                 if (f.type == 'rolled') f,
             ];
+            // Two `rolled` reach controller.frames: the landing the
+            // controller builds from the pre (no `seq`, the one a screen
+            // plays) and the server's own (with `seq`, the echo).
+            final List<Frame> landings = <Frame>[
+              for (final Frame f in rolled)
+                if (f.seq == null) f,
+            ];
+            final List<Frame> fromServer = <Frame>[
+              for (final Frame f in rolled)
+                if (f.seq != null) f,
+            ];
             expect(
-              rolled,
-              hasLength(1),
-              reason: t.why('fixture: the rolled reached controller.frames'),
+              <int>[landings.length, fromServer.length],
+              <int>[1, 1],
+              reason: t.why(
+                'fixture: one landing built from the pre and one server '
+                '`rolled` reached controller.frames, got ${rolled.length}',
+              ),
             );
             expect(
-              t.controller.isPreEcho(rolled.single),
+              t.controller.isPreEcho(landings.single),
+              isFalse,
+              reason: t.why(
+                'the landing built from the pre is the roll a screen plays, '
+                'not an echo',
+              ),
+            );
+            expect(
+              t.controller.isPreEcho(fromServer.single),
               isTrue,
               reason: t.why(
-                'RoomController.isPreEcho true for the `rolled` of the landed '
-                'pre, delivered while the resync is in flight',
+                'RoomController.isPreEcho true for the server `rolled` of the '
+                'landed pre, delivered while the resync is in flight',
               ),
             );
           },
