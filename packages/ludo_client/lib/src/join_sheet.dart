@@ -271,8 +271,7 @@ class _CodeEntry extends StatelessWidget {
             final bool joinShown = code.isNotEmpty;
             final Widget join = Padding(
               padding: const EdgeInsets.only(top: kSpace3),
-              child: HomeGoldFrame(
-                strong: valid,
+              child: SizedBox(
                 child: valid
                     ? ElevatedButton.icon(
                         key: const Key('join-room-button'),
