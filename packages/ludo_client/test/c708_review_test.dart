@@ -16,8 +16,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
+import 'package:ludo_client/src/die_cube.dart' show kThrowTumble;
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/game_screen.dart';
+import 'package:ludo_client/src/net/frame.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
 
@@ -118,6 +120,62 @@ Map<String, Object?> _preCanMove() => <String, Object?>{
     faceLegal(4, const <int>[0, 1]),
   ],
 };
+
+/// A 3 with every token in the yard: the roll voids the turn.
+Map<String, Object?> _preNoMove() => <String, Object?>{
+  'seat': _me,
+  'value': 3,
+  'legal': const <int>[],
+  'k': 1,
+  'queue': const <int>[],
+};
+
+/// A six with my tokens 0 and 1 legal, `k` 1.
+Map<String, Object?> _preSix() => <String, Object?>{
+  'seat': _me,
+  'value': 6,
+  'legal': const <int>[0, 1],
+  'k': 1,
+  'queue': const <int>[6],
+  'legal_by_face': <Map<String, Object?>>[
+    faceLegal(6, const <int>[0, 1]),
+  ],
+};
+
+/// The second roll after the six: a 2, tokens 0 and 1 legal, `k` 2.
+Map<String, Object?> _preSecond() => <String, Object?>{
+  'seat': _me,
+  'value': 2,
+  'legal': const <int>[0, 1],
+  'k': 2,
+  'queue': const <int>[2],
+  'legal_by_face': <Map<String, Object?>>[
+    faceLegal(2, const <int>[0, 1]),
+  ],
+};
+
+/// The `rolled` broadcast for [pre] (section 35 item 2: field for field the
+/// `pre`).
+Map<String, Object?> _rolledOf(Map<String, Object?> pre) => <String, Object?>{
+  ...pre,
+  'deadline_ms': rollTrayDeadlineMs,
+  'reveal': rollTrayReveal,
+};
+
+int get _tumbleMs => kThrowTumble.inMilliseconds;
+
+/// The faces my die shows.
+List<int> _faces() => <int>[
+  for (int v = 1; v <= 6; v++)
+    if (find
+        .descendant(
+          of: find.byKey(bigDieKey),
+          matching: find.byKey(bigFaceKey(v)),
+        )
+        .evaluate()
+        .isNotEmpty)
+      v,
+];
 
 Map<String, Object?> _tableRoom({
   required List<_Seat> seats,
@@ -555,6 +613,173 @@ void main() {
             reason: t.why(
               'no `roll` sent for a tap within 500 ms of my retire',
             ),
+          );
+        },
+      );
+    });
+  });
+
+  // ===========================================================================
+  // Row 2: the echo of my landed pre during a resync
+  // ===========================================================================
+  group('row 2: echo during a resync', () {
+    for (final bool canMove in <bool>[true, false]) {
+      final FeedbackCue cue = canMove
+          ? FeedbackCue.canMove
+          : FeedbackCue.noMove;
+      _row('${cue.id}: tap, land from pre, a seq gap starts a resync, then my '
+          'rolled: ${cue.id} played once and the rolled is the pre echo', (
+        tester,
+        locale,
+        name,
+      ) async {
+        final Map<String, Object?> pre = canMove ? _preCanMove() : _preNoMove();
+        await _table4(
+          tester,
+          name: name,
+          locale: locale,
+          seats: _table(
+            myTokens: canMove ? const <int>[10, 20, -1, -1] : _yard,
+          ),
+          turn: _rollTurn(_me, pre: pre),
+          body: (t) async {
+            final List<Frame> frames = <Frame>[];
+            final sub = t.controller.frames.listen(frames.add);
+            addTearDown(sub.cancel);
+            final int before = cueCount(t.drive.feedback, cue);
+            expect(
+              await t.tapDie(),
+              1,
+              reason: t.why('fixture: one `roll` at the tap'),
+            );
+            await t.pump(_tumbleMs + 100, step: 5);
+            expect(
+              cueCount(t.drive.feedback, cue) - before,
+              1,
+              reason: t.why('fixture: ${cue.id} once when the die lands'),
+            );
+            await t.pushGap('seat_retired', <String, Object?>{
+              'seat': 3,
+              'reason': 'absent',
+              'host_seat': 0,
+            }, 4);
+            await t.pump(50);
+            expect(
+              t.sentCount('resume'),
+              1,
+              reason: t.why(
+                'fixture: a `resume` on the wire after the seq gap, unanswered',
+              ),
+            );
+            await t.push('rolled', _rolledOf(pre));
+            await t.pump(1500);
+            expect(
+              cueCount(t.drive.feedback, cue) - before,
+              1,
+              reason: t.why(
+                '${cue.id} still played exactly once after my server `rolled` '
+                'for k ${pre['k']} arrived during the resync',
+              ),
+            );
+            final List<Frame> rolled = <Frame>[
+              for (final Frame f in frames)
+                if (f.type == 'rolled') f,
+            ];
+            expect(
+              rolled,
+              hasLength(1),
+              reason: t.why('fixture: the rolled reached controller.frames'),
+            );
+            expect(
+              t.controller.isPreEcho(rolled.single),
+              isTrue,
+              reason: t.why(
+                'RoomController.isPreEcho true for the `rolled` of the landed '
+                'pre, delivered while the resync is in flight',
+              ),
+            );
+          },
+        );
+      });
+    }
+  });
+
+  // ===========================================================================
+  // Row 6: the second roll after a six lands from the new pre
+  // ===========================================================================
+  group('row 6: second roll after a six', () {
+    _row('six from pre, move, then the next pre: the tap lands on it at the '
+        'tumble minimum with no rolled delivered', (
+      tester,
+      locale,
+      name,
+    ) async {
+      await _table4(
+        tester,
+        name: name,
+        locale: locale,
+        seats: _table(myTokens: const <int>[10, 20, -1, -1]),
+        turn: _rollTurn(_me, pre: _preSix()),
+        body: (t) async {
+          expect(
+            await t.tapDie(),
+            1,
+            reason: t.why('fixture: one `roll` at the first tap'),
+          );
+          await t.pump(_tumbleMs + 100, step: 5);
+          expect(_faces(), <int>[
+            6,
+          ], reason: t.why('fixture: the die landed on the six'));
+          t.steps.add('tap board-token-hit-0-0 @${t.clockMs}ms');
+          await tester.tap(
+            find.byKey(tokenHitKey(_me, 0)),
+            warnIfMissed: false,
+          );
+          await tester.pump();
+          expect(
+            t.sentCount('move'),
+            1,
+            reason: t.why('fixture: one `move` for token 0'),
+          );
+          await t.push('rolled', _rolledOf(_preSix()));
+          await t.push('moved', <String, Object?>{
+            'seat': _me,
+            'token': 0,
+            'from': 10,
+            'to': 16,
+            'face': 6,
+            'captured': const <Object?>[],
+            'extra_roll': true,
+          });
+          await t.push('turn', <String, Object?>{
+            'seat': _me,
+            'phase': 'await_roll',
+            'deadline_ms': rollTrayDeadlineMs,
+            'queue': const <int>[],
+            'pre': _preSecond(),
+          });
+          await t.pump(1500);
+          final int rolledBefore = t.steps
+              .where((String s) => s.startsWith('push rolled'))
+              .length;
+          expect(
+            await t.tapDie(),
+            1,
+            reason: t.why('one `roll` at the second tap'),
+          );
+          await t.pump(_tumbleMs, step: 5);
+          expect(
+            _faces(),
+            <int>[2],
+            reason: t.why(
+              'the die landed on the second pre (2) at the tumble minimum '
+              '${_tumbleMs}ms, it shows ${_faces()}',
+            ),
+          );
+          expect(
+            t.steps.where((String s) => s.startsWith('push rolled')).length,
+            rolledBefore,
+            reason: t.why('no `rolled` delivered for the second roll'),
           );
         },
       );
