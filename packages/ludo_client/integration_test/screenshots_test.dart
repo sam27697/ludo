@@ -25364,15 +25364,11 @@ Future<void> _shootEndNoRecord(
         '$shotName ($scenario): expected one EndCard; reproduce with '
         '$reproduce',
   );
-  // C-704: host_wins_1 is a recorded real game, so the card's own check
-  // finds every roll fair: the fairness line is `end-fair-ok` reading
-  // endFairGame, and the shot waits for that verdict.
-  await _awaitEndFairOk(
-    tester,
-    loc: loc,
-    what: '$shotName ($scenario)',
-    reproduce: reproduce,
-  );
+  // C-620 D1: with an empty verify_url the card draws neither the fairness
+  // line, nor the hint, nor Check the rolls, only the not-kept line. The
+  // C-704 fair check lives in that fairness line, so this card never shows
+  // a verdict and the shot does not wait for one; the row's absence is
+  // checked on the frame that is shot, below.
   final Finder fairLine = find.descendant(
     of: cardFinder,
     matching: find.byKey(_endFairOkKey),
@@ -25427,6 +25423,23 @@ Future<void> _shootEndNoRecord(
     'end-card-record-not-kept=${yn(notKept.evaluate().isNotEmpty)} '
     'record_not_kept_text="$notKeptText" '
     'fair_line=${yn(fairLine.evaluate().isNotEmpty)} | $scenario',
+  );
+  final List<String> fairRowShown = <String>[
+    for (final String k in <String>[
+      'end-fair-checking',
+      'end-fair-ok',
+      'end-fair-failed',
+      'end-fair-unavailable',
+    ])
+      if (find.byKey(Key(k)).evaluate().isNotEmpty) k,
+  ];
+  expect(
+    fairRowShown,
+    isEmpty,
+    reason:
+        '$shotName ($scenario): C-620 D1, a card whose record was not kept '
+        'has no fairness line, so no fair-check state may be on it; it shows '
+        '$fairRowShown; reproduce with $reproduce',
   );
   await _capture(binding, tester, shotName, frames: 2);
 }
