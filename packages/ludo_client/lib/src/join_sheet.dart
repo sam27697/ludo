@@ -191,7 +191,7 @@ class _JoinSheetState extends State<JoinSheet> {
             // ban notice) is eased here while the content crossfades. With
             // reduced motion the content takes its new size on the next
             // frame.
-            if (reduce)
+            if (reduce || true)
               content
             else
               AnimatedSize(
