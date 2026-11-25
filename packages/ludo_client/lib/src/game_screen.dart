@@ -6802,6 +6802,9 @@ class _GameScreenState extends State<GameScreen> {
         turn != null &&
         turn.seat == seat &&
         turn.phase == TurnPhase.awaitRoll &&
+        // C-708: a retired seat of mine rolls no more, whatever turn the
+        // table still shows.
+        !room.retired.contains(seat) &&
         _rollWaitK == null &&
         ownRollHeld == null;
 

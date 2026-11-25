@@ -412,6 +412,10 @@ class RoomController extends ChangeNotifier {
       // My `rolled` for it has arrived and waits for the die to land.
       return null;
     }
+    if (_selfRetired) {
+      // My seat is out of the game: there is no roll of mine to show.
+      return null;
+    }
     if (_hasDesynced) {
       // A frame went missing: the turn this `pre` rode may have moved on
       // already. Nothing is in hand until the resync's snapshot says so.
