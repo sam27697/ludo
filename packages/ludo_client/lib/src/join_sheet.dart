@@ -194,10 +194,7 @@ class _JoinSheetState extends State<JoinSheet> {
             if (reduce)
               content
             else
-              AnimatedSize(
-                duration: kMotionShort,
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.topCenter,
+              SizedBox(
                 child: AnimatedSwitcher(
                   duration: kMotionShort,
                   switchInCurve: Curves.easeOut,
