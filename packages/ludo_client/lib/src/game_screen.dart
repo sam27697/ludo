@@ -6931,6 +6931,15 @@ class _GameScreenState extends State<GameScreen> {
                 seatPlaces: _placesOf(room),
                 onAwayTap: _onAwayTap,
                 awayTapSeats: _kickSeatsOf(room),
+                // C-708 (PROTOCOL 33 item 8): the host opens the same sheet
+                // from the name plate of any seat it may remove. Empty for
+                // everyone else, who get no target at all.
+                onNameTap: _onAwayTap,
+                nameTapSeats: _kickSeatsOf(room),
+                computerSeats: <int>{
+                  for (final SeatState s in room.seats)
+                    if (s.bot != null) s.seat,
+                },
                 youLabel: loc.seatYou,
                 turnSeat: lost || gateShut ? null : turn?.seat,
                 mySeat: seat,
