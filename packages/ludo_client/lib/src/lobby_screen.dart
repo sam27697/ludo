@@ -1959,15 +1959,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
     bool allFit = true;
     for (final SeatState seat in room.seats) {
       final bool offline = seatCardShowsOffline(seat);
-      final TextPainter painter = TextPainter(
-        text: TextSpan(
-          text: labels[seat.seat] ?? seatShownName(loc, seat),
-          style: seatCardNameStyle(context, offline: offline),
-        ),
-        textDirection: textDirection,
-        textScaler: textScaler,
-        maxLines: 1,
-      )..layout(maxWidth: seatCardNameWidth(halfCardWidth, offline: offline));
+      final TextPainter painter =
+          TextPainter(
+            text: TextSpan(
+              text: labels[seat.seat] ?? seatShownName(loc, seat),
+              style: seatCardNameStyle(context, offline: offline),
+            ),
+            textDirection: textDirection,
+            textScaler: textScaler,
+            maxLines: 1,
+          )..layout(
+            maxWidth: seatCardNameWidth(
+              halfCardWidth,
+              offline: offline,
+              marked: seatOriginLabel(loc, seatOriginOf(seat)) != null,
+            ),
+          );
       if (painter.didExceedMaxLines) {
         allFit = false;
       }
