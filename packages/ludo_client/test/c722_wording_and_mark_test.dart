@@ -34,6 +34,7 @@ import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
+import 'package:ludo_client/src/seat_mark.dart' show SeatMark;
 
 import 'net/fake_transport.dart';
 import 'support/roll_tray_harness.dart';
@@ -864,6 +865,103 @@ void main() {
               'every origin mark at least 20x20, not shorter than the You '
               'pill (computer), and clear of the name and the offline icon; '
               'problems: $problems',
+            ),
+          );
+        });
+      }
+    }
+  });
+
+  // ===========================================================================
+  // Row 7: the origin mark must not hide the seat's token shape
+  // ===========================================================================
+  group('origin mark leaves the token shape visible (X236, P9)', () {
+    // The shape glyph is the `SeatMark` descendant of `lobby-seat-<n>-token`
+    // (found by type; the origin mark draws Icons, never a SeatMark). Its rect
+    // is the widget's own box.
+    const List<_Seat> roomA = <_Seat>[
+      _Seat(0, 'Sam', via: 'host'),
+      _Seat(1, 'Abdulrahman', via: 'link'),
+      _Seat(2, 'Mohammed', via: 'code'),
+      _Seat(3, 'Alexander', via: 'approved'),
+    ];
+    const List<_Seat> roomB = <_Seat>[
+      _Seat(0, 'Sam', via: 'host'),
+      _Seat(1, 'Christopher', via: 'public'),
+      _Seat(2, 'Nono', bot: 2),
+      _Seat(3, 'Elizabeth', via: 'link'),
+    ];
+    for (final Size size in const <Size>[Size(360, 616), Size(320, 640)]) {
+      final String dim = '${size.width.toInt()}x${size.height.toInt()}';
+      for (final List<Object> scenario in <List<Object>>[
+        <Object>['link, code, approved', roomA],
+        <Object>['public, computer', roomB],
+      ]) {
+        final String label = scenario[0] as String;
+        final List<_Seat> seats = scenario[1] as List<_Seat>;
+        _row('row 7: marks for $label at $dim cover at most 25% of the token '
+            'shape and stay clear of the name', (tester, locale, name) async {
+          final _Rig rig = await _lobby(
+            tester,
+            name: name,
+            locale: locale,
+            seats: seats,
+            open: false,
+            size: size,
+          );
+          final List<String> problems = <String>[];
+          for (final _Seat s in seats) {
+            if (s.via == 'host') {
+              continue;
+            }
+            final Finder markF = find.byKey(Key('seat-origin-${s.seat}'));
+            final Finder glyphF = find.descendant(
+              of: find.byKey(Key('lobby-seat-${s.seat}-token')),
+              matching: find.byType(SeatMark),
+            );
+            if (markF.evaluate().isEmpty || glyphF.evaluate().length != 1) {
+              problems.add(
+                'seat ${s.seat}: seat-origin found '
+                '${markF.evaluate().length}, token SeatMark found '
+                '${glyphF.evaluate().length}',
+              );
+              continue;
+            }
+            final Rect mark = rig.tester.getRect(markF);
+            final Rect glyph = rig.tester.getRect(glyphF);
+            final Rect hit = mark.intersect(glyph);
+            final double covered = (hit.width <= 0 || hit.height <= 0)
+                ? 0
+                : hit.width * hit.height;
+            final double area = glyph.width * glyph.height;
+            if (covered > 0.25 * area) {
+              problems.add(
+                'seat ${s.seat} ($s): mark ${_fmt(mark)} covers '
+                '${(100 * covered / area).toStringAsFixed(0)}% of the token '
+                'shape ${_fmt(glyph)}, at most 25% allowed',
+              );
+            }
+            final Finder card = find.byKey(Key('lobby-seat-${s.seat}'));
+            for (final Element e
+                in find
+                    .descendant(of: card, matching: find.byType(Text))
+                    .evaluate()) {
+              final RenderBox box = e.renderObject! as RenderBox;
+              final Rect r = box.localToGlobal(Offset.zero) & box.size;
+              if (mark.overlaps(r)) {
+                problems.add(
+                  'seat ${s.seat} mark ${_fmt(mark)} overlaps the card text '
+                  '"${(e.widget as Text).data}" ${_fmt(r)}',
+                );
+              }
+            }
+          }
+          expect(
+            problems,
+            isEmpty,
+            reason: rig.why(
+              'marks cover at most 25% of the token shape and '
+              'clear the name; problems: $problems',
             ),
           );
         });
