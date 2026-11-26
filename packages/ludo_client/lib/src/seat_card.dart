@@ -31,6 +31,10 @@ const double kSeatCardTokenSlotWidth = kSpace6;
 /// The gap between the token disc's slot and the name.
 const double kSeatCardTokenGap = kSpace1;
 
+/// The extra gap before the name on a seat that draws an origin mark, so the
+/// name starts clear of the mark's overhang.
+const double kSeatCardMarkGap = 6;
+
 /// The gap between the name and the offline icon, on a seat that shows one.
 const double kSeatCardOfflineIconGap = kSpace1;
 
@@ -51,12 +55,19 @@ bool seatCardShowsOffline(SeatState seat) {
 /// mark are taken out. Floors at zero rather than going negative, so a
 /// caller handing this straight to `TextPainter.layout`'s `maxWidth` never
 /// passes it a negative number.
-double seatCardNameWidth(double cardWidth, {required bool offline}) {
+double seatCardNameWidth(
+  double cardWidth, {
+  required bool offline,
+  bool marked = false,
+}) {
   double width =
       cardWidth -
       (2 * kSeatCardHorizontalPadding) -
       kSeatCardTokenSlotWidth -
       kSeatCardTokenGap;
+  if (marked) {
+    width -= kSeatCardMarkGap;
+  }
   if (offline) {
     width -= kSeatCardOfflineIconGap + kSeatCardOfflineIconWidth;
   }
@@ -189,8 +200,8 @@ class SeatCard extends StatelessWidget {
                   ),
                 if (origin != null)
                   PositionedDirectional(
-                    bottom: -5,
-                    end: -3,
+                    bottom: -8,
+                    end: -8,
                     child: SeatOriginMark(
                       key: Key('seat-origin-${seat.seat}'),
                       seat: seat.seat,
@@ -201,7 +212,11 @@ class SeatCard extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: kSeatCardTokenGap),
+          SizedBox(
+            width: origin != null
+                ? kSeatCardTokenGap + kSeatCardMarkGap
+                : kSeatCardTokenGap,
+          ),
           // The name gets the row's own line to itself; the "You" tag
           // drops to a second, smaller line beneath it instead of
           // sharing the name's line with the crown and the offline icon

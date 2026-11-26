@@ -182,6 +182,10 @@
   "@lobbyOpenSeat": {
     "description": "Placeholder card on the lobby screen for a seat nobody has taken yet."
   },
+  "lobbyOpenSeatPlayer": "Waiting for a player",
+  "@lobbyOpenSeatPlayer": {
+    "description": "Placeholder card on the lobby screen for an empty seat in an open room, where anyone may take it."
+  },
   "seatNameNumbered": "{name} {number}",
   "@seatNameNumbered": {
     "description": "A seat's display name when another seat in the same room holds the same name: the name, then the seat's place among those holders (2, 3, 4), the number already formatted for the locale. The first holder keeps the bare name.",
@@ -1172,6 +1176,10 @@
   "kickSheetWait": "Wait",
   "@kickSheetWait": {
     "description": "Host's button on the remove sheet: close it and keep waiting for the absent seat."
+  },
+  "kickSheetKeep": "Keep",
+  "@kickSheetKeep": {
+    "description": "Host's button on the remove sheet when the seat is present: close it and keep the seat."
   },
   "gameKickRefusedBack": "{name} is back",
   "@gameKickRefusedBack": {

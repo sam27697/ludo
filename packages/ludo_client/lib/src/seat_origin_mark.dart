@@ -11,7 +11,7 @@ import 'net/snapshot.dart' show SeatState, SeatVia;
 import 'theme.dart';
 
 /// The diameter of the paper disc the glyph rides on.
-const double kSeatOriginDisc = 14;
+const double kSeatOriginDisc = 20;
 
 /// The route [seat] came by, for its mark. A seat the server plays is a
 /// computer seat whatever else it carries, so a computer is never drawn as a
@@ -59,28 +59,28 @@ class SeatOriginMark extends StatelessWidget {
   Widget build(BuildContext context) {
     final Color seatColor = LudoColors.seats[seat];
     final Widget glyph = switch (via) {
-      SeatVia.link => Icon(Icons.link, size: 10, color: seatColor),
-      SeatVia.code => Icon(Icons.dialpad, size: 9, color: seatColor),
+      SeatVia.link => Icon(Icons.link, size: 14, color: seatColor),
+      SeatVia.code => Icon(Icons.dialpad, size: 13, color: seatColor),
       SeatVia.approved => Stack(
         alignment: Alignment.center,
         clipBehavior: Clip.none,
         children: <Widget>[
-          Icon(Icons.dialpad, size: 9, color: seatColor),
+          Icon(Icons.dialpad, size: 13, color: seatColor),
           PositionedDirectional(
-            end: -3,
-            bottom: -3,
+            end: -4,
+            bottom: -4,
             child: DecoratedBox(
               decoration: const BoxDecoration(
                 color: LudoColors.paperElevated,
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.check, size: 8, color: seatColor),
+              child: Icon(Icons.check, size: 11, color: seatColor),
             ),
           ),
         ],
       ),
-      SeatVia.public => Icon(Icons.public_rounded, size: 10, color: seatColor),
-      SeatVia.bot => Icon(Icons.smart_toy_rounded, size: 10, color: seatColor),
+      SeatVia.public => Icon(Icons.public_rounded, size: 14, color: seatColor),
+      SeatVia.bot => Icon(Icons.smart_toy_rounded, size: 14, color: seatColor),
       SeatVia.host || SeatVia.unknown => const SizedBox.shrink(),
     };
     return Semantics(
