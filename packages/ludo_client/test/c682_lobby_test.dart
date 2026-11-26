@@ -1076,13 +1076,13 @@ void main() {
       await tester.pump(Duration.zero);
       await tester.pump(const Duration(milliseconds: 600));
       await tester.pump(const Duration(milliseconds: 600));
-      expect(find.text('Wait'), findsOneWidget, reason: l.why);
-      await tester.tap(find.text('Wait'));
+      expect(find.text('Keep'), findsOneWidget, reason: l.why);
+      await tester.tap(find.text('Keep'));
       await tester.pump(Duration.zero);
       await tester.pump(const Duration(milliseconds: 600));
       await tester.pump(const Duration(milliseconds: 600));
       expect(l.sent('kick'), isEmpty, reason: 'cancel sends nothing. ${l.why}');
-      expect(find.text('Wait'), findsNothing, reason: 'sheet closed. ${l.why}');
+      expect(find.text('Keep'), findsNothing, reason: 'sheet closed. ${l.why}');
     });
 
     testWidgets('after the server frees the seat the card empties', (
