@@ -1755,6 +1755,16 @@ class _GameScreenState extends State<GameScreen> {
     };
   }
 
+  /// Whether [seat] is connected in [room]; a computer seat counts as present.
+  bool _seatPresentIn(RoomSnapshot room, int seat) {
+    for (final SeatState s in room.seats) {
+      if (s.seat == seat) {
+        return s.bot != null || s.connected;
+      }
+    }
+    return false;
+  }
+
   /// C-656 S6: the host tapped a seat it may remove. A small sheet in the
   /// board's own colours asks once; Remove sends `kick`, Wait only closes it.
   void _onAwayTap(int seat) {
@@ -1773,6 +1783,7 @@ class _GameScreenState extends State<GameScreen> {
       seat: seat,
       name: name,
       computer: _isComputerSeat(room, seat),
+      seatPresent: _seatPresentIn(room, seat),
       onRoute: (Route<bool> route) => _kickSheetRoute = route,
     ).then((bool? remove) {
       _kickSheetRoute = null;
@@ -10377,6 +10388,7 @@ Future<bool?> showKickSheet(
   BuildContext context, {
   required int seat,
   required String name,
+  required bool seatPresent,
   bool computer = false,
   void Function(Route<bool> route)? onRoute,
 }) {
@@ -10399,7 +10411,7 @@ Future<bool?> showKickSheet(
         computerLabel: loc.seatOriginBot,
         title: loc.kickSheetTitle(name),
         removeLabel: loc.kickSheetRemove,
-        waitLabel: loc.kickSheetWait,
+        waitLabel: seatPresent ? loc.kickSheetKeep : loc.kickSheetWait,
         onRemove: () =>
             Navigator.of(sheetContext).removeRoute(sheetRoute!, true),
         onWait: () => Navigator.of(sheetContext).pop(false),

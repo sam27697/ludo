@@ -189,7 +189,7 @@ class SeatCard extends StatelessWidget {
                   ),
                 if (origin != null)
                   PositionedDirectional(
-                    bottom: -5,
+                    bottom: -6,
                     end: -3,
                     child: SeatOriginMark(
                       key: Key('seat-origin-${seat.seat}'),
