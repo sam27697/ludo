@@ -1690,7 +1690,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ),
         ),
       for (int i = 0; i < openCount; i++)
-        OpenSeatCard(index: i, label: loc.lobbyOpenSeat),
+        OpenSeatCard(
+          index: i,
+          label: room.open ? loc.lobbyOpenSeatPlayer : loc.lobbyOpenSeat,
+        ),
     ];
 
     return LayoutBuilder(
@@ -1789,6 +1792,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       context,
       seat: seat,
       name: name,
+      seatPresent: _kickSeatPresent(seat),
       onRoute: (Route<bool> route) => _kickRoute = route,
     );
     _kickRoute = null;
@@ -1800,6 +1804,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
     if (refused != null && mounted) {
       FeedbackScope.of(context).play(FeedbackCue.invalidTap);
     }
+  }
+
+  bool _kickSeatPresent(int seat) {
+    final RoomSnapshot? room = widget.controller.room;
+    if (room == null) {
+      return false;
+    }
+    for (final SeatState s in room.seats) {
+      if (s.seat == seat) {
+        return s.bot != null || s.connected;
+      }
+    }
+    return false;
   }
 
   /// A frame that empties the seat the remove sheet is about closes it under
@@ -1942,15 +1959,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
     bool allFit = true;
     for (final SeatState seat in room.seats) {
       final bool offline = seatCardShowsOffline(seat);
-      final TextPainter painter = TextPainter(
-        text: TextSpan(
-          text: labels[seat.seat] ?? seatShownName(loc, seat),
-          style: seatCardNameStyle(context, offline: offline),
-        ),
-        textDirection: textDirection,
-        textScaler: textScaler,
-        maxLines: 1,
-      )..layout(maxWidth: seatCardNameWidth(halfCardWidth, offline: offline));
+      final TextPainter painter =
+          TextPainter(
+            text: TextSpan(
+              text: labels[seat.seat] ?? seatShownName(loc, seat),
+              style: seatCardNameStyle(context, offline: offline),
+            ),
+            textDirection: textDirection,
+            textScaler: textScaler,
+            maxLines: 1,
+          )..layout(
+            maxWidth: seatCardNameWidth(
+              halfCardWidth,
+              offline: offline,
+              marked: seatOriginLabel(loc, seatOriginOf(seat)) != null,
+            ),
+          );
       if (painter.didExceedMaxLines) {
         allFit = false;
       }
