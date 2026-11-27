@@ -694,12 +694,10 @@ void main() {
         seatToken: lobby.guest.token,
         connected: false,
       );
-      // A PLAYING room is not evicted by the 10-minute LOBBY-idle rule
-      // (section 3: that rule is LOBBY-only); it only reaps under the
-      // 60-minute-regardless rule every room gets, so the clock has to
-      // move further here than the LOBBY-idle pattern the other test
-      // files use.
-      harness.clock.advance(const Duration(minutes: 61));
+      // Both seats are down, so the 10-minute idle rule reaps this PLAYING
+      // room (section 3 as amended by C-451); the 60-minute LOBBY total this
+      // comment once named is now 10 minutes and LOBBY-only (section 37).
+      harness.clock.advance(const Duration(minutes: 11));
       expect(
         harness.registry.reap(),
         1,
@@ -851,9 +849,9 @@ void main() {
         connected: false,
       );
       // See the comment on the identical setup in the roll ladder's
-      // NO_SUCH_ROOM test above: a PLAYING room needs the 60-minute
-      // regardless rule, not the 10-minute LOBBY-idle one.
-      harness.clock.advance(const Duration(minutes: 61));
+      // NO_SUCH_ROOM test above: both seats down, so the 10-minute idle rule
+      // reaps the PLAYING room.
+      harness.clock.advance(const Duration(minutes: 11));
       expect(harness.registry.reap(), 1);
 
       final Map<String, Object?> reply = await sendMove(

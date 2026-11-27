@@ -151,6 +151,13 @@ abstract class RoomHub {
       {required String code, required String seatToken});
 }
 
+/// Drops the room and seat a socket was holding, as `kicked` does
+/// (section 37 item 2 uses it for a closed lobby).
+void clearConnectionIdentity(Connection conn) {
+  conn.roomCode = null;
+  conn.seatToken = null;
+}
+
 /// `docs/PROTOCOL.md` section 28 rule 4 "At the end": once the `player_left`
 /// of every retired seat a finished game freed has been broadcast, none of
 /// those seats' sockets is owed anything more from the room. Detaches

@@ -1621,8 +1621,8 @@ void main() {
         } finally {
           await room.close();
         }
-        // The room is gone when the registry reaps it (a LOBBY at 60 minutes).
-        _server.clock.advance(const Duration(minutes: 61));
+        // The room is gone when the registry reaps it (a LOBBY at 10 minutes, section 37).
+        _server.clock.advance(const Duration(minutes: 11));
         _server.registry.reap();
         final _Res after = await _get(path);
         expect(after.body, isNot(during.body),
