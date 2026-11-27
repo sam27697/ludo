@@ -5,7 +5,7 @@
 // turn_loop_test.dart and reseat_seat_assigned_test.dart hold their own
 // sections. The two exceptions, both because no frame shows the fact:
 //
-//   - the 60-minute room lifetime restarting at the first rematch (section
+//   - the 10-minute LOBBY lifetime (section 37; 60 before) restarting at the first rematch (section
 //     16.2 item 4), which uses the same FakeClock seam
 //     test/registry_reap_test.dart uses, driving ServerHarness.clock and
 //     ServerHarness.registry.reap() directly, combined with real sockets for
@@ -576,35 +576,35 @@ void main() {
       expect(lobby.host.token, isNotEmpty);
     });
 
-    // Catches: the 60-minute total room lifetime not restarting at a
+    // Catches: the 10-minute LOBBY total room lifetime not restarting at a
     // rematch, which would reap a room mid-second-game on the first game's
     // clock. Section 3/16.2 item 4, FakeClock seam per registry_reap_test.
-    test('the 60-minute total lifetime restarts at the first rematch',
+    test('the 10-minute total lifetime restarts at the first rematch',
         () async {
       await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
 
-      // 55 minutes since the room (and therefore the first game) was
-      // created, all before any rematch -- well inside the original 60
+      // 5 minutes since the room (and therefore the first game) was
+      // created, all before any rematch -- well inside the original 10
       // minute budget, so this is not yet the thing under test.
-      harness.clock.advance(const Duration(minutes: 55));
+      harness.clock.advance(const Duration(minutes: 5));
 
       lobby.host.client.send('rematch', <String, Object?>{});
       await lobby.host.client.next();
       await lobby.guest.client.next();
 
-      // 50 more minutes: 105 minutes since the room was created, which
-      // would have reaped it long ago under the *original* 60-minute clock,
-      // but only 50 minutes since the rematch restarted it.
-      harness.clock.advance(const Duration(minutes: 50));
+      // 9:59 more: 14:59 since the room was created, which would have closed
+      // it long ago under the *original* 10-minute clock, but only 9:59
+      // since the rematch restarted it.
+      harness.clock.advance(const Duration(minutes: 9, seconds: 59));
       expect(harness.registry.reap(), 0,
-          reason: '105 minutes since creation, but only 50 since the '
-              'rematch restarted the 60-minute clock; must not be reaped');
+          reason: '14:59 since creation, but only 9:59 since the '
+              'rematch restarted the 10-minute clock; must not be reaped');
       expect(harness.registry.lookup(lobby.code), isNotNull);
 
-      harness.clock.advance(const Duration(minutes: 10));
+      harness.clock.advance(const Duration(seconds: 1));
       expect(harness.registry.reap(), 1,
-          reason: '60 minutes since the rematch restarted the clock; must '
+          reason: '10 minutes since the rematch restarted the clock; must '
               'now be reaped');
       expect(harness.registry.lookup(lobby.code), isNull);
     });

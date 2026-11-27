@@ -1,11 +1,11 @@
 // Conformance tests for reaping and the code quarantine window,
 // docs/PROTOCOL.md section 3, as contract C-451 rewrites it:
-//   LOBBY: reaped after 10 minutes with no connected seat, and 60 minutes
-//     after the room's lifetime started regardless.
-//   PLAYING: reaped after 10 minutes with no connected seat; the 60 minute
-//     total does not apply.
+//   LOBBY: closed 10 minutes after the room's lifetime started, whether or
+//     not a seat is connected (section 37, which replaced the 60 minutes).
+//   PLAYING: reaped after 10 minutes with no connected seat; the 10 minute
+//     LOBBY total does not apply.
 //   FINISHED: reaped 10 minutes after the registry first observes it so; the
-//     60 minute total does not apply.
+//     LOBBY total does not apply.
 //   Any room that is not LOBBY: reaped 6 hours after its lifetime started,
 //     regardless.
 //   A reaped room's code rests for 10 minutes before it is handed out again.
@@ -59,7 +59,7 @@ void main() {
   });
 
   test(
-      'a LOBBY with somebody connected is reaped at exactly 60 minutes and not at 59',
+      'a LOBBY with somebody connected is reaped at exactly 10 minutes and not at 9:59',
       () {
     final harness = _harness();
     final CreateOk host = _create(harness.registry, name: 'Host', players: 2);
@@ -67,31 +67,44 @@ void main() {
         harness.registry.joinRoom(code: host.room.code, name: 'Guest');
     expect(join, isA<JoinOk>(), reason: 'fixture setup, got $join');
 
-    harness.clock.advance(const Duration(minutes: 59));
+    harness.clock.advance(const Duration(minutes: 9, seconds: 59));
     expect(harness.registry.reap(), 0,
-        reason: 'must not be reaped at 59 minutes total, LOBBY with seats '
+        reason: 'must not be reaped at 9:59 total, LOBBY with seats '
             'connected');
     expect(harness.registry.lookup(host.room.code), isNotNull);
 
-    harness.clock.advance(const Duration(minutes: 1));
+    harness.clock.advance(const Duration(seconds: 1));
     expect(harness.registry.reap(), 1,
-        reason: 'must be reaped at exactly 60 minutes total in LOBBY');
+        reason: 'must be reaped at exactly 10 minutes total in LOBBY');
     expect(harness.registry.lookup(host.room.code), isNull);
   });
 
-  test('a LOBBY with somebody connected survives 30 minutes', () {
+  test('a LOBBY with somebody connected survives 9 minutes', () {
     final harness = _harness();
     final CreateOk host = _create(harness.registry, name: 'Host', players: 3);
 
-    harness.clock.advance(const Duration(minutes: 30));
+    harness.clock.advance(const Duration(minutes: 9));
     expect(harness.registry.reap(), 0);
     expect(harness.registry.lookup(host.room.code), isNotNull);
   });
 
   test('reconnecting resets the 10-minute idle clock', () {
     final harness = _harness();
+    // Section 37: a LOBBY closes at 10 minutes whatever its seats do, so the
+    // idle clock is read on a started (PLAYING) room, with both seats down.
     final CreateOk host = _create(harness.registry, name: 'Host', players: 2);
-
+    final JoinResult guest =
+        harness.registry.joinRoom(code: host.room.code, name: 'Guest');
+    expect(guest, isA<JoinOk>(), reason: 'fixture setup, got $guest');
+    expect(
+        harness.registry
+            .startGame(code: host.room.code, seatToken: host.seat.seatToken),
+        isA<StartOk>(),
+        reason: 'fixture setup: the room must start');
+    harness.registry.setConnected(
+        code: host.room.code,
+        seatToken: (guest as JoinOk).seat.seatToken,
+        connected: false);
     harness.registry.setConnected(
         code: host.room.code, seatToken: host.seat.seatToken, connected: false);
     harness.clock.advance(const Duration(minutes: 9));
@@ -133,8 +146,19 @@ void main() {
           seatToken: room.seat.seatToken,
           connected: false);
     }
+    // Section 37: a connected LOBBY would close at 10 minutes too, so the
+    // room that must survive is a started one with its seats connected.
     final CreateOk stillConnected =
         _create(harness.registry, name: 'D', players: 2);
+    expect(harness.registry.joinRoom(code: stillConnected.room.code, name: 'E'),
+        isA<JoinOk>(),
+        reason: 'fixture setup: D needs a second seat to start');
+    expect(
+        harness.registry.startGame(
+            code: stillConnected.room.code,
+            seatToken: stillConnected.seat.seatToken),
+        isA<StartOk>(),
+        reason: 'fixture setup: D must start');
 
     harness.clock.advance(const Duration(minutes: 10));
     expect(harness.registry.reap(), 3,
@@ -444,16 +468,17 @@ void main() {
       expect(harness.registry.lookup(host.room.code), isNotNull);
     });
 
-    // R5, ugly: the same room left in LOBBY keeps the 60 minute total.
+    // R5, ugly: the same room left in LOBBY keeps the LOBBY total, 10 minutes
+    // since section 37.
     test(
         'R5: the same room left in LOBBY with a seat connected is reaped at '
-        'minute 60', () {
+        'minute 10', () {
       final harness = _harness();
       final CreateOk host = _create(harness.registry, name: 'Host', players: 2);
-      harness.clock.advance(const Duration(minutes: 59));
-      expect(harness.registry.reap(), 0, reason: 'R5: LOBBY at minute 59');
-      harness.clock.advance(const Duration(minutes: 1));
-      expect(harness.registry.reap(), 1, reason: 'R5: LOBBY at minute 60');
+      harness.clock.advance(const Duration(minutes: 9, seconds: 59));
+      expect(harness.registry.reap(), 0, reason: 'R5: LOBBY at 9:59');
+      harness.clock.advance(const Duration(seconds: 1));
+      expect(harness.registry.reap(), 1, reason: 'R5: LOBBY at minute 10');
       expect(harness.registry.lookup(host.room.code), isNull);
     });
 

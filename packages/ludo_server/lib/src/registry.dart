@@ -986,10 +986,11 @@ const Duration _idleTimeout = Duration(minutes: 10);
 /// FINISHED.
 const Duration _finishedTimeout = Duration(minutes: 10);
 
-/// A LOBBY is reaped this long after `Room.lifetimeStartedAt` (creation, or
-/// the last accepted rematch) even while a seat stays connected. A room that
-/// is PLAYING or FINISHED is not bound by this; see [_maxRoomLifetime].
-const Duration _lobbyLifetime = Duration(minutes: 60);
+/// A LOBBY is closed this long after `Room.lifetimeStartedAt` (creation, or
+/// the last accepted rematch) even while a seat stays connected
+/// (`docs/PROTOCOL.md` section 37). A room that is PLAYING or FINISHED is not
+/// bound by this; see [_maxRoomLifetime].
+const Duration _lobbyLifetime = Duration(minutes: 10);
 
 /// The ceiling for any room that is not a LOBBY, measured from
 /// `Room.lifetimeStartedAt`. A game being played is never reaped by the
@@ -1110,6 +1111,13 @@ class RoomRegistry {
   /// knockers hear `knock_failed` at once rather than at the next sweep.
   /// Set by the wire layer; unset, [drainReapedKnocks] is the only way out.
   void Function(List<Knock> knocks)? onKnocksReaped;
+
+  /// Called at the end of [reap] with the lobbies that sweep closed for
+  /// outliving their lifetime, after they are removed and their codes rest,
+  /// and in the same synchronous call. The wire layer sets it to tell the
+  /// sockets (section 37 item 2); a caller that leaves it null drains
+  /// [drainClosedLobbies] itself.
+  void Function(List<ClosedLobby> closed)? onLobbiesClosed;
 
   /// docs/VERIFY.md section 3. Where a finished game's record is written at
   /// the moment it is won, and read back for `/v/<game_id>` and
@@ -3706,11 +3714,13 @@ class RoomRegistry {
   /// returns how many were removed (`docs/PROTOCOL.md` section 3, as amended
   /// by C-451):
   ///
-  /// - LOBBY: no connected seat for [_idleTimeout], or [_lobbyLifetime] since
-  ///   `Room.lifetimeStartedAt` even with a seat connected.
-  /// - PLAYING: no connected seat for [_idleTimeout]. The 60-minute total
-  ///   does not apply, and the turn timer playing for absent seats is not a
-  ///   connection.
+  /// - LOBBY: no connected seat for [_idleTimeout], or [_lobbyLifetime] (10
+  ///   minutes, section 37) since `Room.lifetimeStartedAt` even with a seat
+  ///   connected. A room closed by the lifetime is recorded for
+  ///   [drainClosedLobbies] so the wire layer can tell its sockets.
+  /// - PLAYING: no connected seat for [_idleTimeout]. No lifetime shorter
+  ///   than [_maxRoomLifetime] applies, and the turn timer playing for
+  ///   absent seats is not a connection.
   /// - FINISHED: [_finishedTimeout] after the registry first observes it
   ///   FINISHED. The stamp belongs to one finished game: a room seen in any
   ///   other state loses it, so a rematch's game gets its own.
@@ -3725,9 +3735,19 @@ class RoomRegistry {
         case RoomState.lobby:
           _finishedSince.remove(room.code);
           final DateTime? idleSince = _idleSince[room.code];
-          if (lifetime >= _lobbyLifetime ||
-              (idleSince != null &&
-                  now.difference(idleSince) >= _idleTimeout)) {
+          final bool idleOut =
+              idleSince != null && now.difference(idleSince) >= _idleTimeout;
+          if (idleOut) {
+            // Section 37 item 2: the idle rule goes first and is silent.
+            toRemove.add(room.code);
+          } else if (lifetime >= _lobbyLifetime) {
+            _closedLobbies.add(ClosedLobby(
+              code: room.code,
+              seatTokens: <String>[
+                for (final Seat s in room.seats)
+                  if (s.connected) s.seatToken,
+              ],
+            ));
             toRemove.add(room.code);
           }
         case RoomState.playing:
@@ -3760,6 +3780,10 @@ class RoomRegistry {
     final void Function(List<Knock> knocks)? notify = onKnocksReaped;
     if (notify != null && _reapedKnocks.isNotEmpty) {
       notify(drainReapedKnocks());
+    }
+    final void Function(List<ClosedLobby> closed)? announce = onLobbiesClosed;
+    if (announce != null && _closedLobbies.isNotEmpty) {
+      announce(drainClosedLobbies());
     }
     return toRemove.length;
   }
@@ -3960,6 +3984,46 @@ class RoomRegistry {
   /// expired but has not yet been reaped. A getter, not a computation:
   /// no reaping happens as a side effect of reading it.
   int get roomCount => _rooms.length;
+
+  final List<ClosedLobby> _closedLobbies = <ClosedLobby>[];
+
+  /// The lobbies [reap] closed for outliving [_lobbyLifetime] since the last
+  /// call, oldest first, and forgets them. The wire layer announces each
+  /// with `room_closed` (section 37 item 2).
+  List<ClosedLobby> drainClosedLobbies() {
+    final List<ClosedLobby> out = List<ClosedLobby>.of(_closedLobbies);
+    _closedLobbies.clear();
+    return out;
+  }
+
+  /// Rooms in LOBBY (section 37 item 4).
+  int get lobbyRoomCount => _countIn(RoomState.lobby);
+
+  /// Rooms in PLAYING.
+  int get playingRoomCount => _countIn(RoomState.playing);
+
+  /// Rooms in FINISHED.
+  int get finishedRoomCount => _countIn(RoomState.finished);
+
+  int _countIn(RoomState state) =>
+      _rooms.values.where((Room r) => r.state == state).length;
+
+  /// Whole seconds since `lifetimeStartedAt` of the oldest LOBBY room, 0
+  /// when there is none.
+  int get oldestLobbyAgeSeconds {
+    final DateTime now = _clock.now;
+    int oldest = 0;
+    for (final Room room in _rooms.values) {
+      if (room.state != RoomState.lobby) {
+        continue;
+      }
+      final int age = now.difference(room.lifetimeStartedAt).inSeconds;
+      if (age > oldest) {
+        oldest = age;
+      }
+    }
+    return oldest;
+  }
 
   void _refreshIdleTracking(Room room) {
     // Section 34 item 4: a computer seat is always connected and holds no
@@ -4298,4 +4362,13 @@ void recordPreSent(
   room.preGameId = room.gameId;
   room.preSeat = seat.seat;
   room.preK = k;
+}
+
+/// A lobby [RoomRegistry.reap] closed for outliving its lifetime: its code
+/// and the seat tokens that had a connected socket when it went.
+class ClosedLobby {
+  const ClosedLobby({required this.code, required this.seatTokens});
+
+  final String code;
+  final List<String> seatTokens;
 }

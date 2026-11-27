@@ -215,6 +215,7 @@ class WireServer {
     // Section 31 item 12 (b): whoever calls reap(), the knockers of a reaped
     // room are told at once.
     registry.onKnocksReaped = failReapedKnocks;
+    registry.onLobbiesClosed = _announceClosedLobbies;
     // Section 34 item 4: what the computer sweep does is published here.
     registry.onComputerAction = _publishComputerStep;
   }
@@ -371,6 +372,14 @@ class WireServer {
     await _httpServer?.close(force: true);
     _httpServer = null;
   }
+
+  /// Runs one housekeeping pass synchronously, exactly as the periodic timer
+  /// created by [start] does: reap (which announces closed lobbies and fails
+  /// reaped knocks), then pruning. Exists so a test with an injected [Clock]
+  /// can observe the pass at a chosen instant. Never called by production
+  /// code.
+  @visibleForTesting
+  void runHousekeepingOnce() => _runHousekeeping();
 
   /// Runs one turn-expiry sweep synchronously, exactly as the periodic timer
   /// created by [start] does -- the same call, the same guards, the same
@@ -580,6 +589,33 @@ class WireServer {
     }
     rateLimiter.prune();
     _pruneAccountHits();
+  }
+
+  /// Section 37 item 2: every socket still attached to a lobby that timed
+  /// out gets one `room_closed`, then is detached with its identity cleared.
+  /// Runs in the same synchronous sweep as the reap, so the frame is sent
+  /// before the code can be handed out again.
+  void _announceClosedLobbies(List<ClosedLobby> closed) {
+    for (final ClosedLobby lobby in closed) {
+      final List<Connection> sockets = _hub.detachRoom(lobby.code);
+      for (final Connection conn in sockets) {
+        clearConnectionIdentity(conn);
+        try {
+          conn.sendPush(
+            type: 'room_closed',
+            data: const <String, Object?>{'reason': 'lobby_timeout'},
+          );
+        } catch (error, stack) {
+          // One dead socket must not keep the others from being told.
+          // ignore: avoid_print
+          print('room_closed send failed room=${lobby.code} error=$error\n'
+              '$stack');
+        }
+      }
+      // ignore: avoid_print
+      print('room_closed room=${lobby.code} reason=lobby_timeout '
+          'sockets=${sockets.length}');
+    }
   }
 
   // --- section 36: sign-in routes -----------------------------------------
@@ -972,6 +1008,10 @@ class WireServer {
       'version': version,
       'uptime_s': _uptimeSeconds,
       'rooms': registry.roomCount,
+      'rooms_lobby': registry.lobbyRoomCount,
+      'rooms_playing': registry.playingRoomCount,
+      'rooms_finished': registry.finishedRoomCount,
+      'oldest_lobby_s': registry.oldestLobbyAgeSeconds,
     };
     return shelf.Response.ok(
       jsonEncode(body),
@@ -1483,6 +1523,20 @@ class _ConnectionHub implements RoomHub {
       }
     }
     return null;
+  }
+
+  /// Section 37 item 2: detaches every socket attached to [code], seated or
+  /// not, and returns them. Not on [RoomHub]: test doubles implement that
+  /// interface, and only this class holds the sockets.
+  List<Connection> detachRoom(String code) {
+    final Set<Connection>? sockets = _byRoom.remove(code);
+    if (sockets == null) {
+      return <Connection>[];
+    }
+    for (final Connection conn in sockets) {
+      _roomByConnection.remove(conn);
+    }
+    return List<Connection>.of(sockets);
   }
 
   void _removeFromRoom(String code, Connection conn) {

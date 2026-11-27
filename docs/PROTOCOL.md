@@ -2533,3 +2533,30 @@ whose `email` claim is a unique address and whose `sub` is a unique string; sign
 send three bad tokens carrying the same claims, delete; then neither string appears in the captured
 output, in any file under the account directory at any point (read after each step), or in any
 response body.
+
+## 37. A lobby that waits too long closes, 2026-11-27 (X240)
+
+1. **The rule.** A room in LOBBY is closed once 10 minutes have passed since `Room.lifetimeStartedAt`
+   (its creation, or the last accepted rematch), whether or not a seat is connected. This replaces the
+   60 minutes of section 3 as amended by C-451 for LOBBY only. The idle rule (no connected seat for 10
+   minutes, any state), the PLAYING and FINISHED rules and the 6 hour ceiling are unchanged. A room
+   that has left LOBBY (the host started the game) is never closed by this rule.
+2. **The close frame.** At the housekeeping sweep that removes such a room, every socket still
+   attached to it receives one push `room_closed` `{ "reason": "lobby_timeout" }` (no `seq`, no `re`),
+   after which the socket is detached from the room and holds no seat (its seat token is dead, like
+   `kicked`). The socket is not closed. A room removed by the idle rule has no connected seat, so
+   nobody is told. Order: the frame is sent before the code goes to rest (section 32 item 3), and
+   the code rests as for any reaped room.
+3. **Old clients.** `room_closed` is a type an old client does not know and must ignore, with no
+   effect on its state. Its next request or reconnect for the code answers `NO_SUCH_ROOM`, the path a
+   reaped room already takes. A client that knows the frame (X241, later) shows a room-closed notice.
+4. **`GET /health`** keeps `rooms` (the total) and gains four aggregate integers, never a code or a
+   name: `rooms_lobby`, `rooms_playing`, `rooms_finished`, and `oldest_lobby_s` (whole seconds since
+   `lifetimeStartedAt` of the oldest LOBBY room, 0 when there is none).
+5. **Tests this section requires.** Fake clock: a LOBBY with a connected host and guest is alive at
+   9:59 and gone at 10:00; the two sockets each get exactly one `room_closed` with that reason and
+   nothing after; a rematch lobby gets its own 10 minutes from the accepted rematch; a PLAYING room
+   older than 10 minutes with connected seats is not closed; a request for the closed code answers
+   `NO_SUCH_ROOM`; the idle rule still reaps without sending the frame; `/health` counts per phase and
+   the oldest age on a mixed set of rooms; a client that ignores the frame keeps working (the Dart
+   client's frame handler leaves state untouched for a `room_closed` it does not know).

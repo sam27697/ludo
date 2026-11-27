@@ -30,6 +30,10 @@ const Set<String> _healthKeys = <String>{
   'version',
   'uptime_s',
   'rooms',
+  'rooms_lobby',
+  'rooms_playing',
+  'rooms_finished',
+  'oldest_lobby_s',
 };
 
 /// A base64-encoded 16 byte nonce, the shape `Sec-WebSocket-Key` requires.
@@ -167,8 +171,7 @@ void main() {
     );
   });
 
-  test('the body has exactly the four keys status, version, uptime_s, rooms',
-      () async {
+  test('the body has exactly the eight keys of section 37 item 4', () async {
     final _Harness harness = _Harness.build();
     active = harness;
     await harness.start();

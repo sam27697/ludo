@@ -768,6 +768,22 @@ void main() {
     _scenario(
         'C3 a reaped middle code is handed out again only after its 10 '
         'minute rest, not before', (_Rig r) async {
+      // Section 37: a LOBBY of any kind is closed 10 minutes after its
+      // lifetime started, so the rooms whose hosts stay connected are given a
+      // fresh lifetime at every tick (as an accepted rematch would), leaving
+      // the idle room 2 the only one that the sweep reaps.
+      void tickKeeping(Duration d) {
+        r.clock.advance(d);
+        for (int i = 0; i < 10; i++) {
+          final Room? room = r.registry.lookup('$i');
+          if (room != null && room.seats.any((Seat s) => s.connected)) {
+            room.lifetimeStartedAt = r.clock.now;
+          }
+        }
+        r.server.runTurnExpiryOnce();
+        r.registry.reap();
+      }
+
       final List<_Host> hosts = <_Host>[];
       for (int i = 0; i < 5; i++) {
         hosts.add(await r.host());
@@ -781,7 +797,7 @@ void main() {
         return room != null && room.seats.every((Seat s) => !s.connected);
       }, 'the server notices the host of room 2 is gone');
       final int roomsBefore = r.registry.roomCount;
-      r.tick(const Duration(minutes: 10, seconds: 1));
+      tickKeeping(const Duration(minutes: 10, seconds: 1));
       expect(r.registry.lookup('2'), isNull,
           reason: 'fixture: the idle room 2 must be reaped (rooms before '
               '$roomsBefore, after ${r.registry.roomCount})');
@@ -792,13 +808,13 @@ void main() {
       expect(a.code, '5',
           reason: 'item 3: code 2 was reaped this instant and rests; the '
               'next code is the lowest free that is not resting');
-      r.tick(const Duration(minutes: 9, seconds: 58));
+      tickKeeping(const Duration(minutes: 9, seconds: 58));
       final _Host b = await r.host();
       expect(b.code, '6',
           reason: 'item 3: 9 min 58 s after the reap code 2 is still resting '
               '(the 24 hour quarantine is gone but the 10 minute rest '
               'holds)');
-      r.tick(const Duration(seconds: 4));
+      tickKeeping(const Duration(seconds: 4));
       final _Host c = await r.host();
       expect(c.code, '2',
           reason: 'item 2 and 3: 10 min 2 s after the reap the lowest free '
