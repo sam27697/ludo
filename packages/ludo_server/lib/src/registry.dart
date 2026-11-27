@@ -992,6 +992,14 @@ const Duration _finishedTimeout = Duration(minutes: 10);
 /// bound by this; see [_maxRoomLifetime].
 const Duration _lobbyLifetime = Duration(minutes: 10);
 
+/// `docs/PROTOCOL.md` section 38 item 1: a LOBBY still open this long after
+/// `Room.lifetimeStartedAt` is warned that [_lobbyLifetime] is near.
+const Duration _lobbyWarnAfter = Duration(minutes: 8);
+
+/// Section 38 item 3: the per-seat wait between two accepted `ask_start`
+/// requests, on the injected clock.
+const Duration askStartCooldown = Duration(seconds: 60);
+
 /// The ceiling for any room that is not a LOBBY, measured from
 /// `Room.lifetimeStartedAt`. A game being played is never reaped by the
 /// 60-minute clock; this is only the backstop for a game that somehow never
@@ -2273,6 +2281,10 @@ class RoomRegistry {
     // LOBBY's 60 minutes, and the 6-hour ceiling of a game that follows)
     // restarts from this moment.
     room.lifetimeStartedAt = _clock.now;
+    // Section 38 items 1 and 3: the warning and the ask cooldowns belong to
+    // one lifetime, so a rematch lobby starts with both fresh.
+    room.lobbyWarned = false;
+    room.askedAt.clear();
     // The FINISHED stamp belonged to the game that just ended.
     _finishedSince.remove(room.code);
   }
@@ -3788,6 +3800,102 @@ class RoomRegistry {
     return toRemove.length;
   }
 
+  /// Section 38 item 1: every LOBBY that has just passed the 8 minute mark
+  /// and has not been warned in this lifetime. Each is marked warned before
+  /// it is returned, so a later sweep never returns it again. Call after
+  /// [reap], so a room the sweep removed is not in the list.
+  List<Room> takeLobbyWarnings() {
+    final DateTime now = _clock.now;
+    final List<Room> due = <Room>[];
+    for (final Room room in _rooms.values) {
+      if (room.state == RoomState.lobby &&
+          !room.lobbyWarned &&
+          now.difference(room.lifetimeStartedAt) >= _lobbyWarnAfter) {
+        room.lobbyWarned = true;
+        due.add(room);
+      }
+    }
+    return due;
+  }
+
+  /// Section 38 item 1: whole seconds left to the section 37 deadline, 0 to
+  /// 120.
+  int lobbyClosesInS(Room room) {
+    final int left = _lobbyLifetime.inSeconds -
+        _clock.now.difference(room.lifetimeStartedAt).inSeconds;
+    return left < 0 ? 0 : (left > 120 ? 120 : left);
+  }
+
+  /// Section 38 item 1: whether a socket attaching to [room] now is owed
+  /// `lobby_closing` (the push already went out to the sockets attached at
+  /// the time, and the room is still a LOBBY).
+  bool lobbyWarningOwed(Room room) =>
+      room.state == RoomState.lobby && room.lobbyWarned;
+
+  /// `ask_start`, `docs/PROTOCOL.md` section 38 items 2 and 3. The ladder, in
+  /// order: no such seat or room `NO_SUCH_ROOM`; not a LOBBY `ROOM_STARTED`;
+  /// the host asking `BAD_FIELD`; fewer than 2 occupied seats
+  /// `NOT_ENOUGH_PLAYERS`; inside the seat's cooldown `RATE_LIMITED`. An
+  /// accepted ask starts the seat's cooldown, held in the room by seat token.
+  AskStartResult askStart({
+    required String code,
+    required String seatToken,
+    bool Function()? payloadOk,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return const AskStartFailure(ProtocolError.noSuchRoom);
+    }
+    Seat? asker;
+    for (final Seat s in room.seats) {
+      if (s.seatToken == seatToken && !s.tokenDead) {
+        asker = s;
+        break;
+      }
+    }
+    if (asker == null) {
+      return const AskStartFailure(ProtocolError.noSuchRoom);
+    }
+    if (room.state != RoomState.lobby) {
+      return const AskStartFailure(ProtocolError.roomStarted);
+    }
+    if (payloadOk != null && !payloadOk()) {
+      return const AskStartFailure(ProtocolError.badField);
+    }
+    if (asker.seat == room.hostSeat) {
+      return const AskStartFailure(ProtocolError.badField);
+    }
+    if (room.seats.length < 2) {
+      return const AskStartFailure(ProtocolError.notEnoughPlayers);
+    }
+    final DateTime now = _clock.now;
+    final DateTime? last = room.askedAt[asker.seatToken];
+    if (last != null) {
+      final Duration since = now.difference(last);
+      if (since < askStartCooldown) {
+        final int wait = askStartCooldown.inMilliseconds - since.inMilliseconds;
+        final int secs = (wait + 999) ~/ 1000;
+        return AskStartFailure(
+          ProtocolError.rateLimited,
+          retryAfterS: secs < 1 ? 1 : secs,
+        );
+      }
+    }
+    room.askedAt[asker.seatToken] = now;
+    Seat? host;
+    for (final Seat s in room.seats) {
+      if (s.seat == room.hostSeat) {
+        host = s;
+      }
+    }
+    return AskStartOk(
+      room: room,
+      asker: asker,
+      host: host,
+      delivered: host != null && host.connected,
+    );
+  }
+
   /// Drops the room [code] and everything the registry keeps about it, and
   /// rests its code (section 32 item 3). Open knocks go to
   /// [drainReapedKnocks].
@@ -4371,4 +4479,34 @@ class ClosedLobby {
 
   final String code;
   final List<String> seatTokens;
+}
+
+/// The answer of [RoomRegistry.askStart].
+sealed class AskStartResult {
+  const AskStartResult();
+}
+
+class AskStartFailure extends AskStartResult {
+  const AskStartFailure(this.error, {this.retryAfterS});
+
+  final ProtocolError error;
+
+  /// Whole seconds, at least 1, only for `RATE_LIMITED`.
+  final int? retryAfterS;
+}
+
+class AskStartOk extends AskStartResult {
+  const AskStartOk({
+    required this.room,
+    required this.asker,
+    required this.host,
+    required this.delivered,
+  });
+
+  final Room room;
+  final Seat asker;
+  final Seat? host;
+
+  /// The host seat has a connected socket.
+  final bool delivered;
 }

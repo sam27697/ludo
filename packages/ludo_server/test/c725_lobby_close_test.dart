@@ -75,6 +75,26 @@ void _expectOneCloseOnly(
       reason: '[$label] $who: room_closed carries no re; got ${jsonEncode(f)}');
 }
 
+/// Section 38: a LOBBY room that reaches 8:00 gets `lobby_closing` before the
+/// section 37 close. Asserts the first frame is that warning and returns the
+/// rest so the room_closed assertions stay unchanged.
+List<Map<String, Object?>> _afterClosing(
+    List<Map<String, Object?>> frames, String who, String label) {
+  expect(frames, isNotEmpty,
+      reason: '[$label] $who: expected lobby_closing first, got no frame');
+  expect(frames.first['t'], 'lobby_closing',
+      reason: '[$label] $who: section 38 puts lobby_closing before '
+          'room_closed; got ${jsonEncode(frames)}');
+  return frames.sublist(1);
+}
+
+void _expectOnlyClosing(
+    List<Map<String, Object?>> frames, String who, String label) {
+  expect(_afterClosing(frames, who, label), isEmpty,
+      reason: '[$label] $who: only lobby_closing may arrive; '
+          'got ${jsonEncode(frames)}');
+}
+
 /// One housekeeping pass of the server under test; returns how many rooms it
 /// removed. Needs `WireServer.runHousekeepingOnce()` (see the file header).
 Future<int> _sweep(ServerHarness h) async {
@@ -176,8 +196,8 @@ void main() {
           reason: '[$label] must not be closed at 9:59 since creation');
       expect(h.registry.lookup(lobby.code), isNotNull,
           reason: '[$label] room must exist at 9:59');
-      expect(await _drainToPong(lobby.host.client, label), isEmpty,
-          reason: '[$label] no frame may reach the host at 9:59');
+      _expectOnlyClosing(
+          await _drainToPong(lobby.host.client, label), 'host at 9:59', label);
 
       h.clock.advance(_sec1);
       expect((await _sweep(h)), 1,
@@ -189,7 +209,10 @@ void main() {
       _expectOneCloseOnly(
           await _drainToPong(lobby.host.client, label), 'host', label);
       _expectOneCloseOnly(
-          await _drainToPong(lobby.guest.client, label), 'guest', label);
+          _afterClosing(
+              await _drainToPong(lobby.guest.client, label), 'guest', label),
+          'guest',
+          label);
 
       // Replayed sweep: nothing more is ever sent.
       expect((await _sweep(h)), 0,
@@ -217,7 +240,10 @@ void main() {
       h.clock.advance(_sec1);
       expect((await _sweep(h)), 1, reason: '[$label] closed at 10:00');
       expect(h.registry.lookup(code), isNull);
-      _expectOneCloseOnly(await _drainToPong(host, label), 'host', label);
+      _expectOneCloseOnly(
+          _afterClosing(await _drainToPong(host, label), 'host', label),
+          'host',
+          label);
     });
 
     test('the socket stays open and its seat token is dead afterwards',
@@ -310,8 +336,8 @@ void main() {
           reason: '[$label] 9:59 after the accepted rematch must be alive '
               '(15:00 would be wrong from the old creation time too)');
       expect(h.registry.lookup(lobby.code), isNotNull);
-      expect(await _drainToPong(lobby.host.client, label), isEmpty,
-          reason: '[$label] no frame at 9:59 after the rematch');
+      _expectOnlyClosing(await _drainToPong(lobby.host.client, label),
+          'host at 9:59 after the rematch', label);
 
       h.clock.advance(_sec1);
       expect((await _sweep(h)), 1,
@@ -320,7 +346,10 @@ void main() {
       _expectOneCloseOnly(
           await _drainToPong(lobby.host.client, label), 'host', label);
       _expectOneCloseOnly(
-          await _drainToPong(lobby.guest.client, label), 'guest', label);
+          _afterClosing(
+              await _drainToPong(lobby.guest.client, label), 'guest', label),
+          'guest',
+          label);
     });
 
     test('a rematch lobby is not closed by its first game\'s age', () async {
