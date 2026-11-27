@@ -2573,8 +2573,9 @@ All of this is additive. The protocol version stays; old clients ignore the two 
    (120 at most, never negative). Sent once per lifetime: a rematch lobby resets the flag together
    with `lifetimeStartedAt`. A socket that attaches after the push (resume, reconnect) gets the same
    frame once, right after its `room` snapshot, while the room is past the 8 minute mark and still
-   in LOBBY, with the then-current `closes_in_s`. It rides the one-second housekeeping sweep on the
-   injected clock. A room that left LOBBY, or was reaped, sends nothing.
+   in LOBBY, with the then-current `closes_in_s`. It rides the housekeeping sweep (one pass a minute, on the
+   injected clock), so the push lands between 8:00 and 9:00 and `closes_in_s` is computed at the moment
+   of sending (between 60 and 120 whenever the sweep is on time). A room that left LOBBY, or was reaped, sends nothing.
 2. **`ask_start` request.** `{ }` (no other key, else `BAD_FIELD`), answered with `re`.
    Ladder: socket holds no seat `NO_SUCH_ROOM`; room not in LOBBY `ROOM_STARTED`; caller is the host
    `BAD_FIELD`; fewer than 2 occupied seats `NOT_ENOUGH_PLAYERS`; caller inside its cooldown
