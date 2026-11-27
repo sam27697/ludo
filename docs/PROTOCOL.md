@@ -2560,3 +2560,55 @@ response body.
    `NO_SUCH_ROOM`; the idle rule still reaps without sending the frame; `/health` counts per phase and
    the oldest age on a mixed set of rooms; a client that ignores the frame keeps working (the Dart
    client's frame handler leaves state untouched for a `room_closed` it does not know).
+
+## 38. Lobby warning and "ask the host to start", 2026-11-27 (X241)
+
+All of this is additive. The protocol version stays; old clients ignore the two new push types
+(section 37 item 3 already says an unknown push type changes nothing) and never send `ask_start`.
+
+1. **`lobby_closing` push.** A room in LOBBY that is still in LOBBY 8 minutes after
+   `Room.lifetimeStartedAt` (two minutes before the section 37 close) sends one push
+   `lobby_closing` `{ "closes_in_s": int }` to every socket attached to it, no `seq`, no `re`.
+   `closes_in_s` is the whole seconds left to the section 37 deadline at the moment of sending
+   (120 at most, never negative). Sent once per lifetime: a rematch lobby resets the flag together
+   with `lifetimeStartedAt`. A socket that attaches after the push (resume, reconnect) gets the same
+   frame once, right after its `room` snapshot, while the room is past the 8 minute mark and still
+   in LOBBY, with the then-current `closes_in_s`. It rides the one-second housekeeping sweep on the
+   injected clock. A room that left LOBBY, or was reaped, sends nothing.
+2. **`ask_start` request.** `{ }` (no other key, else `BAD_FIELD`), answered with `re`.
+   Ladder: socket holds no seat `NO_SUCH_ROOM`; room not in LOBBY `ROOM_STARTED`; caller is the host
+   `BAD_FIELD`; fewer than 2 occupied seats `NOT_ENOUGH_PLAYERS`; caller inside its cooldown
+   `RATE_LIMITED`, with `retry_after_s` (whole seconds, at least 1) in the error data when the
+   existing RATE_LIMITED reply shape carries data, otherwise added to this reply only.
+3. **Acceptance.** The cooldown is **60 seconds per seat** on the injected clock, tracked in the room
+   (not per socket, so a reconnect does not reset it), and it starts when a request is accepted. An
+   accepted request is answered `ask_start_ok` `{ "delivered": bool, "next_in_s": 60 }` with `re`.
+   `delivered` is true when the host seat has a connected socket, false when it does not (the
+   request still counts and the cooldown still starts). When delivered, the host's socket gets one
+   push `start_asked` `{ "seat": int, "name": string }` (the asker's seat and display name, no
+   `seq`, no `re`). Nothing is sent to other guests. The cooldown state is dropped with the room and
+   on a rematch.
+4. **No push notification outside the app.** A host whose socket is down gets nothing until they
+   reopen the app; there is no store of missed asks and no third-party push service, which is hard
+   rule 3 of the mission (a push SDK is a Data safety clause and needs Sam's written approval).
+   Whether to ask him for that is a separate card, not part of this section.
+5. **Client behaviour (spec for the order, not wire).** Host, on `lobby_closing`: a persistent banner
+   in the lobby with a live countdown from `closes_in_s`, a "Start now" path as today, and "Make a
+   new room"; on `start_asked`: a transient notice naming the asker, plus the `your_turn` haptic id
+   and sound (the doctrine's soft tick and chime), no other pattern. Guest, on `lobby_closing`: the
+   same banner and "Join another room"; always in the lobby: "Join another room" (leaves the seat,
+   opens the open-rooms line of section 33) and "Ask the host to start", disabled with the seconds
+   remaining inside the cooldown, shown only while at least 2 seats are occupied. On `room_closed`
+   (section 37): a calm "This room closed because nobody started it" screen with one primary action,
+   "Make a new room", and a secondary "Join another room"; never a raw error. Strings in English
+   and Arabic, the Arabic in Modern Standard (the 11-27 decision).
+6. **Tests this section requires** (server, real sockets, fake clock): `lobby_closing` at 8:00 to
+   every attached socket with `closes_in_s` 120, not at 7:59, once only across several sweeps, with a
+   late joiner getting it once after `room`, absent for a PLAYING room, and reset by a rematch;
+   `ask_start` from a guest delivers `start_asked` to the host and answers `ask_start_ok`
+   `delivered: true`; a second ask at 59 s answers `RATE_LIMITED` with `retry_after_s`, at 60 s is
+   accepted; the cooldown survives the guest's reconnect and is per seat (a second guest is not
+   limited by the first); host socket down gives `delivered: false` and still starts the cooldown;
+   the ladder (no seat, PLAYING room, host asking, a lone host, an extra key); no frame reaches other
+   guests. Client: banner and countdown, the two lobby buttons, the cooldown label, the host notice
+   with the fake haptic asserting `your_turn`, the room-closed screen, in both locales and under RTL.
