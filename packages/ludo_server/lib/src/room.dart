@@ -511,6 +511,15 @@ class Room {
   /// list to the last minute each time it is touched.
   final Map<String, List<DateTime>> emoteAdmits = <String, List<DateTime>>{};
 
+  /// `docs/PROTOCOL.md` section 38 item 1: the `lobby_closing` push has gone
+  /// out in this lifetime. Reset with `lifetimeStartedAt` by a rematch.
+  bool lobbyWarned = false;
+
+  /// Section 38 item 3: when each seat's last accepted `ask_start` was, by
+  /// seat token, so a reconnect does not reset it. Dropped with the room and
+  /// cleared by a rematch. Never on the wire.
+  final Map<String, DateTime> askedAt = <String, DateTime>{};
+
   @override
   String toString() => 'Room(code: $code, state: $state, '
       'players: $players, seats: ${seats.length})';

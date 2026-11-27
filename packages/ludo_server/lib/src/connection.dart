@@ -340,6 +340,7 @@ void publishKnockEvents(
             data: event.snapshot,
             re: event.knock.requestId.isEmpty ? null : event.knock.requestId,
           );
+          owner._replayLobbyClosing();
           hub.broadcast(
             code: code,
             type: 'player_joined',
@@ -386,6 +387,7 @@ void serveWaitingLine(RoomRegistry registry, RoomHub hub) {
         re: null,
       );
       conn._send(type: 'room', data: event.snapshot, re: null);
+      conn._replayLobbyClosing();
     }
     switch (event) {
       case LineSeated():
@@ -644,6 +646,8 @@ class Connection {
         _handlePlayComputer(envelope);
       case 'fill_computer':
         _handleFillComputer(envelope);
+      case 'ask_start':
+        _handleAskStart(envelope);
       default:
         // Unreachable: parseEnvelope already rejected anything outside
         // knownMessageTypes as BAD_TYPE.
@@ -884,6 +888,7 @@ class Connection {
       data: _snapshotFor(ok.room),
       re: envelope.id,
     );
+    _replayLobbyClosing();
     hub.broadcast(
       code: ok.room.code,
       type: 'player_joined',
@@ -1011,6 +1016,7 @@ class Connection {
           re: null,
         );
         _send(type: 'room', data: _snapshotFor(result.room), re: envelope.id);
+        _replayLobbyClosing();
         hub.broadcast(
           code: result.room.code,
           type: 'player_joined',
@@ -1399,6 +1405,7 @@ class Connection {
       data: _snapshotFor(ok.room),
       re: envelope.id,
     );
+    _replayLobbyClosing();
     // A takeover -- this socket resuming a seat that was already connected,
     // handled below via `displaced` -- flips nothing on the seat itself, and
     // the registry only moves `seq` on a real flip (registry.dart's own
@@ -1469,6 +1476,89 @@ class Connection {
       await displaced.close(
           code: closeCodeSeatTakenOver, reason: 'BAD_SEAT_TOKEN');
     }
+  }
+
+  /// `ask_start`, `docs/PROTOCOL.md` section 38 items 2 and 3. The ladder is
+  /// the registry's; this answers it, tells the host's socket and logs.
+  void _handleAskStart(ParsedEnvelope envelope) {
+    final String? code = roomCode;
+    final String? token = seatToken;
+    if (code == null || token == null) {
+      _reject(envelope, ProtocolError.noSuchRoom);
+      return;
+    }
+    final AskStartResult result = registry.askStart(
+      code: code,
+      seatToken: token,
+      payloadOk: () => envelope.data.isEmpty,
+    );
+    if (result is AskStartFailure) {
+      final int? retry = result.retryAfterS;
+      if (retry == null) {
+        _reject(envelope, result.error, room: code);
+        return;
+      }
+      _send(
+        type: 'error',
+        data: errorPayload(result.error, defaultErrorMessage(result.error))
+          ..['retry_after_s'] = retry,
+        re: envelope.id,
+      );
+      _log(
+        type: envelope.type,
+        id: envelope.id,
+        outcome: '${wireErrorCode(result.error)} retry_after_s=$retry',
+        room: code,
+      );
+      return;
+    }
+    final AskStartOk ok = result as AskStartOk;
+    final Seat? host = ok.host;
+    if (ok.delivered && host != null) {
+      hub.sendToSeatToken(
+        code: code,
+        seatToken: host.seatToken,
+        type: 'start_asked',
+        data: <String, Object?>{
+          'seat': ok.asker.seat,
+          'name': ok.asker.name,
+        },
+      );
+    }
+    _send(
+      type: 'ask_start_ok',
+      data: <String, Object?>{
+        'delivered': ok.delivered,
+        'next_in_s': askStartCooldown.inSeconds,
+      },
+      re: envelope.id,
+    );
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok delivered=${ok.delivered}',
+      room: code,
+      seat: ok.asker.seat,
+    );
+  }
+
+  /// Section 38 item 1: a socket that attaches after `lobby_closing` went
+  /// out gets the frame once, right after its `room`, with the then-current
+  /// `closes_in_s`. Nothing for a room that left LOBBY or was reaped.
+  void _replayLobbyClosing() {
+    final String? code = roomCode;
+    if (code == null) {
+      return;
+    }
+    final Room? room = registry.lookup(code);
+    if (room == null || !registry.lobbyWarningOwed(room)) {
+      return;
+    }
+    _send(
+      type: 'lobby_closing',
+      data: <String, Object?>{'closes_in_s': registry.lobbyClosesInS(room)},
+      re: null,
+    );
   }
 
   void _handleStartGame(ParsedEnvelope envelope) {

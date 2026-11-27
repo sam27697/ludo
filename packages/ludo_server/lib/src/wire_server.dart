@@ -587,8 +587,31 @@ class WireServer {
       // ignore: avoid_print
       print('housekeeping reaped=$reaped');
     }
+    _announceLobbyWarnings();
     rateLimiter.prune();
     _pruneAccountHits();
+  }
+
+  /// Section 38 item 1: every LOBBY past the 8 minute mark that has not been
+  /// warned sends `lobby_closing` to each attached socket, once per lifetime.
+  /// Runs after the reap, so a room that just closed is never warned.
+  void _announceLobbyWarnings() {
+    try {
+      for (final Room room in registry.takeLobbyWarnings()) {
+        final int closesInS = registry.lobbyClosesInS(room);
+        _hub.broadcast(
+          code: room.code,
+          type: 'lobby_closing',
+          data: <String, Object?>{'closes_in_s': closesInS},
+        );
+        // ignore: avoid_print
+        print('room=${room.code} type=- id=- seat=- '
+            'outcome=lobby_closing closes_in_s=$closesInS');
+      }
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('lobby_closing sweep failed error=${logSafeError(error)}\n$stack');
+    }
   }
 
   /// Section 37 item 2: every socket still attached to a lobby that timed
