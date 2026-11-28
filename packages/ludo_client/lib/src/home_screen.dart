@@ -808,6 +808,7 @@ class _HomeScreenState extends State<HomeScreen>
     return !controller.updateRequired &&
         (controller.seatTakenOver ||
             controller.wasKicked ||
+            controller.lobbyTimedOut ||
             (controller.phase == RoomPhase.failed &&
                 (controller.errorCode == 'BAD_SEAT_TOKEN' ||
                     controller.errorCode == 'NO_SUCH_ROOM')));
@@ -1391,6 +1392,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted) {
       return;
     }
+    if (await _followLobbyResult(result)) {
+      return;
+    }
     if (result == GameScreenResult.newTable) {
       await _createRoom(open: open);
     }
@@ -1494,6 +1498,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted) {
       return;
     }
+    if (await _followLobbyResult(result)) {
+      return;
+    }
     if (result == GameScreenResult.newTable) {
       // A new table for the same friends: friends only, as before C-701.
       await _createRoom(open: false);
@@ -1563,6 +1570,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted) {
       return;
     }
+    if (await _followLobbyResult(result)) {
+      return;
+    }
     if (result == GameScreenResult.newTable) {
       // A new table for the same friends: friends only, as before C-701.
       await _createRoom(open: false);
@@ -1623,9 +1633,29 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted) {
       return;
     }
+    if (await _followLobbyResult(result)) {
+      return;
+    }
     if (result == GameScreenResult.newTable) {
       await _createRoom(open: false);
     }
+  }
+
+  /// Section 38: a lobby route that left to start something else. Runs after
+  /// the old controller has left its seat. True when [result] was one of these
+  /// and the follow-up has run.
+  Future<bool> _followLobbyResult(Object? result) async {
+    switch (result) {
+      case GameScreenResult.lobbyNewRoom:
+        await _createRoom(open: false);
+      case GameScreenResult.lobbyNewOpenRoom:
+        await _createRoom(open: true);
+      case GameScreenResult.lobbyJoinAnother:
+        await _findGame();
+      default:
+        return false;
+    }
+    return true;
   }
 
   /// C-669 R2: the seat this screen holds for [code], or null. Memory equals
@@ -1714,6 +1744,9 @@ class _HomeScreenState extends State<HomeScreen>
     // deliberate, not a bug.
     await _retireOwnedController(controller, result: result);
     if (!mounted) {
+      return;
+    }
+    if (await _followLobbyResult(result)) {
       return;
     }
     if (result == GameScreenResult.newTable) {

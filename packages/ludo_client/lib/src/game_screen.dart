@@ -86,6 +86,13 @@ enum GameScreenResult {
   gameGone,
   roomClosedHost,
   roomClosedGuest,
+
+  /// Section 38: the lobby route leaves so Home opens a fresh private room
+  /// ([lobbyNewRoom]) or a fresh open one ([lobbyNewOpenRoom]), or so Home
+  /// opens the waiting line ([lobbyJoinAnother]).
+  lobbyNewRoom,
+  lobbyNewOpenRoom,
+  lobbyJoinAnother,
 }
 
 /// C-653 D1: how long the face of a roll of mine stays on my die from the
