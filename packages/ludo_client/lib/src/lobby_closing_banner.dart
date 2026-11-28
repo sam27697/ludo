@@ -28,7 +28,8 @@ String formatCountdown(BuildContext context, int seconds) {
   final String tail = rest < 10
       ? '${material.formatDecimal(0)}${material.formatDecimal(rest)}'
       : material.formatDecimal(rest);
-  return '${material.formatDecimal(minutes)}:$tail';
+  final String clock = '${material.formatDecimal(minutes)}:$tail';
+  return clock;
 }
 
 /// Rebuilds [builder] once a second while mounted.
@@ -83,7 +84,9 @@ class LobbyClosingBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final DateTime? closesAt = controller.lobbyClosesAt;
+    final DateTime? closesAt = controller.isDisposed
+        ? null
+        : controller.lobbyClosesAt;
     final bool reduced = MediaQuery.disableAnimationsOf(context);
     return AnimatedSize(
       duration: reduced ? Duration.zero : const Duration(milliseconds: 280),
@@ -252,11 +255,15 @@ class _AskStartControlState extends State<AskStartControl> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.controller.isDisposed) {
+      return const SizedBox.shrink();
+    }
     return ListenableBuilder(
       listenable: widget.controller,
       builder: (BuildContext context, Widget? _) {
         final RoomSnapshot? room = widget.controller.room;
-        if (room == null ||
+        if (widget.controller.isDisposed ||
+            room == null ||
             widget.controller.isHost ||
             room.state != RoomState.lobby ||
             room.seats.length < 2) {

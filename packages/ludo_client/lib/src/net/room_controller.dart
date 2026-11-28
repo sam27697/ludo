@@ -354,6 +354,11 @@ class RoomController extends ChangeNotifier {
 
   bool _disposed = false;
 
+  /// True once [dispose] has run. A widget that outlives its controller by a
+  /// frame (Home retires it while a route is still being built or torn down)
+  /// reads this and draws nothing rather than subscribing to it.
+  bool get isDisposed => _disposed;
+
   /// Set by an unsolicited `error` frame (C3) or a reconnect attempt --
   /// automatic or manual -- failing with a non-retryable code (C3). Cleared
   /// only when [phase] next reaches [RoomPhase.connected]. Gates [_eligible]
