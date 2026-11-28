@@ -1574,5 +1574,64 @@
   "accountDeletedNotice": "Your account is deleted.",
   "@accountDeletedNotice": {
     "description": "Home notice after the account was deleted."
+  },
+  "lobbyClosingBanner": "This room closes in {time} if nobody starts it",
+  "@lobbyClosingBanner": {
+    "description": "Strip in the lobby, for host and guests, once the server warns that the room will close. {time} is a live minutes and seconds countdown.",
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lobbyMakeNewRoom": "Make a new room",
+  "@lobbyMakeNewRoom": {
+    "description": "Button on the lobby warning strip for the host, and on the room-closed screen: leave this room and open a fresh one."
+  },
+  "lobbyJoinAnotherRoom": "Join another room",
+  "@lobbyJoinAnotherRoom": {
+    "description": "Button in the guest lobby and on the room-closed screen: leave this seat and look for another open room."
+  },
+  "lobbyAskStart": "Ask the host to start",
+  "@lobbyAskStart": {
+    "description": "Button in the guest lobby, shown while at least two seats are taken: sends the host a nudge to start the game."
+  },
+  "lobbyAskStartWait": "Ask again in {seconds} s",
+  "@lobbyAskStartWait": {
+    "description": "Label of the disabled ask button while its cooldown runs. {seconds} is the whole seconds remaining.",
+    "placeholders": {
+      "seconds": {
+        "type": "String"
+      }
+    }
+  },
+  "lobbyAskStartSent": "The host has been asked",
+  "@lobbyAskStartSent": {
+    "description": "Short line after a guest asked the host to start and the host's phone was reached."
+  },
+  "lobbyAskStartAway": "Asked. The host is not connected right now",
+  "@lobbyAskStartAway": {
+    "description": "Short line after a guest asked the host to start but the host's phone is offline."
+  },
+  "lobbyAskStartFailed": "Could not reach the host just now. Try again in a moment",
+  "@lobbyAskStartFailed": {
+    "description": "Short line when the ask did not go through and no cooldown started."
+  },
+  "lobbyStartAskedNotice": "{name} asks you to start the game",
+  "@lobbyStartAskedNotice": {
+    "description": "Transient notice for the host when a guest asks them to start. {name} is the guest's display name.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomClosedTitle": "This room closed because nobody started it",
+  "@roomClosedTitle": {
+    "description": "Title of the calm screen shown when the server closed the lobby for waiting too long."
+  },
+  "roomClosedBody": "Rooms wait ten minutes for a game to begin. Your seat is free again.",
+  "@roomClosedBody": {
+    "description": "Second line of the room-closed screen."
   }
 }

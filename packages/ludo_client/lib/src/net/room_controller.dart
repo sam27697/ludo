@@ -41,6 +41,38 @@ enum RoomPhase { idle, connecting, connected, closed, failed }
 /// connected, disposed, closed, timeout).
 enum EmoteOutcome { admitted, refused, failed }
 
+/// Section 38 item 2 and 3: how an `ask_start` ended. [accepted] is true only
+/// for `ask_start_ok`; [delivered] says whether the host's socket was up.
+/// [retryAfterS] is the server's wait after RATE_LIMITED. [errorCode] is the
+/// server's code, or `timeout` / `closed` / `transport` when no answer came.
+class AskStartOutcome {
+  const AskStartOutcome({
+    required this.accepted,
+    this.delivered = false,
+    this.retryAfterS,
+    this.errorCode,
+  });
+
+  final bool accepted;
+  final bool delivered;
+  final int? retryAfterS;
+  final String? errorCode;
+}
+
+/// Section 38 item 3: one `start_asked` push the host received. [serial]
+/// rises with every frame, so the same asker twice still notifies.
+class StartAsked {
+  const StartAsked({
+    required this.seat,
+    required this.name,
+    required this.serial,
+  });
+
+  final int seat;
+  final String name;
+  final int serial;
+}
+
 /// docs/PROTOCOL.md section 31 item 4: where this phone's own knock stands.
 enum KnockPhase {
   none,
@@ -249,6 +281,15 @@ class RoomController extends ChangeNotifier {
   KnockState _knock = const KnockState();
   bool _wasKicked = false;
 
+  /// Section 38: the lobby's close deadline once `lobby_closing` arrived, the
+  /// end of this seat's ask cooldown, the last `start_asked` and its serial,
+  /// and whether `room_closed` with `lobby_timeout` ended the room.
+  DateTime? _lobbyClosesAt;
+  DateTime? _askStartAvailableAt;
+  StartAsked? _lastStartAsked;
+  int _startAskedSerial = 0;
+  bool _lobbyTimedOut = false;
+
   /// docs/PROTOCOL.md section 35 ruling 7 (f): set by a `seat_retired` naming
   /// this phone's own seat. Final whatever the `seq` gap: from then on no gap
   /// starts a resync and no `resume` is sent for the seat.
@@ -313,6 +354,11 @@ class RoomController extends ChangeNotifier {
 
   bool _disposed = false;
 
+  /// True once [dispose] has run. A widget that outlives its controller by a
+  /// frame (Home retires it while a route is still being built or torn down)
+  /// reads this and draws nothing rather than subscribing to it.
+  bool get isDisposed => _disposed;
+
   /// Set by an unsolicited `error` frame (C3) or a reconnect attempt --
   /// automatic or manual -- failing with a non-retryable code (C3). Cleared
   /// only when [phase] next reaches [RoomPhase.connected]. Gates [_eligible]
@@ -355,6 +401,58 @@ class RoomController extends ChangeNotifier {
 
   RoomPhase get phase => _phase;
   RoomSnapshot? get room => _room;
+
+  /// Section 38 item 1: when the server will close this lobby, from the
+  /// controller clock at the `lobby_closing` frame plus its `closes_in_s`.
+  /// Null before that frame and whenever the room is not in its lobby.
+  DateTime? get lobbyClosesAt => _lobbyClosesAt;
+
+  /// The controller's own clock, for screens that count down to
+  /// [lobbyClosesAt] or [askStartAvailableAt] on the same time base.
+  DateTime get clockNow => _clock();
+
+  /// Section 38 item 3: when this seat may ask the host again, null when it
+  /// may ask now.
+  DateTime? get askStartAvailableAt {
+    final DateTime? at = _askStartAvailableAt;
+    if (at == null || !_clock().isBefore(at)) {
+      return null;
+    }
+    return at;
+  }
+
+  /// Section 38 item 2: a guest of a lobby with two or more seats taken and
+  /// no cooldown running.
+  bool get canAskStart {
+    final RoomSnapshot? room = _room;
+    return room != null &&
+        _phase == RoomPhase.connected &&
+        !_leftCalled &&
+        !isHost &&
+        _cachedSeat != null &&
+        !_lobbyTimedOut &&
+        room.state == RoomState.lobby &&
+        room.seats.length >= 2 &&
+        askStartAvailableAt == null;
+  }
+
+  /// The newest `start_asked` this controller received (host only on the
+  /// wire). Null until one arrives.
+  StartAsked? get lastStartAsked => _lastStartAsked;
+
+  /// Section 37 item 2: true once the server closed this lobby for waiting
+  /// too long and told this socket so.
+  bool get lobbyTimedOut => _lobbyTimedOut;
+
+  @override
+  void notifyListeners() {
+    final RoomSnapshot? room = _room;
+    if (room == null || room.state != RoomState.lobby) {
+      _lobbyClosesAt = null;
+      _askStartAvailableAt = null;
+    }
+    super.notifyListeners();
+  }
 
   /// C-310 rule 1: the snapshot as it stood in FINISHED for the current room,
   /// preserved across a rematch LOBBY until the new game starts.
@@ -1492,6 +1590,11 @@ class RoomController extends ChangeNotifier {
         }
         _applyRoomFrame(frame, room);
       }
+      // Section 38: the order's contract clears the warning and the cooldown
+      // on a rematch answer.
+      _lobbyClosesAt = null;
+      _askStartAvailableAt = null;
+      notifyListeners();
     } catch (error) {
       _failFromInRoomRequest(error);
     }
@@ -1797,6 +1900,8 @@ class RoomController extends ChangeNotifier {
     }
     _leftCalled = true;
     _sendRematchOnResume = false;
+    _lobbyClosesAt = null;
+    _askStartAvailableAt = null;
     _endQueue();
     _cancelAutoReconnect();
     _clearLastFinished();
@@ -2075,6 +2180,18 @@ class RoomController extends ChangeNotifier {
       _onKicked(frame);
       return;
     }
+    if (frame.type == 'lobby_closing') {
+      _onLobbyClosing(frame);
+      return;
+    }
+    if (frame.type == 'start_asked') {
+      _onStartAsked(frame);
+      return;
+    }
+    if (frame.type == 'room_closed') {
+      _onRoomClosed(frame);
+      return;
+    }
     if (frame.type == 'room' &&
         frame.re == null &&
         _room == null &&
@@ -2197,6 +2314,114 @@ class RoomController extends ChangeNotifier {
     unawaited(SessionMemory.clearSeat());
     _phase = RoomPhase.closed;
     notifyListeners();
+  }
+
+  /// Section 38 item 1. Counts from this controller's clock; a frame with no
+  /// usable `closes_in_s`, or one for a room not in its lobby, changes nothing.
+  void _onLobbyClosing(Frame frame) {
+    final int? left = _asInt(frame.data, 'closes_in_s');
+    final RoomSnapshot? room = _room;
+    if (left == null ||
+        left < 0 ||
+        room == null ||
+        room.state != RoomState.lobby ||
+        _lobbyTimedOut) {
+      return;
+    }
+    _lobbyClosesAt = _clock().add(Duration(seconds: left));
+    notifyListeners();
+  }
+
+  /// Section 38 item 3: the host's notice. Every frame takes the next serial.
+  void _onStartAsked(Frame frame) {
+    final int? seat = _asInt(frame.data, 'seat');
+    final String? name = _asString(frame.data, 'name');
+    if (seat == null || name == null || _room == null || _lobbyTimedOut) {
+      return;
+    }
+    _startAskedSerial++;
+    _lastStartAsked = StartAsked(
+      seat: seat,
+      name: name,
+      serial: _startAskedSerial,
+    );
+    notifyListeners();
+  }
+
+  /// Section 37 item 2: the room is gone and the seat token with it, so the
+  /// seat is forgotten here as for `kicked` and no resume is ever tried. The
+  /// socket stays open and the phase, room and error state are left as they
+  /// were: the server did not close the socket, and [lobbyTimedOut] is what
+  /// the lobby reads.
+  void _onRoomClosed(Frame frame) {
+    if (_asString(frame.data, 'reason') != 'lobby_timeout' ||
+        _room == null ||
+        _lobbyTimedOut) {
+      return;
+    }
+    _lobbyTimedOut = true;
+    _lobbyClosesAt = null;
+    _askStartAvailableAt = null;
+    _dropPreState();
+    _blocked = true;
+    _cancelAutoReconnect();
+    _cachedSeatToken = null;
+    unawaited(SessionMemory.clearSeat());
+    notifyListeners();
+  }
+
+  /// Section 38 item 2: asks the host to start. A refusal never fails the
+  /// room: the connection stays as it was and the outcome says why. An
+  /// accepted ask, or a RATE_LIMITED answer, sets the cooldown.
+  Future<AskStartOutcome> askStart() async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return const AskStartOutcome(accepted: false, errorCode: 'closed');
+    }
+    try {
+      final Frame reply = await connection.request(
+        'ask_start',
+        const <String, Object?>{},
+      );
+      if (_disposed) {
+        return const AskStartOutcome(accepted: false, errorCode: 'closed');
+      }
+      if (reply.type != 'ask_start_ok') {
+        return AskStartOutcome(accepted: false, errorCode: reply.type);
+      }
+      final int? next = _asInt(reply.data, 'next_in_s');
+      if (next != null && next > 0) {
+        _askStartAvailableAt = _clock().add(Duration(seconds: next));
+      }
+      final bool delivered = reply.data['delivered'] == true;
+      notifyListeners();
+      return AskStartOutcome(accepted: true, delivered: delivered);
+    } on ProtocolErrorException catch (error) {
+      int? retry = _asInt(error.frame.data, 'retry_after_s');
+      if (retry == null) {
+        final Object? inner = error.frame.data['data'];
+        if (inner is Map<String, Object?>) {
+          retry = _asInt(inner, 'retry_after_s');
+        }
+      }
+      if (error.code == 'RATE_LIMITED' && retry != null && retry > 0) {
+        _askStartAvailableAt = _clock().add(Duration(seconds: retry));
+        if (!_disposed) {
+          notifyListeners();
+        }
+      }
+      return AskStartOutcome(
+        accepted: false,
+        retryAfterS: retry,
+        errorCode: error.code,
+      );
+    } on RequestTimeoutException {
+      return const AskStartOutcome(accepted: false, errorCode: 'timeout');
+    } on ConnectionClosedException {
+      return const AskStartOutcome(accepted: false, errorCode: 'closed');
+    } catch (_) {
+      return const AskStartOutcome(accepted: false, errorCode: 'transport');
+    }
   }
 
   /// Closes and forgets the current connection without a `leave_room`.
@@ -2356,6 +2581,10 @@ class RoomController extends ChangeNotifier {
       decoded = RoomSnapshot.fromJson(frame.data);
     } on SnapshotFormatException {
       return;
+    }
+    if (room.state != RoomState.lobby) {
+      _lobbyClosesAt = null;
+      _askStartAvailableAt = null;
     }
     _room = decoded;
     _landedPre = null;

@@ -17,10 +17,12 @@ import 'feedback.dart';
 import 'game_screen.dart' show GameScreenResult, showKickSheet;
 import 'net/connection.dart' show RoomToggles;
 import 'knock_bar.dart';
+import 'lobby_closing_banner.dart';
 import 'knock_waiting_view.dart';
 import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'room_closed_view.dart';
 import 'seat_card.dart';
 import 'seat_entrance.dart';
 import 'seat_mark.dart';
@@ -102,6 +104,9 @@ TextStyle? _roomCodeStyle(TextTheme textTheme, int length) {
   };
   return base.copyWith(fontSize: size * scale);
 }
+
+/// Section 38 item 5: how long the host's "asked to start" notice stays up.
+const Duration kStartAskedNoticeHold = Duration(seconds: 5);
 
 /// C-599 D5(b): how long the "Karim joined" line stays under the seat grid.
 const Duration kFriendJoinedLineHold = Duration(milliseconds: 2500);
@@ -234,6 +239,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   StreamSubscription<Frame>? _framesSubscription;
 
+  /// Section 38 item 5: the serial of the last `start_asked` this screen has
+  /// already shown, the name its notice carries while it shows, and the timer
+  /// that takes it down again. A screen opened on a controller that already
+  /// holds one does not replay it.
+  int _seenAskSerial = 0;
+  String? _askedName;
+  Timer? _askedTimer;
+
   /// C-447 D4: set once a refused resume has started popping this route, so
   /// a second notification cannot pop twice. C-529 D3 shares it for a room
   /// that closed while the player was away.
@@ -283,6 +296,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     super.initState();
     widget.controller.addListener(_onControllerChanged);
     _framesSubscription = widget.controller.frames.listen(_onFrame);
+    _seenAskSerial = widget.controller.lastStartAsked?.serial ?? 0;
     _syncFillCount();
     _issueRequest();
   }
@@ -291,6 +305,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void dispose() {
     _spokenLine.dispose();
     _joinedTimer?.cancel();
+    _askedTimer?.cancel();
     _fillTimer?.cancel();
     _framesSubscription?.cancel();
     _framesSubscription = null;
@@ -303,6 +318,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     setState(() {});
     _syncKickSheet();
     _syncUpdateRequiredAnnouncement();
+    _syncStartAsked();
     if (_resumeRefusalHandled || widget.controller.updateRequired) {
       return;
     }
@@ -331,6 +347,51 @@ class _LobbyScreenState extends State<LobbyScreen> {
             : GameScreenResult.roomClosedGuest,
       );
     }
+  }
+
+  /// Section 38 item 5: a new `start_asked` shows its notice for a few
+  /// seconds and plays the one `your_turn` cue, once per serial, through the
+  /// feedback service. Only the host is ever sent the frame.
+  void _syncStartAsked() {
+    final StartAsked? asked = widget.controller.lastStartAsked;
+    if (asked == null ||
+        asked.serial <= _seenAskSerial ||
+        !mounted ||
+        !widget.controller.isHost) {
+      return;
+    }
+    _seenAskSerial = asked.serial;
+    FeedbackScope.of(context).play(FeedbackCue.yourTurn);
+    final String line = AppLocalizations.of(context)
+        .lobbyStartAskedNotice(asked.name);
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      line,
+      Directionality.of(context),
+    );
+    _spokenLine.speak(line);
+    _askedTimer?.cancel();
+    _askedTimer = Timer(kStartAskedNoticeHold, () {
+      if (mounted) {
+        setState(() => _askedName = null);
+      }
+    });
+    _askedName = asked.name;
+  }
+
+  /// Host: leave this room and open a fresh one, with the door as it was.
+  void _makeNewRoom() {
+    final bool open = widget.controller.room?.open ?? false;
+    _resumeRefusalHandled = true;
+    _leaveWith(
+      open ? GameScreenResult.lobbyNewOpenRoom : GameScreenResult.lobbyNewRoom,
+    );
+  }
+
+  /// Leave this seat and let Home open the waiting line of section 33.
+  void _joinAnotherRoom() {
+    _resumeRefusalHandled = true;
+    _leaveWith(GameScreenResult.lobbyJoinAnother);
   }
 
   /// True once the update card's title has been spoken for this route, so a
@@ -788,7 +849,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
     final RoomController controller = widget.controller;
-    final bool connected = controller.phase == RoomPhase.connected;
+    final bool connected =
+        controller.phase == RoomPhase.connected && !controller.lobbyTimedOut;
 
     // L1: a `failed` phase with a room still set and a retryable errorCode
     // is the same "connection lost, an automatic reconnect may already be
@@ -804,12 +866,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // retrying, or in a retryable failure.
     final bool stale =
         controller.room != null &&
+        !controller.lobbyTimedOut &&
         (controller.phase == RoomPhase.closed ||
             controller.phase == RoomPhase.connecting ||
             retryableFailure);
 
     final Widget phaseBody;
-    if (controller.updateRequired) {
+    if (controller.lobbyTimedOut) {
+      // Section 37 item 2: the server closed the room and told this socket.
+      // The seat is already forgotten; a calm card, two ways forward.
+      phaseBody = RoomClosedView(
+        onMakeNewRoom: _makeNewRoom,
+        onJoinAnother: _joinAnotherRoom,
+      );
+    } else if (controller.updateRequired) {
       // Section 27 rule 6, and it outranks every body below, the seat-moved
       // card included: this build cannot play on this server, so there is
       // nothing else to show. Home is what the corner close does.
@@ -1256,6 +1326,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (room.state == RoomState.lobby)
+          LobbyClosingBanner(
+            controller: controller,
+            onMakeNewRoom: controller.isHost ? _makeNewRoom : null,
+            onJoinAnother: controller.isHost ? null : _joinAnotherRoom,
+          ),
+        AnimatedSize(
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+          alignment: AlignmentDirectional.topCenter,
+          child: _askedName == null || !controller.isHost
+              ? const SizedBox(width: double.infinity)
+              : StartAskedNotice(name: _askedName!),
+        ),
         Expanded(
           child: NotificationListener<ScrollMetricsNotification>(
             onNotification: (ScrollMetricsNotification notification) {
@@ -1589,6 +1675,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
     if (!controller.isHost) {
       return <Widget>[
         _dockedWaiting(loc.lobbyWaitingForHost, const Key('lobby-waiting')),
+        const SizedBox(height: kSpace2),
+        AskStartControl(controller: controller),
+        const SizedBox(height: kSpace1),
+        TextButton.icon(
+          key: const Key('lobby-join-another-button'),
+          style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+          onPressed: _joinAnotherRoom,
+          icon: const Icon(Icons.travel_explore_rounded, size: 20),
+          label: Text(loc.lobbyJoinAnotherRoom),
+        ),
       ];
     }
     // C-706: the fill control and its error line go above the host's start

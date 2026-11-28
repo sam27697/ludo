@@ -345,5 +345,16 @@
   "accountDeleteCancel": "خلّي حسابي",
   "accountFailed": "ما زبطت. تأكد من الاتصال وجرّب مرة تانية.",
   "accountUnavailable": "تسجيل الدخول مو متاح هلق.",
-  "accountDeletedNotice": "انحذف حسابك."
+  "accountDeletedNotice": "انحذف حسابك.",
+  "lobbyClosingBanner": "ستُغلق هذه الغرفة بعد {time} إن لم يبدأ أحد اللعبة",
+  "lobbyMakeNewRoom": "أنشئ غرفة جديدة",
+  "lobbyJoinAnotherRoom": "انضم إلى غرفة أخرى",
+  "lobbyAskStart": "اطلب من المضيف أن يبدأ",
+  "lobbyAskStartWait": "اطلب مجددًا بعد {seconds} ث",
+  "lobbyAskStartSent": "تم إبلاغ المضيف",
+  "lobbyAskStartAway": "تم الطلب. المضيف غير متصل الآن",
+  "lobbyAskStartFailed": "تعذّر الوصول إلى المضيف الآن. حاول بعد قليل",
+  "lobbyStartAskedNotice": "{name} يطلب منك بدء اللعبة",
+  "roomClosedTitle": "أُغلقت هذه الغرفة لأن أحدًا لم يبدأ اللعبة",
+  "roomClosedBody": "تنتظر الغرفة عشر دقائق حتى تبدأ اللعبة. مقعدك أصبح متاحًا من جديد."
 }
